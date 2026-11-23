@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/switcher"
@@ -131,6 +132,8 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name  string `json:"name"`
 		Force bool   `json:"force"`
+		// ForceWarm switches although warm agents of the tool could not be confirmed ended after the bounded wait: they are quarantined instead.
+		ForceWarm bool `json:"force_warm"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -145,9 +148,9 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	}
 	// Agents kept warm hold the login they started with: they are ended, and confirmed gone, before the swap. Their turns are held by the
 	// switch's own guard below too, which is taken right before the swap and covers the swap itself.
-	releaseWarm, err := s.retireHostWarm(r.Context(), r.PathValue("tool"))
+	releaseWarm, quarantined, err := s.retireHostWarmForce(r.Context(), r.PathValue("tool"), req.ForceWarm)
 	if err != nil {
-		writeJSON(w, 409, map[string]any{"error": "warm_agents", "message": err.Error()})
+		s.warmAgentsRefusal(w, r, err, true)
 		return
 	}
 	defer releaseWarm() // cache pings of the tool stay held back until the switch is over, whatever it came to
@@ -181,7 +184,12 @@ func (s *Server) switcherUse(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		s.accountSwitched(r.Context(), r.PathValue("tool"))
 	}
-	writeJSON(w, 200, map[string]any{"active": active, "switched": changed})
+	response := map[string]any{"active": active, "switched": changed}
+	if len(quarantined) > 0 {
+		labels, _ := s.Store.AgentLabels(r.Context(), quarantined)
+		response["quarantined"] = labels
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +211,7 @@ func (s *Server) switcherRemove(w http.ResponseWriter, r *http.Request) {
 		}
 		releaseWarm, err := s.retireHostWarm(r.Context(), tool)
 		if err != nil {
-			writeJSON(w, 409, map[string]any{"error": "warm_agents", "message": err.Error()})
+			s.warmAgentsRefusal(w, r, err, false)
 			return
 		}
 		defer releaseWarm()
@@ -239,6 +247,27 @@ func (s *Server) switcherRename(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshSwitchedUsage(tool)
 	writeJSON(w, 200, map[string]string{"name": req.Name})
+}
+
+// warmAgentsRefusal answers 409 warm_agents for a switch (or a removal of the active profile) that the host's warm processes block. When the
+// supervisor named them, the message and `agents` name them (slug@project), and `can_force` says whether the request may be sent again with
+// force_warm to switch anyway (the switch can; a removal cannot).
+func (s *Server) warmAgentsRefusal(w http.ResponseWriter, r *http.Request, err error, canForce bool) {
+	body := map[string]any{"error": "warm_agents", "message": err.Error(), "agents": []store.AgentLabel{}, "can_force": false}
+	var blocked warmBlockedError
+	if errors.As(err, &blocked) {
+		body["can_force"] = canForce
+		labels, _ := s.Store.AgentLabels(r.Context(), blocked.agents)
+		if len(labels) > 0 {
+			body["agents"] = labels
+			names := make([]string, 0, len(labels))
+			for _, label := range labels {
+				names = append(names, label.Label)
+			}
+			body["message"] = "these agents kept warm could not be confirmed ended: " + strings.Join(names, ", ")
+		}
+	}
+	writeJSON(w, 409, body)
 }
 
 // agentsRunningError is what the switcher's quiescence guard returns when agents of the tool are running.

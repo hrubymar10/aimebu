@@ -597,45 +597,96 @@ func (c *Client) warmCapable() bool {
 // RetireWarmTool ends the idle warm processes of one tool, and the cache pings that run for it, and returns once they are confirmed gone (false: one is
 // not). A running turn is left alone (the account switch refuses while one runs), but its process is marked to end with the turn.
 func (c *Client) RetireWarmTool(tool, reason string) bool {
+	return len(c.retireWarmToolBlocking(tool, reason)) == 0
+}
+
+// retireWarmToolBlocking is RetireWarmTool that names what is not confirmed gone: the agents whose warm process or cache ping is still unconfirmed,
+// sorted, nil when every one is gone. A process in a container whose launcher did not confirm its end is asked about with the container-gone check
+// first (a container Docker no longer shows, or shows ended, holds nothing), so only one that may really be alive is named.
+func (c *Client) retireWarmToolBlocking(tool, reason string) []string {
 	// Cache pings of the tool come first: a ping is a turn on the login about to change, and the server's own check for a running turn cannot see it. They
 	// are held back (no new one starts, and a pending timer finds the hold) and the ones that run are ended and confirmed, so no ping holds a warm
 	// process or the login while the slots below are retired.
-	pingsEnded := c.keepAliveHoldTool(tool)
+	blocked := map[string]bool{}
+	for _, agentID := range c.keepAliveHoldToolBlocking(tool) {
+		blocked[agentID] = true
+	}
 	c.mu.Lock()
 	pool := c.warmPool
 	c.mu.Unlock()
-	if pool == nil {
-		return true
-	}
-	var wait sync.WaitGroup
-	var failed atomic.Bool
-	for _, slot := range pool.existing() {
-		wait.Add(1)
-		go func() {
-			defer telemetry.Recover(context.Background())
-			defer wait.Done()
-			slot.mu.Lock()
-			defer slot.mu.Unlock()
-			if slot.busy != nil && slot.busy.tool == tool {
-				slot.busy.retire = true
-			}
-			idleOfTool := slot.idle != nil && slot.idle.tool == tool
-			stuckOfTool := slot.stuck != nil && slot.stuck.tool == tool
-			switch {
-			case idleOfTool:
-				if !c.retireSlot(slot, reason, false, warmCloseGrace) {
-					failed.Store(true)
+	if pool != nil {
+		var wait sync.WaitGroup
+		var mu sync.Mutex
+		for _, slot := range pool.existing() {
+			wait.Add(1)
+			go func() {
+				defer telemetry.Recover(context.Background())
+				defer wait.Done()
+				entry := c.retireToolSlot(slot, tool, reason)
+				if entry == nil || c.settleGoneContainer(slot, entry) {
+					return
 				}
-			case stuckOfTool:
-				if !c.clearStuck(slot) {
-					nudgeStuck(slot)
-					failed.Store(true)
-				}
-			}
-		}()
+				mu.Lock()
+				blocked[entry.agentID] = true
+				mu.Unlock()
+			}()
+		}
+		wait.Wait()
 	}
-	wait.Wait()
-	return pingsEnded && !failed.Load()
+	if len(blocked) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(blocked))
+	for agentID := range blocked {
+		out = append(out, agentID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// retireToolSlot ends the slot's idle process of tool, or tries its stuck one of tool again, and returns the entry that is still not confirmed gone
+// (nil when none is). A busy process of the tool is marked to end with its turn.
+func (c *Client) retireToolSlot(slot *warmSlot, tool, reason string) *warmEntry {
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.busy != nil && slot.busy.tool == tool {
+		slot.busy.retire = true
+	}
+	switch {
+	case slot.idle != nil && slot.idle.tool == tool:
+		if c.retireSlot(slot, reason, false, warmCloseGrace) {
+			return nil
+		}
+	case slot.stuck != nil && slot.stuck.tool == tool:
+		if c.clearStuck(slot) {
+			return nil
+		}
+		nudgeStuck(slot)
+	default:
+		return nil
+	}
+	if slot.stuck != nil && slot.stuck.tool == tool {
+		return slot.stuck
+	}
+	return nil
+}
+
+// settleGoneContainer confirms a stuck process gone when Docker says its container is (see warmContainerGone), instead of waiting for the background
+// watcher's next poll. Docker is asked without the slot's lock (a delivery to the agent must not wait on it), and the slot is settled only if it still
+// holds the same entry.
+func (c *Client) settleGoneContainer(slot *warmSlot, entry *warmEntry) bool {
+	why, gone := c.warmContainerGone(entry)
+	if !gone {
+		return false
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.stuck == entry {
+		log.Printf("agent %s: its warm process is confirmed gone: %s", entry.agentID, why)
+		c.recordWarmEnd(entry, "its container is gone")
+		slot.setStuck(nil)
+	}
+	return true
 }
 
 // setCodexWarmEnabled applies the owner's opt-in. Turning it off retires

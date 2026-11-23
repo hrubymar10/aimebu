@@ -21,6 +21,41 @@ import (
 // and they go side by side.
 const retireWarmTimeout = 30 * time.Second
 
+// retireWarmWait bounds how long an account switch keeps asking a supervisor whose warm processes are not all confirmed gone: each new ask tries the
+// stuck ones again (and asks Docker whether their containers are gone), every retireWarmRetryEvery. A test shortens them per server
+// (Server.retireWait and Server.retireEvery).
+const (
+	retireWarmWait       = 60 * time.Second
+	retireWarmRetryEvery = 5 * time.Second
+)
+
+// retireWaits is the bounded wait and the interval between asks of this server.
+func (s *Server) retireWaits() (wait, every time.Duration) {
+	wait, every = retireWarmWait, retireWarmRetryEvery
+	if s.retireWait > 0 {
+		wait = s.retireWait
+	}
+	if s.retireEvery > 0 {
+		every = s.retireEvery
+	}
+	return wait, every
+}
+
+// switchQuarantine bounds how long an agent whose warm process a forced switch went past is held from new turns, unless its supervisor reports the
+// process ended first (warm_ended). It is well past the supervisor's own quarantine of an unconfirmed process.
+const switchQuarantine = 10 * time.Minute
+
+// warmBlockedError is a supervisor's answer that warm processes (or cache pings) of the tool are not confirmed gone: the agents it named, by id (an
+// older supervisor names none).
+type warmBlockedError struct {
+	agents  []string
+	message string
+}
+
+func (e warmBlockedError) Error() string {
+	return "agents kept warm on the host could not be ended: " + e.message
+}
+
 // retireHostWarm asks the host machine's supervisor to end the idle warm processes of a tool and waits until it says they are confirmed gone. An
 // account switch changes the login those processes hold, and they are on the machine the login is on (the host), so no other machine is asked.
 // Nothing is asked of a host whose supervisor does not keep processes warm (it has none). A host that is not connected is NOT taken to have none: a
@@ -32,20 +67,30 @@ const retireWarmTimeout = 30 * time.Second
 // switch is over (whatever it came to): a ping is a turn on the login being swapped, the check for a running turn does not see it, and the supervisor
 // ends the ones that run as part of this request. On an error the hold is already released.
 func (s *Server) retireHostWarm(ctx context.Context, tool string) (release func(), err error) {
+	release, _, err = s.retireHostWarmForce(ctx, tool, false)
+	return release, err
+}
+
+// retireHostWarmForce is retireHostWarm with a bounded wait (retireWarmWait) for processes that are not confirmed gone at the first ask, and with force:
+// when the supervisor still names agents whose process it cannot confirm ended after the wait, force goes on instead of refusing. Those agents are
+// quarantined (no new turn until their supervisor reports the process ended, or switchQuarantine passes), and returned. Force does not go past a
+// supervisor that is not connected, goes away or does not answer: nothing is known about what it runs. A refusal is a warmBlockedError when the
+// supervisor named the agents.
+func (s *Server) retireHostWarmForce(ctx context.Context, tool string, force bool) (release func(), quarantined []string, err error) {
 	release = func() {}
 	host, err := s.Store.HostMachine(ctx)
 	if err != nil {
-		return release, err
+		return release, nil, err
 	}
 	machine, err := s.machineForID(host.ID)
 	if err != nil {
 		if s.hostMayHaveWarm(ctx, host) {
-			return release, errors.New("the host's supervisor is not connected, so whether it keeps agents warm cannot be checked: reconnect it, then try again")
+			return release, nil, errors.New("the host's supervisor is not connected, so whether it keeps agents warm cannot be checked: reconnect it, then try again")
 		}
-		return release, nil
+		return release, nil, nil
 	}
 	if !machine.supportsWarm {
-		return release, nil
+		return release, nil, nil
 	}
 	s.kaSwitchMu.Lock()
 	if s.kaSwitching == nil {
@@ -68,11 +113,77 @@ func (s *Server) retireHostWarm(ctx context.Context, tool string) (release func(
 	}
 	// The hold goes out before the request, on the same connection, so the supervisor applies it before it looks for a ping to end.
 	s.sendKeepAlivePause(ctx, machine)
-	if err := s.askRetireWarm(ctx, machine, tool); err != nil {
-		release()
-		return func() {}, err
+	wait, every := s.retireWaits()
+	deadline := time.Now().Add(wait)
+	for {
+		err = s.askRetireWarm(ctx, machine, tool)
+		var blocked warmBlockedError
+		if err == nil || !errors.As(err, &blocked) {
+			break
+		}
+		if time.Now().Add(every).After(deadline) {
+			if force {
+				// The owner chose to switch anyway: the agents the supervisor named are held from new turns until their process is reported
+				// ended, so none of them starts a turn on a session whose old process may still hold the old login. An older supervisor that
+				// named none: every agent of the tool on the host is held.
+				quarantined = blocked.agents
+				if len(quarantined) == 0 {
+					quarantined = s.hostToolAgentIDs(ctx, host.ID, tool)
+				}
+				s.quarantineAfterSwitch(ctx, machine, quarantined)
+				return release, quarantined, nil
+			}
+			break
+		}
+		timer := time.NewTimer(every)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			release()
+			return func() {}, nil, ctx.Err()
+		case <-machine.done:
+			timer.Stop()
+			release()
+			return func() {}, nil, errors.New("the host's supervisor went away before it confirmed that its warm agents ended")
+		case <-timer.C:
+		}
 	}
-	return release, nil
+	if err != nil {
+		release()
+		return func() {}, nil, err
+	}
+	return release, nil, nil
+}
+
+// hostToolAgentIDs lists the agents of tool on the host (an older supervisor did not name the ones it could not end). A failed read is no agent.
+func (s *Server) hostToolAgentIDs(ctx context.Context, hostID, tool string) []string {
+	agents, err := s.Store.SwitcherAgents(ctx, hostID, tool)
+	if err != nil {
+		log.Printf("switcher: listing the host's %s agents to quarantine: %v", tool, err)
+		return nil
+	}
+	ids := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		ids = append(ids, agent.ID)
+	}
+	return ids
+}
+
+// quarantineAfterSwitch holds new turns of agents whose warm process a forced switch went past (see Store.QuarantineAgent), records it on each
+// agent, and tells their supervisor to hold their cache pings back too.
+func (s *Server) quarantineAfterSwitch(ctx context.Context, machine *machineConn, agentIDs []string) {
+	until := time.Now().Add(switchQuarantine)
+	for _, agentID := range agentIDs {
+		s.Store.QuarantineAgent(agentID, until)
+		if err := s.Store.RecordSwitchQuarantine(context.WithoutCancel(ctx), agentID); err != nil {
+			log.Printf("switcher: agent %s quarantined, but not recorded: %v", agentID, err)
+		}
+	}
+	if machine != nil && len(agentIDs) > 0 {
+		pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		s.sendKeepAlivePause(pushCtx, machine)
+	}
 }
 
 // warmSeenKeyPrefix names the global setting that keeps a machine's last warm report across a restart of the server.
@@ -209,6 +320,12 @@ func (s *Server) handleWarmEnded(ctx context.Context, c *machineConn, frame prot
 	if err != nil || agent.MachineID != c.id {
 		return
 	}
+	if s.Store.ReleaseQuarantine(agent.ID) {
+		// The process a forced switch went past is confirmed ended: the agent takes turns again, and its pings may run.
+		pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		s.sendKeepAlivePause(pushCtx, c)
+		cancel()
+	}
 	reason := frame.Message
 	if len(reason) > 200 {
 		reason = reason[:200]
@@ -292,7 +409,7 @@ func (s *Server) askRetireWarm(ctx context.Context, machine *machineConn, tool s
 	select {
 	case reply := <-channel:
 		if reply.Result != "ok" {
-			return fmt.Errorf("agents kept warm on the host could not be ended: %s", reply.Message)
+			return warmBlockedError{agents: reply.RetireBlocked, message: reply.Message}
 		}
 		return nil
 	case <-machine.done:
@@ -321,6 +438,8 @@ func (s *Server) keepAlivePaused(ctx context.Context, c *machineConn) (tools, ag
 		}
 	}
 	agents, err = s.Store.ProviderLimitedAgents(ctx, c.id)
+	// An agent a forced switch quarantined has a process that may still hold the old login: no ping either.
+	agents = append(agents, s.Store.QuarantinedAgents()...)
 	return tools, agents, err
 }
 

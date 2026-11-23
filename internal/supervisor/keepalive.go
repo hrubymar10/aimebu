@@ -369,6 +369,11 @@ func (c *Client) keepAliveEnd(cancel context.CancelFunc, done chan struct{}, doc
 // frame (which it keeps sending the tool in for as long as the switch is in progress, and replaces afterwards). It returns false when a ping is not
 // confirmed ended.
 func (c *Client) keepAliveHoldTool(tool string) bool {
+	return len(c.keepAliveHoldToolBlocking(tool)) == 0
+}
+
+// keepAliveHoldToolBlocking is keepAliveHoldTool that names the agents whose ping is not confirmed ended (nil when every one is).
+func (c *Client) keepAliveHoldToolBlocking(tool string) []string {
 	type running struct {
 		agentID      string
 		cancel       context.CancelFunc
@@ -390,19 +395,19 @@ func (c *Client) keepAliveHoldTool(tool string) bool {
 	}
 	// A ping that an earlier stop or yield could not confirm gone (its entry is dropped, it is only remembered) may be on this tool's login too:
 	// whatever tool it belongs to, the switch does not go on until it is.
-	ok := true
-	for _, stuck := range c.kaStuck {
+	var blocked []string
+	for agentID, stuck := range c.kaStuck {
 		if !closed(stuck) {
-			ok = false
+			blocked = append(blocked, agentID)
 		}
 	}
 	c.kaMu.Unlock()
 	for _, ping := range pings {
 		if !c.keepAliveEndFor(ping.agentID, ping.cancel, ping.done, ping.docker, ping.sure, 0) {
-			ok = false
+			blocked = append(blocked, ping.agentID)
 		}
 	}
-	return ok
+	return blocked
 }
 
 // keepAlivePing runs one ping if it is still wanted. gen says which arming the timer belongs to.

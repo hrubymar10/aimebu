@@ -1370,6 +1370,16 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   switching and a persistent dispatch gate are later work.
   An explicit forced switch requires stored credentials and skips the incoming
   token refresh; it keeps the ordinary turn guard and credential swap.
+- A switch ends the host's idle warm processes and cache pings of the tool
+  first. It asks the host's supervisor again for a bounded time (60 s) while
+  one is not confirmed ended, then refuses with 409 `warm_agents`, naming the
+  agents the supervisor reports (`agents`, `can_force`). A switch sent again
+  with `force_warm` goes past them: those agents are quarantined (no new turn,
+  no cache ping) until their supervisor reports the process ended, at most
+  10 minutes. Force never goes past a supervisor that is not connected or does
+  not answer. The automatic switcher never forces.
+- A switch that changed the host's login lifts the provider limits of the
+  host's agents of that tool.
 
 ## 3d. Deployment
 

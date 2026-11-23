@@ -629,7 +629,8 @@ func TestTheWebSwitchHoldsNewTurnsBeforeRetiringWarmAgents(t *testing.T) {
 func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
 	f, m, _ := quotaEnv(t)
 	machine := connectHost(t, f, true)
-	go answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+	shortRetireWait(f)
+	stop := answerRetireUntilStopped(machine, nil)
 	resp := f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
 	var body struct {
 		Error string `json:"error"`
@@ -645,6 +646,7 @@ func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
 	if f.srv.Store.DispatchHeldForSwitch("claude") {
 		t.Fatal("a refused removal must release its hold")
 	}
+	stop()
 	go answerRetire(machine, "ok", "")
 	resp = f.request(http.MethodDelete, "/api/switcher/claude/profiles/A", nil, true)
 	resp.Body.Close()
@@ -653,9 +655,8 @@ func TestRemovingTheActiveProfileRetiresWarmAgentsFirst(t *testing.T) {
 	}
 }
 
-// limitHostAgent gives the fixture's room an agent of tool on the host machine whose last turn met the provider's usage limit (a 429
-// usage_limit_reached), in force until an hour from now. It returns the agent's id.
-func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
+// hostAgent spawns an agent in the fixture's room and makes it an agent of tool on the host machine. It returns the agent's id.
+func hostAgent(t *testing.T, f *fixture, key, tool string) string {
 	t.Helper()
 	host, err := f.srv.Store.HostMachine(context.Background())
 	if err != nil {
@@ -671,6 +672,20 @@ func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 	if status != 201 || card.ID == "" {
 		t.Fatalf("spawn=%d %+v", status, raw)
 	}
+	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET tool=?, machine_id=? WHERE id=?`, tool, host.ID, card.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return card.ID
+}
+
+// limitHostAgent gives the fixture's room an agent of tool on the host machine whose last turn met the provider's usage limit (a 429
+// usage_limit_reached), in force until an hour from now. It returns the agent's id.
+func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
+	t.Helper()
+	agentID := hostAgent(t, f, key, tool)
 	stamp := func(at time.Time) string { return at.UTC().Format("2006-01-02T15:04:05.000000000Z") }
 	turnID := "turn_" + key
 	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
@@ -678,10 +693,9 @@ func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 			query string
 			args  []any
 		}{
-			{`UPDATE agent SET tool=?, machine_id=? WHERE id=?`, []any{tool, host.ID, card.ID}},
 			{`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,outcome,settle)
-				SELECT ?,?,s.id,0,?,1,'normal','exited','failed','settled' FROM session s WHERE s.agent_id=? LIMIT 1`, []any{turnID, card.ID, f.room.ID, card.ID}},
-			{`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, []any{card.ID, turnID, stamp(time.Now()), stamp(time.Now().Add(time.Hour)), tool}},
+				SELECT ?,?,s.id,0,?,1,'normal','exited','failed','settled' FROM session s WHERE s.agent_id=? LIMIT 1`, []any{turnID, agentID, f.room.ID, agentID}},
+			{`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES (?,?,?,?,?)`, []any{agentID, turnID, stamp(time.Now()), stamp(time.Now().Add(time.Hour)), tool}},
 		} {
 			if _, err := tx.Exec(statement.query, statement.args...); err != nil {
 				return err
@@ -691,7 +705,7 @@ func limitHostAgent(t *testing.T, f *fixture, key, tool string) string {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return card.ID
+	return agentID
 }
 
 // A harness that met the provider's usage limit marks the host's active profile exhausted although the usage snapshot still reads under the
@@ -790,7 +804,9 @@ func TestUnconfirmedWarmAgentsHoldTheAutomaticSwitchWithTheirOwnReason(t *testin
 	runner, _ := runnerOver(t, f, src)
 	quotaConfig(t, runner, nil)
 	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
-	go answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+	shortRetireWait(f)
+	stop := answerRetireUntilStopped(machine, nil)
+	defer stop()
 	runner.Evaluate(context.Background())
 	if got := activeProfile(t, m); got != "A" {
 		t.Fatalf("active = %s: switched under an unconfirmed warm process", got)

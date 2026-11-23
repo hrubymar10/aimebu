@@ -826,8 +826,17 @@ tool on the host is confirmed gone, and none can have been started since.** In o
    recorded by then. Only then does it check for running turns (`409 agents_running`).
 2. It sends the host's supervisor a `retire_warm` request for the tool (the login is on the host, so no other
    machine is asked) and goes on only when it answers `ok`, that is, every idle process of the tool is confirmed
-   gone. `error`, no answer within 30 s, or a supervisor that goes away before it answers refuses the switch
-   (`409 warm_agents`; the automatic switch counts it as agents running).
+   gone. An `error` answer names the agents it could not confirm (`retire_blocked`, sorted agent ids; a process in a
+   container is first checked with the container-gone check, so one whose container Docker shows ended or gone is
+   confirmed then and there). The server asks again every 5 s for up to 60 s, each ask trying the stuck processes
+   again; then it refuses the switch (`409 warm_agents` with the named agents and `can_force`; the automatic switch
+   holds with the reason `agents kept warm could not be ended`). No answer within 30 s, or a supervisor that goes
+   away before it answers, refuses at once. The owner can send the switch again with `force_warm`: it then goes on
+   past the named agents (or, from an older supervisor that names none, every agent of the tool on the host),
+   which are **quarantined**: the server dispatches them no turn and holds their pings (`paused_agents`) until
+   their supervisor sends `warm_ended` for them, at most 10 minutes (in memory; the supervisor's own quarantine of
+   the unconfirmed process stands either way). Each gets an `agent_switch_quarantined` event. Force never goes past a
+   supervisor that did not answer.
 3. The swap itself checks for running turns once more under the switcher's lock. The hold of turns ends when the
    switch is over, whatever it came to.
 

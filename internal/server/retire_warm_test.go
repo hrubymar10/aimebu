@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,9 +57,30 @@ func TestAccountSwitchRetiresWarmAgentsFirst(t *testing.T) {
 		t.Fatalf("confirmed: %v", err)
 	}
 	release()
-	go answerRetire(machine, "error", "a warm process of the tool is not confirmed gone")
+	shortRetireWait(f)
+	stop := answerRetireUntilStopped(machine, nil)
+	defer stop()
 	if _, err := f.srv.retireHostWarm(context.Background(), "claude"); err == nil || !strings.Contains(err.Error(), "not confirmed gone") {
 		t.Fatalf("an unconfirmed end must refuse the switch: %v", err)
+	}
+}
+
+// answerRetireUntilStopped answers every retire_warm request with "error" naming blocked (the bounded wait asks more than once) until the returned
+// stop is called, which returns once the answering has ended (so the next request is the test's own to answer).
+func answerRetireUntilStopped(machine *machineConn, blocked []string) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	var asks atomic.Int32
+	go func() {
+		defer close(done)
+		answerRetireBlocked(machine, blocked, &asks, quit)
+	}()
+	return func() {
+		select {
+		case <-quit:
+		default:
+			close(quit)
+		}
+		<-done
 	}
 }
 

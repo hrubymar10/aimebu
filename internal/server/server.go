@@ -163,6 +163,8 @@ type Server struct {
 	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
 	// Presence tracks when a person's browser sessions last showed real activity; nil in tests that build a Server by hand.
 	Presence *humanPresence
+	// retireWait and retireEvery are the bounded wait for the warm processes an account switch ends, and its interval; zero is the default (tests).
+	retireWait, retireEvery time.Duration
 }
 
 func New(db *store.Store) *Server {

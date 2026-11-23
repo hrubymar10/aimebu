@@ -100,7 +100,7 @@ and reconnects the event stream from its last seen `seq`.
 | PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
 | POST | `/api/switcher/{tool}/profiles` | `{name}` | owner adds an empty profile |
 | POST | `/api/switcher/{tool}/import` | `{name}` | owner adopts the current live login |
-| POST | `/api/switcher/{tool}/use` | `{name, force?}` | owner switches profiles; `force:true` requires stored credentials and skips incoming refresh while keeping the normal swap and turn guard; 409 with `agents` if matching turns run |
+| POST | `/api/switcher/{tool}/use` | `{name, force?, force_warm?}` | owner switches profiles; `force:true` requires stored credentials and skips incoming refresh while keeping the normal swap and turn guard; 409 with `agents` if matching turns run. Warm agents of the tool on the host are ended first, waiting up to 60 s for any the supervisor cannot confirm ended; then 409 `warm_agents` with `message` naming them, `agents:[{id,label}]` (`label` is `slug@project`) and `can_force`. `force_warm:true` switches past them and quarantines them until their process is confirmed ended (at most 10 minutes); the answer `{active, switched, quarantined?}` lists them. A switch that changed the login lifts the provider limits of the host's agents of the tool |
 | DELETE | `/api/switcher/{tool}/profiles/{name}` | — | owner removes a profile; active removal clears the live login |
 | POST | `/api/switcher/{tool}/profiles/{name}/rename` | `{name}` | owner renames a profile, active or not; the live login is untouched; 404 unknown profile, 409 destination exists |
 | GET | `/api/health` | — | visible agents with `room_ids` and current health flags, plus the configured stuck threshold |
