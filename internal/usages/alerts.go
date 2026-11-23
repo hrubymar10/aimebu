@@ -256,11 +256,12 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						delta := window.ResetAt.Sub(previous)
 						if delta >= -2*time.Minute && delta <= 2*time.Minute {
 							cycle = state.Cycle
-						} else if state.Cycle != "" && !strings.HasPrefix(state.Cycle, "observed-") &&
+						} else if delta > 0 && state.Cycle != "" && !strings.HasPrefix(state.Cycle, "observed-") &&
 							t.clock().Add(2*time.Minute).Before(previous) && state.LastUsed-window.PercentUsed < resetDropPoints {
 							// A rolling window (an idle one reports now plus its
 							// length) slides its reset forward while the old
-							// one is still ahead: drift, not a new cycle.
+							// one is still ahead: drift, not a new cycle. A reset
+							// that moves earlier is never drift: a new cycle.
 							cycle, driftReset = state.Cycle, true
 						}
 					}

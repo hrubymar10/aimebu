@@ -870,3 +870,46 @@ func TestResetNoticeIgnoresSlidingRollingWindow(t *testing.T) {
 		t.Fatalf("drift after the reset repeats the notice: %+v", again)
 	}
 }
+
+// Only a reset time that slides LATER is a rolling window's drift. One that moves earlier by more than the tolerance, while the old reset is still
+// ahead and usage has not dropped, is a new cycle: the old cycle's alerts close and the reset notice is sent.
+func TestResetNoticeTreatsAnEarlierResetAsANewCycle(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := now.Add(5 * time.Hour)
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "main", AlertIdentity: "stable", Status: "ok", LastRefreshAt: &now,
+			Windows: []Window{{Key: "session", PercentUsed: 85, ResetAt: &reset}}}}}}}
+	response.Settings.AlertResetNoticeEnabled = true
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observe := func() []UsageAlert {
+		t.Helper()
+		response.Providers[0].Profiles[0].LastRefreshAt = &now
+		response.Providers[0].Profiles[0].Windows[0].ResetAt = &reset
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+		return tracker.OpenAlerts()
+	}
+	first := observe()
+	if len(first) != 1 || first[0].Tier != "warning" {
+		t.Fatalf("warning: %+v", first)
+	}
+	// The reset moves an hour EARLIER while the old one is still four hours away and usage is unchanged: not drift.
+	now = now.Add(15 * time.Minute)
+	reset = reset.Add(-time.Hour)
+	got := observe()
+	tiers := map[string]int{}
+	for _, alert := range got {
+		if alert.ID == first[0].ID {
+			t.Fatalf("the old cycle's warning must close: %+v", got)
+		}
+		tiers[alert.Tier]++
+	}
+	if tiers["reset"] != 1 {
+		t.Fatalf("an earlier reset is a new cycle and sends one reset notice: %+v", got)
+	}
+}

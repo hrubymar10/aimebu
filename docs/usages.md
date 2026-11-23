@@ -51,7 +51,8 @@ Reset timestamps within two minutes of the previous reset are one cycle despite
 provider clock jitter. A later reset time while the previous one is still
 ahead (an idle rolling window reports now plus its length) is drift, not a new
 cycle, unless used percent fell by 5 points or more; it only moves the stored
-reset time, with no reset notice and no re-arm. If the alert state is corrupt, the server logs the error,
+reset time, with no reset notice and no re-arm. A reset time that moves earlier by more
+than two minutes is always a new cycle. If the alert state is corrupt, the server logs the error,
 moves the file aside with a `.corrupt-*` suffix, and starts with empty alert
 state while continuing to serve.
 Invalid saved alert thresholds fall back to 20/10 on load without discarding
