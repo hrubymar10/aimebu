@@ -153,10 +153,12 @@ active turn, the API returns 409 with those agents; wait for the turn to finish
 or stop it before retrying. Agents kept warm hold the login they started with, so
 the switch first has the host's supervisor end them, and waits up to 60 seconds
 for any it cannot confirm ended. If some still are not, the switch is refused
-(409 `warm_agents`), naming those agents. Sent again with `force_warm`, the
-switch goes on and quarantines them: they get no new turn until their old
-process is confirmed ended (at most 10 minutes), while everything else moves to
-the new login. Removing the active profile is refused
+(409 `warm_agents`), naming those agents. In Settings → Server → Accounts &
+usage the Switch dialog then asks again, naming them, and offers **Switch
+anyway** (a danger button, with a warning); declining leaves the red error text,
+which names them too. Switching anyway (`force_warm` in the API) goes on and
+quarantines them: they get no new turn until their old process is confirmed
+ended (at most 10 minutes), while everything else moves to the new login. Removing the active profile is refused
 the same way but cannot be forced. A switch that changed the login also lifts
 the provider usage limits of the host's agents of the tool, so agents stopped at
 the old login's limit continue. A standalone CLI switch should be made while the
