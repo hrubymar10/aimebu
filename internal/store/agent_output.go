@@ -45,56 +45,29 @@ func (s *Store) AuthorizeAgentOutputRead(ctx context.Context, readerID, targetID
 }
 
 // TurnShownToAgent says whether what a turn of an agent said may be shown to another agent (a lead reading its worker's output), and which
-// rooms the turn served. The rooms are those of TurnWithheldFrom: the turn's own room, the room of every message it was given, every room
-// it read through a tool or was quoted in its context (turn_room_read), and, for a turn older than that record (migration 129) that has
-// none, every restricted room the agent was a member of when the turn started. withheld is true when the reader may not read one of them
-// under the rule every agent read uses (room_history's): a room of the reader's project, or a chat between agents, that is neither a
-// private chat nor restricted, or one the reader is an active member of. A removed room is not readable. known is false when the agent has
-// no such turn; such a turn is withheld too. rooms is what a caller that shows the turn records against the reader's own turn
-// (RecordTurnRoomReads), so the reader's log is withheld in turn from whoever may not read them.
+// rooms the turn served. The rooms are those of turnServedRooms, the rule TurnWithheldFrom uses too: the turn's own room, the room of every
+// message it was given, every room it read through a tool or was quoted in its context (turn_room_read), and, for a turn older than that
+// record (migration 129) that has none, every room the agent was a member of when the turn started, private chats included. withheld is
+// true when the reader may not read one of them under the rule every agent read uses (room_history's): a room of the reader's project, or
+// a chat between agents, that is neither a private chat nor restricted, or one the reader is an active member of. A removed room is not
+// readable. known is false when the server cannot place the turn: the agent has no such turn, or the turn predates the record and the
+// agent's membership then is not recoverable; such a turn is withheld too. rooms is what a caller that shows the turn records against the
+// reader's own turn (RecordTurnRoomReads), so the reader's log is withheld in turn from whoever may not read them.
 func (s *Store) TurnShownToAgent(ctx context.Context, turnID, agentID, readerID string) (known, withheld bool, rooms []string, err error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return false, false, nil, err
 	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM turn WHERE id=? AND agent_id=?`, turnID, agentID).Scan(&count); err != nil {
+	placed, rooms, err := s.turnServedRooms(ctx, turnID, agentID)
+	if err != nil {
 		return false, false, nil, err
 	}
-	if count == 0 {
+	if !placed {
 		return false, true, nil, nil
 	}
 	var readerProject string
 	if err := s.db.QueryRowContext(ctx, `SELECT project_id FROM agent WHERE id=?`, readerID).Scan(&readerProject); err != nil {
 		return false, false, nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT room_id FROM turn WHERE id=? AND agent_id=?
-		UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?
-		UNION SELECT rr.room_id FROM turn_room_read rr WHERE rr.turn_id=?
-		UNION SELECT am.room_id FROM turn t JOIN room_member am ON am.member_kind='agent' AND am.member_id=t.agent_id JOIN room tr ON tr.id=am.room_id
-			WHERE t.id=? AND t.agent_id=? AND tr.kind<>'dm' AND tr.restricted<>0 AND t.started_at IS NOT NULL
-			AND t.started_at < (SELECT applied_at FROM schema_version WHERE version=129)
-			AND NOT EXISTS (SELECT 1 FROM turn_room_read rr WHERE rr.turn_id=t.id)
-			AND am.joined_at<=t.started_at AND (am.left_at IS NULL OR am.left_at>t.started_at)`,
-		turnID, agentID, turnID, turnID, turnID, agentID)
-	if err != nil {
-		return false, false, nil, err
-	}
-	for rows.Next() {
-		var roomID string
-		if err := rows.Scan(&roomID); err != nil {
-			rows.Close()
-			return false, false, nil, err
-		}
-		if roomID != "" {
-			rooms = append(rooms, roomID)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return false, false, nil, err
-	}
-	slices.Sort(rooms)
 	for _, roomID := range rooms {
 		var readable bool
 		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r WHERE r.id=? AND r.project_id IN (?,`+agentDMProjectSQL+`)

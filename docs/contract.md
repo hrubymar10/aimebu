@@ -674,9 +674,16 @@ Execution
   the turn's context quotes (`recent_room_history`, `referenced_messages`, the
   rooms of a worker turn whose `worker_output` a notice delivers);
   migration 129. A turn that started before migration 129 ran (its
-  `schema_version.applied_at`) and has no row here is judged by the restricted
-  rooms its agent was a member of when it started (`room_member` joined/left),
-  so it is withheld from a reader who cannot read one of them
+  `schema_version.applied_at`) and has no row here is judged by every room its
+  agent was a member of when it started (`room_member` joined/left), private
+  chats included, so it is withheld from a reader who cannot read one of them;
+  the project owner is no exception: such a turn whose agent was then in a
+  private chat the owner is not an active member of is withheld from the owner
+  too, as any turn that served that chat is;
+  when that membership is not recoverable (no membership of the turn's own
+  room covers its start) the turn cannot be placed and is withheld from every
+  reader. One store rule gives these rooms to the log viewer, `agent_output`
+  and a notice's `worker_output`
 - **command_job**(id, agent_id, generation, machine_id, project_id, room_id,
   label?, cmd, cwd, timeout_seconds,
   state[queued|running|done|cancelled|cancelled_unconfirmed|timed_out|lost|
@@ -1743,8 +1750,9 @@ it never silently reruns a turn with uncertain effects.
   turn of every record: the rooms a turn served are its own room, the room of
   each message it was given, and each room in `turn_room_read` (content a tool
   result or its context carried, which the log records too; for a turn with no
-  such row that started before migration 129 ran, every restricted room its
-  agent was a member of when it started); before it returns
+  such row that started before migration 129 ran, every room its agent was a
+  member of when it started, private chats included, and a turn whose
+  membership then is not recoverable cannot be placed); before it returns
   a conversation it replaces each turn
   that served a private chat by one line unless the reader is an active member
   of that chat (private chats require room membership, see the room rules

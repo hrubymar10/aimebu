@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -383,5 +384,116 @@ func TestLastBytesCutsAtALineOrARune(t *testing.T) {
 	}
 	if got, cut := lastBytes(strings.Repeat("é", 10), 5); got != "éé" || !cut {
 		t.Fatalf("rune: %q %t", got, cut)
+	}
+}
+
+// A worker turn that started before migration 129 ran recorded nothing about what its tools read, so the three readers of a worker's
+// conversation (the person's log viewer, agent_output, and the end of a turn a notice carries) judge it by every room the worker was a
+// member of when it started, its private chats included. A turn from while the worker sat in its private chat with the owner is withheld
+// from a lead and a person who are not in that chat and shown to the owner, who is; a turn from before the worker joined that chat and a
+// turn after the upgrade are shown; and a turn whose worker's membership of its own room then is not recorded is withheld from everyone.
+func TestTurnsBeforeRoomReadRecordsAreJudgedByTheWorkersRoomsThen(t *testing.T) {
+	o := newOutputFixture(t)
+	ctx := t.Context()
+	lead, leadKey := o.createToolAgentNamed(t, "role_leader_default", "outputlead")
+	owner, err := o.db.UserByLogin(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dm, err := o.db.OpenDM(ctx, owner.ID, o.agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, turn := range []struct{ id, started string }{
+		{"trn_pre_open", "2026-04-01T00:00:00.000000000Z"},
+		{"trn_pre_dm", "2026-05-01T00:00:00.000000000Z"},
+		{"trn_pre_lost", "2025-12-01T00:00:00.000000000Z"},
+		{"trn_post", "2026-07-01T00:00:00.000000000Z"},
+	} {
+		o.conversationTurn(t, turn.id, o.room.ID)
+		if _, err := o.exec(`UPDATE turn SET started_at=? WHERE id=?`, turn.started, turn.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, statement := range []string{
+		`UPDATE schema_version SET applied_at='2026-06-01T00:00:00.000000000Z' WHERE version=129`,
+		`UPDATE room_member SET joined_at='2026-01-01T00:00:00.000000000Z' WHERE room_id='` + o.room.ID + `' AND member_kind='agent' AND member_id='` + o.agent.ID + `'`,
+		`UPDATE room_member SET joined_at='2026-04-15T00:00:00.000000000Z' WHERE room_id='` + dm.ID + `'`,
+	} {
+		if _, err := o.exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := "2026-10-22T12:00:01Z turn_start turn trn_pre_lost gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:01Z assistant an unplaced answer\n" +
+		"2026-10-22T12:00:02Z turn_start turn trn_pre_open gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:02Z assistant an open answer\n" +
+		"2026-10-22T12:00:03Z turn_start turn trn_pre_dm gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:03Z tool_result room_history\n\ta private chat read in a task room\n" +
+		"2026-10-22T12:00:04Z turn_start turn trn_post gen 0 normal claude/native test\n" +
+		"2026-10-22T12:00:04Z assistant a later answer\n"
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		page, _ := json.Marshal(agentlog.Page{Text: text, Bytes: int64(len(text)), Files: 1, UpdatedAt: time.Date(2026, 10, 22, 12, 0, 5, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+	const secret = "a private chat read in a task room"
+	unplaced := "2026-10-22T12:00:01Z withheld "
+
+	// agent_output: the lead is not in the worker's private chat.
+	leadRoom := leadTurn(t, o, lead.ID, "trn_lead_pre")
+	status, out := readAgentOutput(t, o, leadKey, "/api/agent/agents/"+o.agent.ID+"/output?turns=10")
+	if status != 200 || out.Turns != 4 || out.Withheld != 2 || strings.Contains(out.Text, secret) || strings.Contains(out.Text, "an unplaced answer") ||
+		!strings.Contains(out.Text, unplaced+unknownForAgentText+"\n") || !strings.Contains(out.Text, "2026-10-22T12:00:03Z withheld "+withheldForAgentText+"\n") ||
+		!strings.Contains(out.Text, "an open answer") || !strings.Contains(out.Text, "a later answer") {
+		t.Fatalf("agent_output for the lead: %d %+v", status, out)
+	}
+	if rooms := roomReadsOf(t, o, lead.ID, "trn_lead_pre"); !sameRooms(rooms, leadRoom, o.room.ID) {
+		t.Fatalf("lead turn room reads=%v (private chat %s must not be among them)", rooms, dm.ID)
+	}
+
+	// The end of a turn on a notice to the lead.
+	delivery := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_pre", Notes: []protocol.DeliveryNote{
+		{NoteID: "note_pre_dm", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_pre_dm"}},
+		{NoteID: "note_pre_lost", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_pre_lost"}},
+		{NoteID: "note_post", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_post"}},
+	}}
+	o.srv.addWorkerOutput(ctx, &delivery)
+	for i, note := range delivery.Notes[:2] {
+		if out := note.WorkerOutput; out == nil || out.Text != "" || out.Withheld != noticeOutputWithheld {
+			t.Fatalf("notice %d: %+v", i, out)
+		}
+	}
+	if out := delivery.Notes[2].WorkerOutput; out == nil || out.Withheld != "" || !strings.Contains(out.Text, "a later answer") || strings.Contains(out.Text, secret) {
+		t.Fatalf("notice about the later turn: %+v", out)
+	}
+
+	// The log viewer: the owner is in the private chat; another owner of the project is not.
+	status, body, _ := o.get(t, o.path(o.agent.ID)+"?stream=conversation")
+	if got, _ := body["text"].(string); status != 200 || body["withheld"] != float64(1) || !strings.Contains(got, secret) ||
+		!strings.Contains(got, unplaced+unknownTurnText+"\n") || strings.Contains(got, "an unplaced answer") {
+		t.Fatalf("the owner in the private chat: %d withheld=%v\n%s", status, body["withheld"], got)
+	}
+	cookie, csrf := registerSecondUser(t, o.fixture, "otherowner")
+	other, err := o.db.UserByLogin(ctx, "otherowner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'owner')`, o.project.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	resp := o.requestAs(t, cookie, csrf, http.MethodGet, o.path(o.agent.ID)+"?stream=conversation", nil)
+	defer resp.Body.Close()
+	var view struct {
+		Text     string  `json:"text"`
+		Withheld float64 `json:"withheld"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("read as the other owner: %d %v", resp.StatusCode, err)
+	}
+	if view.Withheld != 2 || strings.Contains(view.Text, secret) || !strings.Contains(view.Text, "2026-10-22T12:00:03Z withheld "+privateTurnText+"\n") ||
+		!strings.Contains(view.Text, "an open answer") || !strings.Contains(view.Text, "a later answer") {
+		t.Fatalf("an owner outside the private chat (withheld=%v):\n%s", view.Withheld, view.Text)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // DMPeer is an active account in the caller's project that can share a
@@ -213,45 +214,110 @@ func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error
 }
 
 // TurnWithheldFrom says whether what a turn of an agent said may be shown to a person who may otherwise read that agent's output. known
-// is false when the server has no such turn of that agent (its room was removed, or the id is not one of its turns): nothing is known
-// about the rooms it served. The rooms a turn served are its own room, the room of every message it was given, and every room whose
-// content it read through a tool or was quoted in its context (turn_room_read, see RecordAgentTurnRoomReads). private is true when
-// one of them is a private chat the person is not an active member of: a private chat is its members', whatever role the person has in
-// the project. restricted is true when one of them is a restricted room (routing, advice) the person cannot read under the room-access
-// rule every other read uses (personReadsRoomSQL, the rule of UserRoomAccess): a member of its project who is its owner or operator or
-// has a seat in it. Being a global admin does not open one.
-//
-// A turn that started before migration 129 ran (it is dated by that migration's schema_version.applied_at) and has no turn_room_read row
-// did not record what its tools read, so its log may hold content of any room the agent could read then: it also counts as having served
-// every restricted room the agent was a member of when the turn started (room_member keeps joined_at and left_at), so such a turn is
-// withheld from a person who cannot read one of them. Turns after the upgrade, and a turn that has a turn_room_read row, are unaffected.
+// is false when the server cannot place the turn: it has no such turn of that agent (its room was removed, or the id is not one of its
+// turns), or the turn predates the room-read record and the agent's room membership then is not recorded (see turnServedRooms). The rooms
+// a turn served are those of turnServedRooms. private is true when one of them is a private chat the person is not an active member of: a
+// private chat is its members', whatever role the person has in the project. restricted is true when one of them is a restricted room
+// (routing, advice) the person cannot read under the room-access rule every other read uses (personReadsRoomSQL, the rule of
+// UserRoomAccess): a member of its project who is its owner or operator or has a seat in it. Being a global admin does not open one.
 func (s *Store) TurnWithheldFrom(ctx context.Context, turnID, agentID, userID string) (known, private, restricted bool, err error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return false, false, false, err
 	}
-	const served = `tr.id IN (SELECT room_id FROM turn WHERE id=? AND agent_id=?
-				UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?
-				UNION SELECT rr.room_id FROM turn_room_read rr WHERE rr.turn_id=?)`
-	var turns, closed, guarded int
+	placed, rooms, err := s.turnServedRooms(ctx, turnID, agentID)
+	if err != nil || !placed {
+		return false, false, false, err
+	}
+	in := "?" + strings.Repeat(",?", len(rooms)-1)
+	args := make([]any, 0, 2*len(rooms)+4)
+	for _, roomID := range rooms {
+		args = append(args, roomID)
+	}
+	args = append(args, userID)
+	for _, roomID := range rooms {
+		args = append(args, roomID)
+	}
+	args = append(args, userID, userID, userID)
+	var closed, guarded int
 	err = s.db.QueryRowContext(ctx, `SELECT
-		(SELECT COUNT(*) FROM turn WHERE id=? AND agent_id=?),
-		(SELECT COUNT(*) FROM room tr WHERE tr.kind='dm' AND `+served+`
+		(SELECT COUNT(*) FROM room tr WHERE tr.kind='dm' AND tr.id IN (`+in+`)
 			AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=tr.id AND m.member_kind='user'
 				AND m.member_id=? AND m.left_at IS NULL)),
-		(SELECT COUNT(*) FROM room tr WHERE tr.kind<>'dm' AND tr.restricted<>0 AND (`+served+`
-			OR EXISTS (SELECT 1 FROM turn t WHERE t.id=? AND t.agent_id=? AND t.started_at IS NOT NULL
-				AND t.started_at < (SELECT applied_at FROM schema_version WHERE version=129)
-				AND NOT EXISTS (SELECT 1 FROM turn_room_read rr WHERE rr.turn_id=t.id)
-				AND EXISTS (SELECT 1 FROM room_member am WHERE am.room_id=tr.id AND am.member_kind='agent' AND am.member_id=t.agent_id
-					AND am.joined_at<=t.started_at AND (am.left_at IS NULL OR am.left_at>t.started_at))))
-			AND NOT `+personReadsRoomSQL("?")+`)`,
-		turnID, agentID,
-		turnID, agentID, turnID, turnID, userID,
-		turnID, agentID, turnID, turnID, turnID, agentID, userID, userID, userID).Scan(&turns, &closed, &guarded)
+		(SELECT COUNT(*) FROM room tr WHERE tr.kind<>'dm' AND tr.restricted<>0 AND tr.id IN (`+in+`)
+			AND NOT `+personReadsRoomSQL("?")+`)`, args...).Scan(&closed, &guarded)
 	if err != nil {
 		return false, false, false, err
 	}
-	return turns > 0, closed > 0, guarded > 0, nil
+	return true, closed > 0, guarded > 0, nil
+}
+
+// turnServedRooms is the one statement of which rooms a turn of an agent served, shared by every reader rule that judges whether the
+// turn's conversation may be shown (TurnWithheldFrom for a person's log viewer, TurnShownToAgent for agent_output and the worker_output of
+// a notice), so the paths cannot drift. The rooms are the turn's own room, the room of every message it was given (turn_note), and every
+// room whose content it read through a tool or was quoted in its context (turn_room_read), sorted, without duplicates.
+//
+// A turn that started before migration 129 ran (it is dated by that migration's schema_version.applied_at) and has no turn_room_read row
+// did not record what its tools read, so its log may hold content of any room the agent could read then, a private chat included: it also
+// counts as having served every room the agent was a member of when the turn started (room_member keeps joined_at and left_at), private
+// chats and ordinary rooms as much as restricted ones. When that membership is not recoverable, which is taken as the agent having no
+// membership of the turn's own room that covers the turn's start, placed is false and every caller withholds the turn. Turns after the
+// upgrade, a turn that has a turn_room_read row, and a turn with no start time are judged on their records alone. placed is false as well
+// when the agent has no such turn.
+func (s *Store) turnServedRooms(ctx context.Context, turnID, agentID string) (placed bool, rooms []string, err error) {
+	var ownRoom, started string
+	var undocumented bool
+	err = s.db.QueryRowContext(ctx, `SELECT t.room_id, COALESCE(t.started_at,''),
+		COALESCE(t.started_at < (SELECT applied_at FROM schema_version WHERE version=129), 0)
+			AND NOT EXISTS (SELECT 1 FROM turn_room_read rr WHERE rr.turn_id=t.id)
+		FROM turn t WHERE t.id=? AND t.agent_id=?`, turnID, agentID).Scan(&ownRoom, &started, &undocumented)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil, nil
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	query := `SELECT room_id FROM turn WHERE id=?
+		UNION SELECT n.room_id FROM turn_note tn JOIN note n ON n.id=tn.note_id WHERE tn.turn_id=?
+		UNION SELECT rr.room_id FROM turn_room_read rr WHERE rr.turn_id=?`
+	args := []any{turnID, turnID, turnID}
+	if undocumented {
+		query += `
+		UNION SELECT am.room_id FROM room_member am WHERE am.member_kind='agent' AND am.member_id=?
+			AND am.joined_at<=? AND (am.left_at IS NULL OR am.left_at>?)`
+		args = append(args, agentID, started, started)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return false, nil, err
+	}
+	for rows.Next() {
+		var roomID string
+		if err := rows.Scan(&roomID); err != nil {
+			rows.Close()
+			return false, nil, err
+		}
+		if roomID != "" {
+			rooms = append(rooms, roomID)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return false, nil, err
+	}
+	slices.Sort(rooms)
+	rooms = slices.Compact(rooms)
+	if undocumented {
+		var member bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM room_member am WHERE am.room_id=? AND am.member_kind='agent'
+			AND am.member_id=? AND am.joined_at<=? AND (am.left_at IS NULL OR am.left_at>?))`, ownRoom, agentID, started, started).Scan(&member); err != nil {
+			return false, nil, err
+		}
+		if !member {
+			return false, rooms, nil
+		}
+	}
+	return len(rooms) > 0, rooms, nil
 }
 
 // RecordAgentTurnRoomReads notes that the agent's current turn was given content of these rooms by a toolbox read (message_get,

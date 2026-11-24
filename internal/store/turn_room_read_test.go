@@ -179,16 +179,24 @@ func TestRecordAgentTurnRoomReads(t *testing.T) {
 	}
 }
 
-// A turn that started before migration 129 ran recorded nothing about what its tools read. It is withheld from a reader who cannot read a
-// restricted room the agent was a member of when it started; a turn before the agent joined, a turn that has a record, and a turn after the
-// upgrade are judged on their records alone; the owner reads them all.
+// A turn that started before migration 129 ran recorded nothing about what its tools read, so it counts as having served every room the
+// agent was a member of when it started. It is withheld from a reader who cannot read a restricted room or is not in a private chat the
+// agent sat in then; the owner, who reads restricted rooms and is in its own chat with the agent, reads it. A turn before the agent joined,
+// a turn that has a record, and a turn after the upgrade are judged on their records alone, and a turn whose agent's membership of its own
+// room then is not recorded cannot be placed: it is withheld from everyone.
 func TestTurnBeforeRoomReadRecordsIsWithheldByAgentMembershipThen(t *testing.T) {
 	t.Parallel()
 	s, room, restricted, agent, _ := turnRoomReadFixture(t)
 	ctx := context.Background()
+	dm, err := s.OpenDM(ctx, "usr_rr_owner", agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, statement := range []string{
 		`UPDATE schema_version SET applied_at='2026-06-01T00:00:00.000000000Z' WHERE version=129`,
+		`UPDATE room_member SET joined_at='2026-01-01T00:00:00.000000000Z' WHERE room_id='` + room.ID + `' AND member_kind='agent'`,
 		`UPDATE room_member SET joined_at='2026-03-01T00:00:00.000000000Z' WHERE room_id='` + restricted.ID + `' AND member_kind='agent'`,
+		`UPDATE room_member SET joined_at='2026-04-15T00:00:00.000000000Z' WHERE room_id='` + dm.ID + `'`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -202,36 +210,61 @@ func TestTurnBeforeRoomReadRecordsIsWithheldByAgentMembershipThen(t *testing.T) 
 		}
 	}
 	insertTurn("trn_pre_member", "2026-04-01T00:00:00.000000000Z")
-	insertTurn("trn_pre_recorded", "2026-04-02T00:00:00.000000000Z")
+	insertTurn("trn_pre_dm", "2026-05-01T00:00:00.000000000Z")
+	insertTurn("trn_pre_recorded", "2026-05-02T00:00:00.000000000Z")
 	insertTurn("trn_pre_before_join", "2026-02-01T00:00:00.000000000Z")
+	insertTurn("trn_pre_unplaced", "2025-12-01T00:00:00.000000000Z")
 	insertTurn("trn_post", "2026-07-01T00:00:00.000000000Z")
 	if _, err := s.db.Exec(`INSERT INTO turn_room_read(turn_id,room_id) VALUES ('trn_pre_recorded',?)`, room.ID); err != nil {
 		t.Fatal(err)
 	}
-	open := func(id string) {
+	judge := func(id, user string) string {
 		t.Helper()
-		for _, user := range []string{"usr_rr_viewer", "usr_rr_owner"} {
-			if known, private, restricted, err := s.TurnWithheldFrom(ctx, id, agent.ID, user); err != nil || !known || private || restricted {
-				t.Fatalf("%s for %s: known=%t private=%t restricted=%t %v", id, user, known, private, restricted, err)
-			}
+		known, private, restricted, err := s.TurnWithheldFrom(ctx, id, agent.ID, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case !known:
+			return "unplaced"
+		case private:
+			return "private"
+		case restricted:
+			return "restricted"
+		}
+		return "open"
+	}
+	expect := func(id, viewer, owner string) {
+		t.Helper()
+		if got := judge(id, "usr_rr_viewer"); got != viewer {
+			t.Fatalf("%s for the viewer: %s, want %s", id, got, viewer)
+		}
+		if got := judge(id, "usr_rr_owner"); got != owner {
+			t.Fatalf("%s for the owner: %s, want %s", id, got, owner)
 		}
 	}
 	assertRestrictedFor(t, s, "trn_pre_member", agent)
-	open("trn_pre_recorded")
-	open("trn_pre_before_join")
-	open("trn_post")
+	expect("trn_pre_member", "restricted", "open")
+	expect("trn_pre_dm", "private", "open")
+	expect("trn_pre_recorded", "open", "open")
+	expect("trn_pre_before_join", "open", "open")
+	expect("trn_pre_unplaced", "unplaced", "unplaced")
+	expect("trn_post", "open", "open")
 
-	// An agent that had left the room before the turn started was not a member then.
-	if _, err := s.db.Exec(`UPDATE room_member SET left_at='2026-03-15T00:00:00.000000000Z' WHERE room_id=? AND member_kind='agent'`, restricted.ID); err != nil {
+	// An agent that had left the rooms before the turn started was not a member then.
+	if _, err := s.db.Exec(`UPDATE room_member SET left_at='2026-03-15T00:00:00.000000000Z' WHERE room_id IN (?,?) AND member_kind='agent'`, restricted.ID, dm.ID); err != nil {
 		t.Fatal(err)
 	}
-	open("trn_pre_member")
+	expect("trn_pre_member", "open", "open")
+	expect("trn_pre_dm", "open", "open")
 	// Without the migration's row there is no cutoff and nothing is withheld on this ground.
-	if _, err := s.db.Exec(`UPDATE room_member SET left_at=NULL WHERE room_id=? AND member_kind='agent'`, restricted.ID); err != nil {
+	if _, err := s.db.Exec(`UPDATE room_member SET left_at=NULL WHERE room_id IN (?,?) AND member_kind='agent'`, restricted.ID, dm.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=129`); err != nil {
 		t.Fatal(err)
 	}
-	open("trn_pre_member")
+	expect("trn_pre_member", "open", "open")
+	expect("trn_pre_dm", "open", "open")
+	expect("trn_pre_unplaced", "open", "open")
 }

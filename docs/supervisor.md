@@ -1473,11 +1473,14 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   project reads the agent's log but not those turns. A turn that started before
   migration 129 ran (the migration's `schema_version.applied_at`) and has no
   `turn_room_read` row recorded nothing about what its tools read, so it counts
-  as having served every restricted room its agent was a member of when it
-  started (`room_member` joined and left times) and is withheld from a reader
-  who cannot read one of them; turns after the upgrade are judged on their
-  records. A turn the server cannot place (its room was
-  removed, an older supervisor did not name the page's first turn) is withheld
+  as having served every room its agent was a member of when it started
+  (`room_member` joined and left times), its private chats included, and is
+  withheld from a reader who cannot read one of them; turns after the upgrade
+  are judged on their records. The same rule judges such a turn for a lead
+  (below). A turn the server cannot place (its room was
+  removed, an older supervisor did not name the page's first turn, a turn from
+  before migration 129 whose agent's membership of its own room then is not
+  recorded) is withheld
   from everyone with `<time> withheld turn the server cannot place in a room:
   content withheld`: what cannot be shown to be open is not shown. The stderr
   log is not filtered; it holds what the harness printed, not the conversation.
