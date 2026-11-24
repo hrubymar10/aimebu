@@ -59,8 +59,8 @@ func (s *Store) HoldDispatch(tool string) (release func()) {
 	}
 	s.switchHolds[tool]++
 	s.holdMu.Unlock()
-	s.turnGate.Lock() // a barrier: waits for the transactions that are open, and lets the next ones see the hold
-	s.turnGate.Unlock()
+	s.txBarrier.Lock() // a barrier: waits for the transactions that are open, and lets the next ones see the hold
+	s.txBarrier.Unlock()
 	var once sync.Once
 	return func() {
 		once.Do(func() {

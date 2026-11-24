@@ -40,11 +40,9 @@ type Store struct {
 	maxDepth      int
 	attachmentDir string
 	dbPath        string
-	// turnGate is read-held by every transaction and write-held by HoldTurns, so no turn can become pending or
-	// running between the switcher's quiescence check and the credential swap it protects.
-	turnGate sync.RWMutex
-	// turnGateWait bounds how long a transaction waits for the gate; zero means defaultTurnGateWait.
-	turnGateWait time.Duration
+	// txBarrier is read-held by every transaction. HoldDispatch write-locks and releases it at once, which waits for the
+	// transactions that are open and makes the next ones see the hold; nothing holds it for longer.
+	txBarrier sync.RWMutex
 	// holds is the limit guard's per-tool hold on new turns (see tool_hold.go).
 	holdMu sync.RWMutex
 	holds  map[string]string
@@ -54,51 +52,6 @@ type Store struct {
 	hostLogin func(tool string) string
 	// drift caches how far a room worktree is behind its base ref (see base_drift.go).
 	drift baseDriftCache
-}
-
-// defaultTurnGateWait is far longer than the file swap HoldTurns exists for (a few seconds at worst, a busy Claude
-// storage lock included), so reaching it means the holder broke its rule and is waiting on the store itself.
-const defaultTurnGateWait = 30 * time.Second
-
-// ErrTurnGateHeld: a transaction waited out turnGateWait for HoldTurns' holder. It is returned instead of hanging the store
-// forever when the holder opens a transaction itself.
-var ErrTurnGateHeld = errors.New("store: transactions are held off by a credential swap that did not finish")
-
-// enterTurnGate read-holds the gate for one transaction, giving up with ErrTurnGateHeld (or the context's error) rather
-// than waiting for ever. The caller releases it with turnGate.RUnlock.
-func (s *Store) enterTurnGate(ctx context.Context) error {
-	if s.turnGate.TryRLock() {
-		return nil
-	}
-	wait := s.turnGateWait
-	if wait <= 0 {
-		wait = defaultTurnGateWait
-	}
-	deadline := time.NewTimer(wait)
-	defer deadline.Stop()
-	poll := time.NewTicker(2 * time.Millisecond)
-	defer poll.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return ErrTurnGateHeld
-		case <-poll.C:
-			if s.turnGate.TryRLock() {
-				return nil
-			}
-		}
-	}
-}
-
-// HoldTurns blocks every new transaction (so no turn can be recorded or start running) until the returned release is
-// called. Transactions already open finish first. The holder must not open a transaction itself, and should keep the hold
-// to file I/O: the whole store waits behind it. A holder that does open one is not left hanging: every transaction waits
-// at most turnGateWait for the gate and then fails with ErrTurnGateHeld, which also frees the holder's own.
-func (s *Store) HoldTurns() (release func()) {
-	s.turnGate.Lock()
-	return s.turnGate.Unlock
 }
 
 // Open creates or opens a store, applies forward-only migrations, and enables
@@ -239,10 +192,8 @@ func (s *Store) Tx(ctx context.Context, fn func(*Tx) error) error {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return err
 	}
-	if err := s.enterTurnGate(ctx); err != nil {
-		return err
-	}
-	defer s.turnGate.RUnlock()
+	s.txBarrier.RLock()
+	defer s.txBarrier.RUnlock()
 	markedContext := context.WithValue(ctx, txContextKey{}, s)
 	inner, err := s.db.BeginTx(markedContext, nil)
 	if err != nil {
