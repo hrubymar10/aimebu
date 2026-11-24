@@ -21,6 +21,9 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 		return err
 	}
 	s.usageAlerts = tracker
+	// The snapshot's chart markers read the tracker's episode state: when a
+	// profile's history has the gap a rejected login left, the chart says so.
+	s.Usages.SetRejectionTimes(tracker.RejectionTimes)
 	s.usageAlertWake = make(chan struct{}, 1)
 	s.Usages.SetUpdateHook(s.usagesChanged)
 	go func() {
@@ -81,9 +84,20 @@ const usageLoginRejectedEvent = "usage_login_rejected"
 func (s *Server) recordRejectedLogins(tracker *usages.AlertTracker) {
 	logins := tracker.DrainRejectedLogins()
 	for _, login := range logins {
+		payload := map[string]string{
+			"tool": login.Tool, "profile": login.Profile, "hint": login.Hint}
+		// The time the poller first saw the rejection, not the time of the
+		// last poll, and the tail of the rejected credential's hash: the
+		// owner can say when the login stopped working and which login it
+		// was.
+		if !login.FirstSeen.IsZero() {
+			payload["first_seen"] = login.FirstSeen.UTC().Format(time.RFC3339)
+		}
+		if login.TokenTail != "" {
+			payload["token_tail"] = login.TokenTail
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := s.Store.RecordQuotaEvent(ctx, usageLoginRejectedEvent, map[string]string{
-			"tool": login.Tool, "profile": login.Profile, "hint": login.Hint})
+		err := s.Store.RecordQuotaEvent(ctx, usageLoginRejectedEvent, payload)
 		cancel()
 		if err != nil {
 			log.Printf("usage alerts: record %s event: %v", usageLoginRejectedEvent, err)

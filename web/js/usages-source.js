@@ -81,7 +81,9 @@ export class MockUsagesSource {
     return response;
   }
   // Evenly spread samples over the last 40 hours, newest last, shaped like the
-  // server's window history ({t: unix seconds, p: percent used}).
+  // server's window history ({t: unix seconds, p: percent used}, with
+  // rejected_at naming the first rejection of an episode whose gap the chart
+  // marks).
   mockHistory(values) {
     const step = (40 * 3600) / (values.length - 1), start = Math.floor(Date.now() / 1000) - 40 * 3600;
     return values.map((p, i) => ({ t: Math.round(start + i * step), p }));
@@ -99,7 +101,7 @@ export class MockUsagesSource {
       providers: [
         { provider_name: 'codex', label: 'Codex', order_number: 0, enabled: true, available: true, profiles: [
           { profile_name: 'main', active: true, has_credentials: true, email: 'main@example.test', plan: 'Pro', status: 'ok', last_refresh_at: new Date().toISOString(), credits: { label: 'Credits', balance: 12.5 }, windows: [
-            { key: 'session', percent_used: 42, reset_at: reset(2), history: this.mockHistory([60, 20, 25, 33, 42]), pace: { expected_percent: 55, delta_percent: -13, state: 'reserve', lasts_to_reset: true } },
+            { key: 'session', percent_used: 42, reset_at: reset(2), rejected_at: Math.floor(Date.now() / 1000) - 30 * 3600, history: this.mockHistory([60, 20, 25, 33, 42]), pace: { expected_percent: 55, delta_percent: -13, state: 'reserve', lasts_to_reset: true } },
             { key: 'weekly', percent_used: 64, reset_at: reset(72), pace: { expected_percent: 50, delta_percent: 14, state: 'deficit', eta_seconds: 86400 } },
             { key: 'codex_spark', percent_used: 7, reset_at: reset(3) },
           ] },

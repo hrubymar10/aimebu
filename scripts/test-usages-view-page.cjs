@@ -92,6 +92,19 @@ async function main() {
       // v1's look: the tile is the v1 card, the bar is a thin rounded track, and there is no spark caption.
       assert.deepEqual(await again.evaluate(selector => { const t = document.querySelector(selector), tr = t.querySelector('.usages-progress'); return { radius: getComputedStyle(t).borderTopLeftRadius !== '0px', trackH: getComputedStyle(tr).height, caption: !!t.querySelector('.usage-spark-caption'), legend: /expected pace/.test(document.querySelector('.usages-legend').textContent) }; }, tile('codex')),
         { radius: true, trackH: '6px', caption: false, legend: true });
+      // The mark of a rejected login: the series whose samples stopped because
+      // the login was rejected carries a small dashed tick where they stopped,
+      // named by its tooltip and the line's aria-label; the windows of the same
+      // profile without a rejection, like any ordinary gap, carry none.
+      const marks = await again.evaluate(selector => [...document.querySelector(selector).querySelectorAll('.usages-window-row')].map(row => ({
+        marked: !!row.querySelector('svg.usages-b-spark .usages-spark-rejected'),
+        tooltip: row.querySelector('svg.usages-b-spark .usages-spark-rejected title')?.textContent ?? '',
+        label: row.querySelector('svg.usages-b-spark')?.getAttribute('aria-label') ?? '',
+      })), `${tile('codex')} .usages-b-profile[data-profile=main]`);
+      assert.deepEqual(marks.map(mark => mark.marked), [true, false, false], 'the rejected series is marked, the others are not');
+      assert.ok(marks[0].tooltip.startsWith('Login rejected'), `the marker's tooltip says what happened: ${marks[0].tooltip}`);
+      assert.ok(marks[0].label.includes('Login rejected'), `the line's aria-label says it too: ${marks[0].label}`);
+      assert.equal(marks[1].marked, false, 'a window without a rejection carries no marker');
       // Switching asks first, then writes: the same flow as A.
       await click(again, `${tile('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
       await dialog(again);

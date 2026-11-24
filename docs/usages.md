@@ -186,7 +186,13 @@ still rejected, the item opens then. The episode raises once: further
 rejected polls add nothing, also after a server restart while the episode is
 still going (the episode state lives in `usages/alerts.json` beside the other
 alert state), and it resolves itself when the profile reads `ok` again; a
-later rejection is a new episode with a new event and item. The alert can be
+later rejection is a new episode with a new event and item. The alert and the
+event say when the poller **first** saw the rejection — not the time of the
+last poll, which can be much later — and name the rejected credential by the
+last six hex characters of its hash, never the credential itself and never a
+prefix of it, so two logins of one provider can be told apart. The episode
+state keeps that first-seen time and hash tail for the episode; an older
+`alerts.json` without them still loads. The alert can be
 dismissed like the other usage alerts and stays dismissed for the rest of the
 episode. A profile that disappears (removed, or its provider disabled or
 unavailable) closes the alert and ends the episode, so a reappearing account
@@ -417,7 +423,12 @@ in Settings → Server → Accounts & usage and in the header popover. The serve
 ring per provider, profile and window in `usages/history.json` (mode 0600, not
 in SQLite): one sample of the used percentage at most every 15 minutes, only
 from a fresh successful snapshot (a stale or failed read leaves a gap, not a
-flat line), the last 48 hours and at most 193 samples per series. It survives a
+flat line), the last 48 hours and at most 193 samples per series. A gap that a
+rejected login left is marked as such: the snapshot's windows carry
+`rejected_at` (the first rejection of the profile's current or last episode,
+while it is inside the 48-hour span) and the chart draws a small dashed tick on
+that series' line at that time, named by its tooltip and the line's label — an
+ordinary gap, like the server being down, carries nothing. It survives a
 restart and a removed profile takes its series with it. A series is keyed by the
 switcher profile name: the live account is recorded under the name of the
 profile whose credentials are live (never `local`), so an account switch, from

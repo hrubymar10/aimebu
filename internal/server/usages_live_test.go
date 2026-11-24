@@ -537,7 +537,7 @@ func TestLoginRejectedBellEventAndInboxItem(t *testing.T) {
 	f.srv.usageAlerts = tracker
 	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
 		Profiles: []usages.Profile{{ProfileName: "work", Active: true, AlertIdentity: "ident\x00work", Status: "auth_missing",
-			Error: "Codex usage request failed with HTTP 401."}}}}}
+			Error: "Codex usage request failed with HTTP 401.", TokenTail: "dead42"}}}}}
 	if _, err := tracker.Observe(snapshot); err != nil {
 		t.Fatal(err)
 	}
@@ -567,15 +567,26 @@ func TestLoginRejectedBellEventAndInboxItem(t *testing.T) {
 		t.Fatalf("one notable bell event: %+v", rejected)
 	}
 	var payload struct {
-		Tool    string `json:"tool"`
-		Profile string `json:"profile"`
-		Hint    string `json:"hint"`
+		Tool      string `json:"tool"`
+		Profile   string `json:"profile"`
+		Hint      string `json:"hint"`
+		FirstSeen string `json:"first_seen"`
+		TokenTail string `json:"token_tail"`
 	}
 	if err := json.Unmarshal([]byte(rejected[0].PayloadJSON), &payload); err != nil {
 		t.Fatal(err)
 	}
 	if payload.Tool != "codex" || payload.Profile != "work" || payload.Hint != "Run codex login." {
 		t.Fatalf("event payload: %+v", payload)
+	}
+	// The event says when the poller first saw the rejection, not when it was
+	// recorded, and which credential was rejected, by its hash tail only.
+	seen, err := time.Parse(time.RFC3339, payload.FirstSeen)
+	if err != nil || time.Since(seen) > time.Minute {
+		t.Fatalf("event first_seen: %q (%v)", payload.FirstSeen, err)
+	}
+	if payload.TokenTail != "dead42" {
+		t.Fatalf("event token_tail: %+v", payload)
 	}
 	// A second drain records nothing: once per episode.
 	f.srv.recordRejectedLogins(tracker)
@@ -601,8 +612,46 @@ func TestLoginRejectedBellEventAndInboxItem(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Kind != "usage_alert" ||
-		items[0].Question != "Codex · work: login rejected: log in again. Run codex login." {
+	if len(items) != 1 || items[0].Kind != "usage_alert" {
 		t.Fatalf("inbox item: %+v", items)
+	}
+	// The item names the fix and says when the login was first rejected and
+	// which credential it was, by its hash tail.
+	question := items[0].Question
+	if !strings.HasPrefix(question, "Codex · work: login rejected: log in again. Run codex login. First rejected at ") ||
+		!strings.HasSuffix(question, "(token hash tail dead42).") {
+		t.Fatalf("inbox item text: %q", question)
+	}
+}
+
+// The chart's marker is wired in StartUsageAlerts: the Reader's snapshots
+// read the tracker's episode state. The Reader side and the tracker side are
+// covered in internal/usages (TestSnapshotMarksARejectedSeriesWithinTheSpan
+// with a real tracker).
+func TestStartUsageAlertsWiresTheRejectionTimes(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	var err error
+	f.srv.Usages, err = usages.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.srv.StartUsageAlerts(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	tracker := f.srv.usageAlerts
+	rejected := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []usages.Profile{{ProfileName: "work", Active: true, AlertIdentity: "ident\x00work", Status: "auth_missing",
+			Error: "Codex usage request failed with HTTP 401."}}}}}
+	if _, err := tracker.Observe(rejected); err != nil {
+		t.Fatal(err)
+	}
+	// The server's snapshot answers through the tracker's RejectionTimes
+	// without an extra wiring step.
+	times := tracker.RejectionTimes()
+	if _, seen := times["codex\x00work"]; !seen {
+		t.Fatalf("the tracker lists the episode: %+v", times)
 	}
 }

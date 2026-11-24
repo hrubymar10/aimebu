@@ -92,11 +92,23 @@ func usageAlertQuestion(alert usages.UsageAlert) string {
 	case "login_rejected":
 		// Hint is a full sentence naming the CLI (codex login, claude /login)
 		// or the provider's own redacted fix; an older record without one
-		// still reads complete.
+		// still reads complete. FirstSeen and the credential's hash tail say
+		// when the login stopped working and which login it was — not the
+		// time the item was raised, which can be later.
+		text := ""
 		if alert.Hint == "" {
-			return fmt.Sprintf("%s: login rejected: log in again.", who)
+			text = fmt.Sprintf("%s: login rejected: log in again.", who)
+		} else {
+			text = fmt.Sprintf("%s: login rejected: log in again. %s", who, alert.Hint)
 		}
-		return fmt.Sprintf("%s: login rejected: log in again. %s", who, alert.Hint)
+		if alert.FirstSeen != nil && !alert.FirstSeen.IsZero() {
+			text += fmt.Sprintf(" First rejected at %s", alert.FirstSeen.UTC().Format("2 Jan 2006 15:04 MST"))
+			if alert.TokenTail != "" {
+				text += fmt.Sprintf(" (token hash tail %s)", alert.TokenTail)
+			}
+			text += "."
+		}
+		return text
 	default:
 		return fmt.Sprintf("%s · %s: %.1f%% remaining; %s.", who, alert.Window, alert.Remaining, reset)
 	}

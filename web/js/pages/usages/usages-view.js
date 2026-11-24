@@ -48,8 +48,9 @@ export function WindowRow({ window, usedDisplay, fetchedAt, stale }) {
       <span style=${{ width: `${value}%` }}></span>
       ${pace && Number.isFinite(expected) && html`<i class=${`usages-pace-tick usages-pace-tick--${state}`} style=${{ left: `${usedDisplay ? percent(expected) : 100 - percent(expected)}%` }} title="Expected pace"></i>`}
     </div>
-    ${spark && html`<svg class="usages-b-spark" viewBox=${spark.viewBox} preserveAspectRatio="none" role="img" aria-label=${spark.label}><title>${`${spark.label} (the thin line)`}</title>
-      <polyline points=${spark.points} fill="none" vector-effect="non-scaling-stroke" /><circle cx=${spark.end[0]} cy=${spark.end[1]} r="1.6" /></svg>`}
+    ${spark && html`<svg class="usages-b-spark" viewBox=${spark.viewBox} preserveAspectRatio="none" role="img" aria-label=${spark.marker ? `${spark.label}. ${spark.marker.label}` : spark.label}><title>${`${spark.label} (the thin line)`}</title>
+      <polyline points=${spark.points} fill="none" vector-effect="non-scaling-stroke" /><circle cx=${spark.end[0]} cy=${spark.end[1]} r="1.6" />
+      ${spark.marker && html`<line class="usages-spark-rejected" x1=${spark.marker.x} y1="1" x2=${spark.marker.x} y2="19" vector-effect="non-scaling-stroke"><title>${spark.marker.label}</title></line>`}</svg>`}
     <div class="usages-window-meta"><strong>${`${shown(value)} ${side}`}</strong><span>${window.reset_at ? (stale ? staleResetText(window.reset_at) : `Resets in ${countdown(window.reset_at)}`) : ''}</span></div>
     ${paceText && html`<div class=${`usages-pace-text usages-pace-text--${state}`} title=${explanation} tabindex="0" aria-label=${`${paceText}. ${explanation}`}>
       ${paceLabel && html`<span>${paceLabel}</span>`}${paceLabel && eta && html`<span class="usages-pace-sep">·</span>`}${eta && html`<span>${eta}</span>`}</div>`}

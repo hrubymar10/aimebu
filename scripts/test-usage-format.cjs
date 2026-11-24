@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'usage-format.js'), 'utf8');
 const context = vm.createContext({ Date });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { windowLabel, isMonthlyWindow, dailyTarget, dailyTargetText };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { windowLabel, isMonthlyWindow, dailyTarget, dailyTargetText, sparkGeometry };', context);
 const f = context.api;
 
 assert.deepEqual([f.windowLabel('monthly_spend'), f.windowLabel('monthly'), f.windowLabel('weekly_scoped:team-research')], ['Monthly spend', 'Monthly', 'Weekly (team research)']);
@@ -29,3 +29,28 @@ assert.equal(f.dailyTargetText(monthly(new Date(2026, 5, 20, 9, 0), 40), now), '
 assert.equal(f.dailyTargetText(monthly(new Date(2026, 5, 20, 9, 0), 40.25), now), '≈ 9.96% / day to last until reset', 'two decimals at most');
 
 console.log('ok usage-format');
+
+// The 48-hour sparkline geometry, and the marker a rejected login leaves on it:
+// a marker only when the rejection falls inside the span and on a visible gap
+// (after the series' first sample), never for an ordinary gap.
+const HOUR = 3600000;
+const sparkNow = Date.parse('2026-11-24T12:00:00Z');
+const sparkStart = (sparkNow - 40 * HOUR) / 1000;
+const sparkWindow = rejected => ({
+  key: 'session',
+  history: [
+    { t: sparkStart, p: 10 },
+    { t: sparkStart + 10 * 3600, p: 20 },
+    { t: sparkStart + 20 * 3600, p: 30 },
+  ],
+  ...(rejected ? { rejected_at: rejected } : {}),
+});
+const spark = f.sparkGeometry(sparkWindow(), 'used', sparkNow);
+assert.equal(spark.marker, null, 'an ordinary gap (the server being down) carries no marker');
+assert.equal(spark.label, 'Session over the last 48 hours: 10% to 30% used');
+const marked = f.sparkGeometry(sparkWindow(sparkStart + 12 * 3600), 'used', sparkNow);
+assert.ok(marked.marker, 'a rejected series carries a marker at the first rejection');
+assert.equal(Number(marked.marker.x) > 0 && Number(marked.marker.x) < 100, true, `the marker sits inside the line: ${marked.marker.x}`);
+assert.ok(marked.marker.label.startsWith('Login rejected'), `the marker says what happened: ${marked.marker.label}`);
+assert.equal(f.sparkGeometry(sparkWindow(sparkStart - 3600), 'used', sparkNow).marker, null, 'a rejection before the first sample leaves no gap to mark');
+assert.equal(f.sparkGeometry(sparkWindow((sparkNow - 49 * HOUR) / 1000), 'used', sparkNow).marker, null, 'a rejection older than the span is not marked');

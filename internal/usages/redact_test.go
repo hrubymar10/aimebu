@@ -53,8 +53,8 @@ func TestForAdminAllowListCoversEveryField(t *testing.T) {
 	}{
 		{"Response", fields(Response{}), []string{"Providers", "Settings", "SwitcherEnabled", "CredentialAlerts"}},
 		{"Provider", fields(Provider{}), []string{"ProviderName", "Label", "OrderNumber", "Enabled", "Available", "EnterpriseHost", "TokenConfigured", "CookieConfigured", "APIKeyConfigured", "AuthMode", "Profiles"}},
-		{"Profile", fields(Profile{}), []string{"ProfileName", "AlertIdentity", "AlertCredential", "ToolMigrated", "Active", "HasCredentials", "Email", "ExpiresAt", "Status", "Plan", "Windows", "Credits", "LastRefreshAt", "Stale", "ErrorKind", "RetryAt", "Error", "ErrorDetail"}},
-		{"Window", fields(Window{}), []string{"Key", "PercentUsed", "ResetAt", "WindowDurationSeconds", "Pace", "History"}},
+		{"Profile", fields(Profile{}), []string{"ProfileName", "AlertIdentity", "AlertCredential", "ToolMigrated", "Active", "HasCredentials", "Email", "ExpiresAt", "Status", "Plan", "Windows", "Credits", "LastRefreshAt", "Stale", "ErrorKind", "RetryAt", "Error", "ErrorDetail", "TokenTail"}},
+		{"Window", fields(Window{}), []string{"Key", "PercentUsed", "ResetAt", "WindowDurationSeconds", "Pace", "History", "RejectedAt"}},
 		{"Pace", fields(Pace{}), []string{"ExpectedPercent", "DeltaPercent", "State", "EtaSeconds", "LastsToReset"}},
 		{"Credits", fields(Credits{}), []string{"Label", "Balance", "SpendLimit"}},
 		{"HistoryPoint", fields(HistoryPoint{}), []string{"T", "P"}},

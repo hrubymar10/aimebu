@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func TestUsageAlertsSurviveRestartAndRearmOnReset(t *testing.T) {
@@ -1300,4 +1302,143 @@ func TestLoginRejectedRenameKeepsTheEpisode(t *testing.T) {
 	if len(got) != 1 || got[0].Profile != "renamed" {
 		t.Fatalf("the item follows the name: %+v", got)
 	}
+}
+
+func TestLoginRejectedFirstSeenAndTailAreRecordedOnce(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfileWithTail("work", true, "auth_missing", "a1b2c3")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	alerts := tracker.OpenAlerts()
+	if len(alerts) != 1 || alerts[0].FirstSeen == nil || !alerts[0].FirstSeen.Equal(now) || alerts[0].TokenTail != "a1b2c3" {
+		t.Fatalf("the item carries the first-seen time and the hash tail: %+v", alerts[0])
+	}
+	logins := drainedLogins(t, tracker)
+	if len(logins) != 1 || logins[0].FirstSeen != now || logins[0].TokenTail != "a1b2c3" {
+		t.Fatalf("the bell event carries the first-seen time and the hash tail: %+v", logins)
+	}
+	// Later polls of the same episode change neither.
+	now = now.Add(5 * time.Minute)
+	response.Providers[0].Profiles[0].TokenTail = "f9e8d7"
+	observeLogin(t, tracker, response, false)
+	alerts = tracker.OpenAlerts()
+	if len(alerts) != 1 || !alerts[0].FirstSeen.Equal(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)) || alerts[0].TokenTail != "a1b2c3" {
+		t.Fatalf("a later poll must not move the first-seen time or the tail: %+v", alerts[0])
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("once per episode: %+v", logins)
+	}
+	// Recovery, then a fresh rejection with a fresh credential: a new episode
+	// records a new first-seen time and tail.
+	response.Providers[0].Profiles[0] = Profile{ProfileName: "work", Active: true, Status: "ok", AlertIdentity: "ident\x00work"}
+	observeLogin(t, tracker, response, true)
+	now = now.Add(time.Minute)
+	response.Providers[0].Profiles[0] = rejectedProfileWithTail("work", true, "scope_missing", "0f1e2d")
+	observeLogin(t, tracker, response, true)
+	alerts = tracker.OpenAlerts()
+	if len(alerts) != 1 || !alerts[0].FirstSeen.Equal(now) || alerts[0].TokenTail != "0f1e2d" {
+		t.Fatalf("a new episode records its own first-seen time and tail: %+v", alerts[0])
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 1 || logins[0].FirstSeen != now || logins[0].TokenTail != "0f1e2d" {
+		t.Fatalf("the new episode's bell event carries them too: %+v", logins)
+	}
+}
+
+func TestLoginRejectedOldStateWithoutTheFieldsLoads(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("work", true, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	drainedLogins(t, tracker)
+	// Rewrite the saved state the way an older version wrote it: no
+	// first_seen and no token_tail on the episode.
+	data, err := os.ReadFile(tracker.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	var auth map[string]map[string]any
+	if err := json.Unmarshal(saved["auth"], &auth); err != nil {
+		t.Fatal(err)
+	}
+	if len(auth) != 1 {
+		t.Fatalf("one episode expected: %+v", auth)
+	}
+	for _, episode := range auth {
+		delete(episode, "first_seen")
+		delete(episode, "token_tail")
+	}
+	saved["auth"], err = json.Marshal(auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tracker.path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The old file loads and the ongoing episode continues without a second
+	// bell; the first-seen time is backfilled from the next observation.
+	tracker, err = NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	observeLogin(t, tracker, response, false)
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("an old state must not raise a second bell: %+v", logins)
+	}
+	times := tracker.RejectionTimes()
+	if got := times["codex\x00work"]; got.IsZero() || !got.Equal(now) {
+		t.Fatalf("the episode's first-seen time is backfilled: %+v", times)
+	}
+}
+
+func TestLoginRejectedRejectionTimesFollowTheEpisode(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("work", true, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	if got := tracker.RejectionTimes()["codex\x00work"]; !got.Equal(now) {
+		t.Fatalf("the episode's first-seen time is listed: %v", got)
+	}
+	// Recovery keeps it listed, so the gap the episode left stays explainable.
+	response.Providers[0].Profiles[0] = Profile{ProfileName: "work", Active: true, Status: "ok", AlertIdentity: "ident\x00work"}
+	observeLogin(t, tracker, response, true)
+	if got := tracker.RejectionTimes()["codex\x00work"]; !got.Equal(now) {
+		t.Fatalf("a recovered episode stays listed: %v", got)
+	}
+	// The profile disappears: the record goes with it (the episode was
+	// already closed by the recovery, so nothing visible changes).
+	response.Providers[0].Profiles = nil
+	observeLogin(t, tracker, response, false)
+	if times := tracker.RejectionTimes(); len(times) != 0 {
+		t.Fatalf("a disappeared account is no longer listed: %+v", times)
+	}
+}
+
+func rejectedProfileWithTail(name string, active bool, status string, tail string) Profile {
+	profile := rejectedProfile(name, active, status)
+	profile.TokenTail = tail
+	return profile
 }

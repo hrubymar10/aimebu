@@ -42,10 +42,19 @@ type UsageAlert struct {
 	// command for Codex and Claude Code, the provider's own redacted
 	// rejection message for the configured-credential providers. It is a
 	// full sentence, shown as is.
-	Hint      string    `json:"hint,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	Open      bool      `json:"open"`
-	BaseKey   string    `json:"base_key"`
+	Hint string `json:"hint,omitempty"`
+	// FirstSeen is when the poller first saw this episode's rejection, so
+	// the alert can say when the login stopped working and not just when
+	// the item was raised (the two differ when an inactive profile's
+	// episode opened before it became active). TokenTail is the tail of
+	// the hash of the credential the poller sent when it was rejected —
+	// never the credential itself, never a prefix of it — so the owner can
+	// tell which of two logins was rejected.
+	FirstSeen *time.Time `json:"first_seen,omitempty"`
+	TokenTail string     `json:"token_tail,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	Open      bool       `json:"open"`
+	BaseKey   string     `json:"base_key"`
 }
 
 type alertWindow struct {
@@ -106,20 +115,27 @@ type alertState struct {
 // authEpisode is one account's login-rejection episode state. Inbox records
 // that the episode's Inbox item was raised, so a dismissal or a close keeps
 // it closed for the rest of the episode; only a recovery and a fresh
-// rejection raise the next one.
+// rejection raise the next one. FirstSeen is when the poller first saw the
+// rejection and TokenTail the tail of the rejected credential's hash; both
+// are recorded once at the episode start and stay for the episode. An older
+// file without them loads with them empty.
 type authEpisode struct {
-	Episode int  `json:"episode"`
-	Open    bool `json:"open,omitempty"`
-	Inbox   bool `json:"inbox,omitempty"`
+	Episode   int       `json:"episode"`
+	Open      bool      `json:"open,omitempty"`
+	Inbox     bool      `json:"inbox,omitempty"`
+	FirstSeen time.Time `json:"first_seen,omitempty"`
+	TokenTail string    `json:"token_tail,omitempty"`
 }
 
 // RejectedLogin is one login-rejection episode the last Observe started, for
 // the server to record as the owner's bell event.
 type RejectedLogin struct {
-	Provider string
-	Tool     string
-	Profile  string
-	Hint     string
+	Provider  string
+	Tool      string
+	Profile   string
+	Hint      string
+	FirstSeen time.Time
+	TokenTail string
 }
 
 // loginRejectedTier marks a login-rejected alert. It is not behind a toggle:
@@ -136,6 +152,11 @@ type AlertTracker struct {
 	// pendingRejected collects the episodes Observe started; the server
 	// drains them to record the owner's bell events.
 	pendingRejected []RejectedLogin
+	// authNames maps each tracked auth base to the provider and profile
+	// name it was last observed under, so RejectionTimes can answer per
+	// profile. It is rebuilt on every Observe and not persisted: the next
+	// observation repopulates it.
+	authNames map[string]string
 }
 
 // NewAlertTracker uses the wall clock unless now is supplied by a caller that
@@ -146,7 +167,8 @@ func NewAlertTracker(root string, now ...func() time.Time) (*AlertTracker, error
 		clock = now[0]
 	}
 	t := &AlertTracker{path: filepath.Join(root, "alerts.json"), clock: clock,
-		state: alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}, Auth: map[string]authEpisode{}}}
+		state:     alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}, Auth: map[string]authEpisode{}},
+		authNames: map[string]string{}}
 	data, err := os.ReadFile(t.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return t, nil
@@ -174,6 +196,7 @@ func (t *AlertTracker) recoverCorrupt(reason error) {
 		telemetry.WarnCause(context.Background(), "credentials", "usage alerts: the corrupt state file was moved aside")
 	}
 	t.state = alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}, Auth: map[string]authEpisode{}}
+	t.authNames = map[string]string{}
 }
 
 func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
@@ -207,6 +230,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 	paceOn, resetOn, expiryOn := snapshot.Settings.AlertPaceEnabled, snapshot.Settings.AlertResetNoticeEnabled, snapshot.Settings.AlertExpiryEnabled
 	keptExpiry := map[string]string{}
 	liveAuth := map[string]string{}
+	authNames := map[string]string{}
 	for _, provider := range snapshot.Providers {
 		if !provider.Enabled || !provider.Available {
 			continue
@@ -286,20 +310,36 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			// item.
 			authBase := authBaseKey(provider.ProviderName, account)
 			liveAuth[authBase] = profile.ProfileName
+			authNames[authBase] = provider.ProviderName + "\x00" + profile.ProfileName
 			switch profile.Status {
 			case string(providers.StatusAuthMissing), string(providers.StatusScopeMissing):
 				hint := loginHint(provider.ProviderName, profile)
 				episode := t.state.Auth[authBase]
 				if !episode.Open {
-					episode = authEpisode{Episode: episode.Episode + 1, Open: true}
+					episode = authEpisode{Episode: episode.Episode + 1, Open: true,
+						FirstSeen: t.clock().UTC(), TokenTail: profile.TokenTail}
 					t.pendingRejected = append(t.pendingRejected, RejectedLogin{
 						Provider: provider.ProviderName, Tool: authTool(provider.ProviderName),
-						Profile: profile.ProfileName, Hint: hint})
+						Profile: profile.ProfileName, Hint: hint,
+						FirstSeen: episode.FirstSeen, TokenTail: episode.TokenTail})
 					changed = true
+				} else {
+					// A first-seen time the record lacks (an older file, or a
+					// tail the fetch could not see yet) is filled once, from
+					// this observation: the episode itself is older, and the
+					// time is only ever moved forward to cover it.
+					if episode.FirstSeen.IsZero() {
+						episode.FirstSeen = t.clock().UTC()
+						changed = true
+					}
+					if episode.TokenTail == "" && profile.TokenTail != "" {
+						episode.TokenTail = profile.TokenTail
+						changed = true
+					}
 				}
 				if profile.Active && !episode.Inbox {
 					episode.Inbox = true
-					t.addRejectedAlert(authBase, episode.Episode, provider.ProviderName, profile.ProfileName, hint)
+					t.addRejectedAlert(authBase, episode.Episode, provider.ProviderName, profile.ProfileName, hint, episode.FirstSeen, episode.TokenTail)
 					visibleChanged, changed = true, true
 				}
 				t.state.Auth[authBase] = episode
@@ -486,6 +526,14 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		}
 		delete(t.state.Auth, base)
 	}
+	// Keep only the names of accounts still tracked, so RejectionTimes never
+	// answers for an episode whose account is gone.
+	t.authNames = make(map[string]string, len(t.state.Auth))
+	for base := range t.state.Auth {
+		if name, seen := authNames[base]; seen {
+			t.authNames[base] = name
+		}
+	}
 	for id, alert := range t.state.Alerts {
 		if !alert.Open {
 			continue
@@ -653,11 +701,34 @@ func loginHint(provider string, profile Profile) string {
 
 // addRejectedAlert raises the episode's Inbox item. Its id carries the
 // episode number, so the next episode raises a fresh item even though the
-// window-less base key is the same.
-func (t *AlertTracker) addRejectedAlert(base string, episode int, provider, profile, hint string) {
+// window-less base key is the same. The item carries the episode's first
+// rejection time and the rejected credential's hash tail, so it says when
+// the login stopped working and which login it was.
+func (t *AlertTracker) addRejectedAlert(base string, episode int, provider, profile, hint string, firstSeen time.Time, tokenTail string) {
 	id := "usage_alert_" + alertHash(base + "\x00" + fmt.Sprint(episode) + "\x00" + loginRejectedTier)[:24]
 	t.state.Alerts[id] = UsageAlert{ID: id, Provider: provider, Profile: profile, Tier: loginRejectedTier,
-		Hint: hint, CreatedAt: t.clock().UTC(), Open: true, BaseKey: base}
+		Hint: hint, FirstSeen: &firstSeen, TokenTail: tokenTail, CreatedAt: t.clock().UTC(), Open: true, BaseKey: base}
+}
+
+// RejectionTimes says when each profile's current or last rejection episode
+// was first seen, keyed "provider\x00profile name" as the snapshot names
+// them (the live account is "local"). A recovered episode is still listed
+// until its account disappears, so a chart can mark the gap its rejection
+// left; the caller bounds it to the history span. The map is empty when no
+// episode has been observed yet.
+func (t *AlertTracker) RejectionTimes() map[string]time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := map[string]time.Time{}
+	for base, episode := range t.state.Auth {
+		if episode.FirstSeen.IsZero() {
+			continue
+		}
+		if name, seen := t.authNames[base]; seen {
+			out[name] = episode.FirstSeen
+		}
+	}
+	return out
 }
 
 // DrainRejectedLogins returns the login-rejection episodes the last Observe
@@ -701,6 +772,29 @@ func levelIsStronger(got, was string) bool {
 func alertHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+// tokenTail is the last six hex characters of a credential's SHA-256: enough
+// to tell two credentials apart, never the credential itself and never a
+// prefix of it.
+func tokenTail(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[len(sum)-3:])
+}
+
+// nonEmptyCredentials keeps the configured credentials in a fixed order, so
+// the same credential set always hashes the same.
+func nonEmptyCredentials(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // OpenAlerts returns the alerts that belong in the Inbox: every open tier

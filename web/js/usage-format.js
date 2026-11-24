@@ -75,7 +75,10 @@ export function staleResetText(value, now = Date.now()) {
 const SPARK_SPAN_MS = 48 * 3600000;
 
 // The geometry of a window's recent used-percentage samples, or null when there are fewer than two. The x axis is the last 48
-// hours, so a gap in the data reads as a gap; the y axis follows the percent display (used or left).
+// hours, so a gap in the data reads as a gap; the y axis follows the percent display (used or left). A window whose samples
+// stopped because its login was rejected (`rejected_at`, unix seconds, the episode's first rejection) also carries a marker
+// at that time, so the gap says why it is there; an ordinary gap (the server being down) carries nothing. The marker is only
+// drawn when it falls on a visible gap: after the series' first sample, so there is a sample on its left.
 export function sparkGeometry(window, usedDisplay, now = Date.now()) {
   const points = (window.history || []).filter(point => Number.isFinite(Number(point.t)) && Number.isFinite(Number(point.p)) && point.t * 1000 >= now - SPARK_SPAN_MS);
   if (points.length < 2) return null;
@@ -87,7 +90,13 @@ export function sparkGeometry(window, usedDisplay, now = Date.now()) {
     const y = height - pad - (shown(point) / 100) * (height - 2 * pad);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
-  return { viewBox: `0 0 ${width} ${height}`, label: `${windowLabel(window.key)} over the last 48 hours: ${Math.round(first)}% to ${Math.round(last)}% ${usedDisplay ? 'used' : 'left'}`, points: coords.join(' '), end: coords[coords.length - 1].split(',') };
+  const rejected = Number(window.rejected_at);
+  let marker = null;
+  if (Number.isFinite(rejected) && rejected * 1000 >= now - SPARK_SPAN_MS && rejected >= points[0].t) {
+    const x = Math.max(0, Math.min(width, ((rejected * 1000 - (now - SPARK_SPAN_MS)) / SPARK_SPAN_MS) * width));
+    marker = { x: x.toFixed(1), label: `Login rejected ${new Date(rejected * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` };
+  }
+  return { viewBox: `0 0 ${width} ${height}`, label: `${windowLabel(window.key)} over the last 48 hours: ${Math.round(first)}% to ${Math.round(last)}% ${usedDisplay ? 'used' : 'left'}`, points: coords.join(' '), end: coords[coords.length - 1].split(','), marker };
 }
 
 // What the pace line means, in a sentence: pace compares the share used with the share an even spend would have used by
@@ -103,4 +112,4 @@ export function paceExplanation(pace, usedDisplay) {
 
 // What the marks on a usage card mean, said once under the cards (the Usages page and the popover): hovering a mark shows the same words, but a tooltip
 // is not something a phone or a keyboard finds.
-export const USAGE_LEGEND = 'On each bar the small tick is the expected pace for the time that has passed in the window. "In reserve" means you are using less than that pace, "in deficit" more. The thin line is the last 48 hours of use.';
+export const USAGE_LEGEND = 'On each bar the small tick is the expected pace for the time that has passed in the window. "In reserve" means you are using less than that pace, "in deficit" more. The thin line is the last 48 hours of use; a short dashed tick on it marks where the samples stopped because a login was rejected.';

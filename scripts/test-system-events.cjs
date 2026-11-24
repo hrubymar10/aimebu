@@ -99,12 +99,18 @@ assert.equal(describe(quota('limit_guard_hard', { tool: 'codex', profile: 'b', p
 assert.equal(describe(quota('limit_guard_hard', { tool: 'claude', profile: 'main', percent: '100', window: 'session', next: 'dry_run' })).details, 'claude · main · 100% session · the quota switcher would move off it, but it is in dry run');
 assert.equal(describe(quota('limit_guard_clear', { tool: 'codex', profile: 'b', percent: '5', window: 'weekly' })).text, 'Usage back under the limit: new turns resume');
 
-// The rejected-login event names the tool, the profile and the way back in.
+// The rejected-login event names the tool, the profile and the way back in,
+// and — when the server recorded them — when the poller first saw the
+// rejection and the tail of the rejected credential's hash.
 view = describe(quota('usage_login_rejected', { tool: 'codex', profile: 'work', hint: 'Run codex login.' }));
 assert.equal(view.text, 'Usage login rejected: codex work');
 assert.equal(view.details, 'Run codex login.');
 assert.equal(describe(quota('usage_login_rejected', {})).text, 'Usage login rejected', 'a payload without its pieces still renders');
 assert.equal(describe(quota('usage_login_rejected', { tool: 'claude', profile: 'main', hint: 'Run claude /login.' })).text, 'Usage login rejected: claude main');
+const rejectedAt = describe(quota('usage_login_rejected', { tool: 'codex', profile: 'work', hint: 'Run codex login.', first_seen: '2026-11-24T17:32:00Z', token_tail: 'dead42' }));
+assert.ok(rejectedAt.details.startsWith('Run codex login. First rejected at '), `the event says when the rejection was first seen: ${rejectedAt.details}`);
+assert.ok(rejectedAt.details.endsWith('(token hash tail dead42).'), `the event names the credential by its hash tail: ${rejectedAt.details}`);
+assert.equal(describe(quota('usage_login_rejected', { tool: 'codex', profile: 'work', first_seen: 'not a time' })).details, '', 'an unusable first-seen time is dropped, not shown');
 assert.equal(describe({ kind: 'agent_stopped', payload_json: JSON.stringify({ tool: 'codex', profile: 'work', hint: 'x' }) }).details, '', 'login-rejected keys must not leak into other events');
 
 // Who an id is: the server names the ids of an event (an agent as slug@project, a user by login), so the feed does not show agt_… or usr_…. The server's name

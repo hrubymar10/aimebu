@@ -94,7 +94,7 @@ and reconnects the event stream from its last seen `seq`.
 | POST | `/api/quota-switcher/{tool}/rearm`, `/reenable` | `{}` | owner clears the after-reset latch / the circuit breaker |
 | GET | `/api/limit-guard` | — | owner-only limit guard: per tool `{config, saved, result, held, since}` under `tools`, plus `profiles` and `percent_display` (`left` or `used`, the owner's Usages setting, which Health and Settings use to word the percentages); 503 until the quota switcher runs (see [quota-switcher](quota-switcher.md#limit-guard-acting-before-100)) |
 | PUT | `/api/limit-guard/{tool}` | config | owner replaces a tool's soft/hard thresholds and per-profile overrides (400 on validation, 404 unknown tool) |
-| GET | `/api/usages` | — | provider usage snapshots for Settings → Server → Accounts & usage. The owner reads all of it; a global admin reads the limits only (`usages.Response.ForAdmin`: windows, resets, plan, credits, status, `error_kind`, `retry_at` and the profile names, but no e-mail, Enterprise host, error text, credential alerts, token-refresh state or configured-secret flags); anyone else gets 403. A failed profile carries `error_kind` (`rate_limited` for HTTP 429, `fetch_failed` for any other failed fetch, `token_expired`), which the web app reads instead of the error text. A profile that is backing off after a failed fetch carries `retry_at` (RFC 3339, when it is fetched next); the web app shows it in local time on the stale line. Every write stays the owner's |
+| GET | `/api/usages` | — | provider usage snapshots for Settings → Server → Accounts & usage. The owner reads all of it; a global admin reads the limits only (`usages.Response.ForAdmin`: windows, resets, plan, credits, status, `error_kind`, `retry_at` and the profile names, but no e-mail, Enterprise host, error text, credential alerts, token-refresh state or configured-secret flags); anyone else gets 403. A failed profile carries `error_kind` (`rate_limited` for HTTP 429, `fetch_failed` for any other failed fetch, `token_expired`), which the web app reads instead of the error text. A profile that is backing off after a failed fetch carries `retry_at` (RFC 3339, when it is fetched next); the web app shows it in local time on the stale line. A window whose series has the gap a rejected login left carries `rejected_at` (unix seconds, the first rejection of the profile's current or last episode, while it is inside the 48-hour history span; omitted otherwise), which the chart marks on that series. Every write stays the owner's |
 | POST | `/api/usages/refresh` | `{provider?}` | owner-only forced refresh; `429` + `Retry-After` and `retry_after_sec` inside the 15-second cooldown (error code `cooldown`); `400 invalid_provider` for an unknown provider |
 | GET | `/api/switcher` | — | owner-only enabled state, profiles, eligibility, and host agents affected by a switch |
 | PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
@@ -594,7 +594,10 @@ rejection message); it closes when the profile reads `ok` again or its
 account disappears, an inactive stored profile gets only the
 `usage_login_rejected` system event, and the episode state is stored beside
 the other alert state in `usages/alerts.json`, so a restart inside an episode
-raises nothing.
+raises nothing. The row and the event say when the poller first saw the
+rejection (`first_seen`, RFC 3339, not the time of the last poll) and name
+the rejected credential by the last six hex characters of its hash
+(`token_tail`), never the credential itself and never a prefix of it.
 A window reset (the `alert_reset_notice_enabled` toggle, one per window and
 reset cycle) is not an Inbox item: `GET /api/inbox` carries it for the same
 readers as a `usage_notice` row with `state: "notice"` for an hour after it

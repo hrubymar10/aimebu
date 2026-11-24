@@ -86,11 +86,20 @@ export function describeEvent(event, names = {}) {
     return { text: what ? `${parts[0]}: ${what}` : parts[0], where: where || subject, details: subject ? detail.slice(split + 2) : detail };
   }
   if (event.kind === 'usage_login_rejected') {
-    // {tool, profile, hint}: the tool whose usage poll was rejected, the
-    // profile name, and how to log in again (a server sentence, plain text).
-    // A branch, not detailKeys, so these keys never leak into other events.
+    // {tool, profile, hint, first_seen?, token_tail?}: the tool whose usage
+    // poll was rejected, the profile name, how to log in again and — when
+    // the server recorded it — when the poller first saw the rejection (not
+    // the time of the last poll) and the tail of the rejected credential's
+    // hash. A branch, not detailKeys, so these keys never leak into other events.
     const who = [payload.tool, payload.profile].filter(Boolean).join(' ');
-    return { text: who ? `${parts[0]}: ${who}` : parts[0], where, details: payload.hint ? String(payload.hint) : '' };
+    let details = payload.hint ? String(payload.hint) : '';
+    const seen = Date.parse(payload.first_seen);
+    if (Number.isFinite(seen)) {
+      details += `${details ? ' ' : ''}First rejected at ${new Date(seen).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+      if (payload.token_tail) details += ` (token hash tail ${payload.token_tail})`;
+      details += '.';
+    }
+    return { text: who ? `${parts[0]}: ${who}` : parts[0], where, details };
   }
   if (event.kind === 'update_status') {
     // {state, version}: what the server's own update check found. An empty state means a later check found nothing and the notice cleared. Rendered with textContent by the caller.

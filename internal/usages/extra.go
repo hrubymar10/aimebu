@@ -152,6 +152,12 @@ func (r *Reader) refreshExtraOne(ctx context.Context, key string) {
 	now := time.Now().UTC()
 	profile := applySnapshot(Profile{ProfileName: "local", Active: true, HasCredentials: pc.Token != "" || pc.Cookie != "" || pc.APIKey != "", Email: email,
 		AlertCredential: alertHash(key + "\x00" + pc.Token + "\x00" + pc.Cookie + "\x00" + pc.APIKey)}, snap)
+	if snap.Status == providers.StatusAuthMissing || snap.Status == providers.StatusScopeMissing {
+		// The configured credential was rejected: keep the tail of its hash
+		// (the credential set the provider authenticates with), never the
+		// credential itself.
+		profile.TokenTail = tokenTail(strings.Join(nonEmptyCredentials(pc.Token, pc.Cookie, pc.APIKey), "\x00"))
+	}
 	profile.LastRefreshAt = &now
 	r.mu.Lock()
 	if generation != r.generation || providerGeneration != r.providerGeneration[key] {

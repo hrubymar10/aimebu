@@ -229,16 +229,86 @@ func TestTransientFetchFailureKeepsSnapshotAndRedactsSecrets(t *testing.T) {
 	}
 }
 
+// The snapshot marks a window whose series has the gap a rejected login
+// left: the first rejection of the profile's current or last episode, when
+// it is still inside the history span. A profile without an episode, and
+// one whose episode is older than the span, carry nothing — an ordinary gap
+// (the server being down) is never marked.
+func TestSnapshotMarksARejectedSeriesWithinTheSpan(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	r.response.Providers[0].Profiles[0] = Profile{ProfileName: "local", Active: true, Status: "ok", Windows: []Window{{Key: "session", PercentUsed: 10}}}
+	r.response.Providers[1].Profiles[0] = Profile{ProfileName: "local", Active: true, Status: "ok", Windows: []Window{{Key: "session", PercentUsed: 10}}}
+	rejection := now.Add(-2 * time.Hour)
+	r.SetRejectionTimes(func() map[string]time.Time { return map[string]time.Time{"codex\x00local": rejection} })
+	out := r.Snapshot()
+	if got := out.Providers[0].Profiles[0].Windows[0].RejectedAt; got != rejection.Unix() {
+		t.Fatalf("rejected_at = %d, want the episode's first-seen time", got)
+	}
+	if got := out.Providers[1].Profiles[0].Windows[0].RejectedAt; got != 0 {
+		t.Fatalf("a profile without an episode is not marked: %d", got)
+	}
+	r.SetRejectionTimes(func() map[string]time.Time { return map[string]time.Time{"codex\x00local": now.Add(-historySpan - time.Hour)} })
+	if got := r.Snapshot().Providers[0].Profiles[0].Windows[0].RejectedAt; got != 0 {
+		t.Fatalf("an episode older than the history span is not marked: %d", got)
+	}
+	r.SetRejectionTimes(nil)
+	if got := r.Snapshot().Providers[0].Profiles[0].Windows[0].RejectedAt; got != 0 {
+		t.Fatalf("without a source nothing is marked: %d", got)
+	}
+	// The same, fed by a real alert tracker: the Observe that started the
+	// episode recorded its first-seen time, and the snapshot reads it.
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return rejection })
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{{ProfileName: "local", Active: true, AlertIdentity: "ident\x00local", Status: "auth_missing", Error: "rejected"}}}}}
+	rejected.Settings.AlertWarningRemaining, rejected.Settings.AlertCriticalRemaining = 20, 10
+	if _, err := tracker.Observe(rejected); err != nil {
+		t.Fatal(err)
+	}
+	r.SetRejectionTimes(tracker.RejectionTimes)
+	if got := r.Snapshot().Providers[0].Profiles[0].Windows[0].RejectedAt; got != rejection.Unix() {
+		t.Fatalf("rejected_at from the tracker = %d, want the episode's first-seen time", got)
+	}
+}
+
 func TestRejectedTokenReportsAuthMissingWithoutStaleSnapshot(t *testing.T) {
 	r := newFetcherReader(t, http.StatusUnauthorized, `{"error":"x"}`, `{"error":"x"}`)
 	for i := 0; i < 2; i++ {
 		r.response.Providers[i].Profiles[0].Windows = []Window{{Key: "session", PercentUsed: 42}}
 	}
 	r.Refresh(context.Background())
+	tails := []string{tokenTail("codex-secret"), tokenTail("claude-secret")}
 	for i, p := range r.Snapshot().Providers[:2] {
 		profile := p.Profiles[0]
 		if profile.Status != "auth_missing" || profile.Stale || len(profile.Windows) != 0 || profile.Error == "" {
 			t.Errorf("provider %d: %+v", i, profile)
+		}
+		if profile.TokenTail != tails[i] {
+			t.Errorf("provider %d tail = %q, want the hash tail of the rejected credential", i, profile.TokenTail)
+		}
+		if strings.HasPrefix(tails[i], "codex-s") || strings.HasPrefix(tails[i], "claud") {
+			t.Errorf("the tail must never be a prefix of the credential: %q", tails[i])
+		}
+	}
+	// The tail is in memory only: neither the snapshot nor the cache file
+	// carries it.
+	data, err := json.Marshal(r.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, _ := os.ReadFile(r.cachePath)
+	for _, body := range []string{string(data), string(cache)} {
+		for _, tail := range tails {
+			if strings.Contains(body, tail) {
+				t.Fatalf("the tail leaked into the persisted output: %s", body)
+			}
 		}
 	}
 }

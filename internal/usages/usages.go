@@ -41,6 +41,12 @@ type Window struct {
 	// History is attached to API output only (see history.go); it is not part
 	// of the persisted snapshot.
 	History []HistoryPoint `json:"history,omitempty"`
+	// RejectedAt is attached to API output only, beside History: when the
+	// profile's current or last rejection episode was first seen (unix
+	// seconds, zero when there is none). A gap in the samples that a
+	// rejected login left can be marked as such; ordinary gaps (the server
+	// being down) carry nothing.
+	RejectedAt int64 `json:"rejected_at,omitempty"`
 }
 type Profile struct {
 	ProfileName     string `json:"profile_name"`
@@ -68,6 +74,11 @@ type Profile struct {
 	RetryAt     *time.Time             `json:"retry_at,omitempty"`
 	Error       string                 `json:"error,omitempty"`
 	ErrorDetail *providers.ErrorDetail `json:"error_detail,omitempty"`
+	// TokenTail is the last six hex characters of the SHA-256 of the
+	// credential a rejected fetch sent (see tokenTail): never the credential
+	// itself, never a prefix of it. It is set only on a rejected snapshot and
+	// is never serialized — not to cache.json, not to the API.
+	TokenTail string `json:"-"`
 }
 type Provider struct {
 	ProviderName     string    `json:"provider_name"`
@@ -133,9 +144,13 @@ type Reader struct {
 	onUpdate           func()
 	tokenSetting       *TokenSetting
 	credentialAlerts   func() []CredentialAlert
-	forceMu            sync.Mutex
-	lastForce          time.Time
-	forceCooldown      time.Duration
+	// rejectionTimes, when set, says when each profile's current or last
+	// rejection episode was first seen (the alert tracker's state); the
+	// snapshot turns it into the windows' RejectedAt for the chart.
+	rejectionTimes func() map[string]time.Time
+	forceMu        sync.Mutex
+	lastForce      time.Time
+	forceCooldown  time.Duration
 	// profiles lists switcher profiles whose read-only usage is kept in
 	// response.Providers[i].Profiles[1:] (index 0 is the live account);
 	// activePrint is the fingerprint of the live credentials behind each
@@ -224,6 +239,15 @@ func defaultResponse() Response {
 func (r *Reader) Snapshot() Response {
 	cfg, configErr := r.extra.LoadConfig()
 	names := r.liveHistoryNames()
+	// The rejection times come from the alert tracker, which may be mid-Observe
+	// holding its own lock: they are read before the Reader takes its lock.
+	r.mu.RLock()
+	rejectionSource := r.rejectionTimes
+	r.mu.RUnlock()
+	var rejections map[string]time.Time
+	if rejectionSource != nil {
+		rejections = rejectionSource()
+	}
 	r.mu.Lock()
 	if configErr == nil {
 		for i := range r.response.Providers {
@@ -234,12 +258,24 @@ func (r *Reader) Snapshot() Response {
 	}
 	out := r.response
 	out.Providers = append([]Provider(nil), out.Providers...)
+	cutoff := r.now().Add(-historySpan)
 	for i := range out.Providers {
 		out.Providers[i].Profiles = append([]Profile(nil), out.Providers[i].Profiles...)
 		for j := range out.Providers[i].Profiles {
 			p := &out.Providers[i].Profiles[j]
 			p.Windows = append([]Window(nil), p.Windows...)
 			r.attachHistory(out.Providers[i].ProviderName, p, names)
+			// The chart marks the gap a rejected login left: the first
+			// rejection of the profile's current or last episode, when it is
+			// still inside the history span. A profile the tracker does not
+			// know (or whose episode aged out) carries nothing, so an
+			// ordinary gap stays unmarked.
+			if at, seen := rejections[out.Providers[i].ProviderName+"\x00"+p.ProfileName]; seen && at.After(cutoff) {
+				stamp := at.Unix()
+				for k := range p.Windows {
+					p.Windows[k].RejectedAt = stamp
+				}
+			}
 		}
 	}
 	setting := r.tokenSetting
@@ -285,6 +321,16 @@ func (r *Reader) Snapshot() Response {
 func (r *Reader) SetCredentialAlerts(fn func() []CredentialAlert) {
 	r.mu.Lock()
 	r.credentialAlerts = fn
+	r.mu.Unlock()
+}
+
+// SetRejectionTimes installs the source of the windows' RejectedAt: the
+// alert tracker's per-profile first rejection times, keyed
+// "provider\x00profile name" as the snapshot names them. The fn may lock the
+// tracker, so the Reader calls it before taking its own lock.
+func (r *Reader) SetRejectionTimes(fn func() map[string]time.Time) {
+	r.mu.Lock()
+	r.rejectionTimes = fn
 	r.mu.Unlock()
 }
 
@@ -533,8 +579,10 @@ func (r *Reader) fetchLocal(ctx context.Context, p Profile, login providers.Logi
 	// The provider may have retried with a token the harness rotated into the
 	// file meanwhile (Codex re-reads after a 401); redact that one too.
 	secrets := []string{login.AccessToken}
+	sent := login.AccessToken
 	if current, err := reread(); err == nil && current.AccessToken != "" {
 		secrets = append(secrets, current.AccessToken)
+		sent = current.AccessToken
 	}
 	snap = snap.Redacted(secrets...)
 	p = applySnapshot(p, snap)
@@ -546,6 +594,11 @@ func (r *Reader) fetchLocal(ctx context.Context, p Profile, login providers.Logi
 	case providers.StatusFetchError, providers.StatusTimeout:
 		// Transient: the caller keeps the previous windows, marked stale.
 		return p, errors.New(p.Error)
+	case providers.StatusAuthMissing, providers.StatusScopeMissing:
+		// The credential in the file was rejected. Keep only the tail of its
+		// hash with the profile, so the episode can say which login stopped
+		// working; the token itself is never kept or shown.
+		p.TokenTail = tokenTail(sent)
 	}
 	// Rejected or unusable login (auth_missing, scope_missing): show the
 	// status rather than a stale snapshot of a different state.
