@@ -167,8 +167,8 @@ type builtinRole struct {
 // agent receives are the resolved body (the parent's, a blank line, then the role's own).
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
-		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: leadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
-		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: dispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
+		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: currentLeadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
+		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: currentDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
 		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
@@ -182,6 +182,20 @@ func builtinRoles() map[string]builtinRole {
 }
 
 const dispatcherRoleBody = `Take specifications from the leader in routing. Create task rooms, spawn and brief workers and reviewers, run review, gate, and fix rounds. Report to the leader in routing only: done <what, SHA, how verified>; blocked <why>; or needs decision <question>. Do not send routine worker traffic to the home room.`
+
+// spawnApprovalRules are the model-approval sentences (A10-2): an agent spawns
+// from the role's default pool, and a harness or model outside it needs a
+// person's message cited as approved_by.
+const spawnApprovalRuleDispatcher = `Spawn agents with role_key only, so they come from the role's default pool. Never pass tool, variant or model unless the leader's request cites the person's message that approves that exact choice (the approved_by field); without it, spawn from the pool and tell the leader you ignored the model.`
+
+const spawnApprovalRuleLead = `Never ask for a model, tool or variant outside the role's pool unless a person approved it for that task; cite their message (its number, as #N) as approved_by.`
+
+// currentLeadRoleBody and currentDispatcherRoleBody are the shipped bodies with
+// the approval rules. leadRoleBody and dispatcherRoleBody stay as the earlier
+// migrations wrote them: they are what migration 107 looks for, and the frozen
+// pieces of the lead body are pinned (TestFrozenLeadBody).
+var currentLeadRoleBody = leadRoleBody + "\n\n" + spawnApprovalRuleLead
+var currentDispatcherRoleBody = dispatcherRoleBody + "\n\n" + spawnApprovalRuleDispatcher
 
 const advisorRoleBody = `You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.`
 
