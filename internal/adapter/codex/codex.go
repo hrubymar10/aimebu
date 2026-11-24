@@ -132,6 +132,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	args := []string{"-C", visibleCheckout}
 	var agentKey []string
+	var forwardNames []string // the names a Docker launcher hands the harness by name, beside the key (none natively)
 	if a.variant() == "native" && spec.Mode == adapter.ModeNormal && spec.AgentTools != nil {
 		// The private config names the variable (env_vars), and the key itself is only in this process's environment.
 		agentKey = []string{adapter.AgentKeyEnv + "=" + spec.AgentTools.Key}
@@ -142,7 +143,8 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			return nil, err
 		}
 		// The key is read from the forwarded variable, never put in the argument list (ps shows those to every local user).
-		agentKey = adapter.DockerAgentKeyEnv(header)
+		agentKey = []string{adapter.DockerAgentKeyEnv(header)}
+		forwardNames = []string{adapter.AgentKeyEnv}
 		config := "mcp_servers.aimebu_docker={url=" + strconv.Quote(endpoint) + ",bearer_token_env_var=" + strconv.Quote(adapter.AgentKeyEnv) + "}"
 		// The person's own remote servers, as overrides of their own (the container's config.toml is ignored, see below), then aimebu's own two
 		// entries, last, so nothing before them can replace either.
@@ -186,7 +188,8 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	} else {
 		cmd.Env = childEnv(runtimeDir, own.envVars...) // what the person's own MCP servers ask Codex to hand them
 	}
-	cmd.Env = append(adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs), agentKey...)
+	cmd.Env = adapter.AppendForwardEnv(adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs), forwardNames...)
+	cmd.Env = append(cmd.Env, agentKey...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

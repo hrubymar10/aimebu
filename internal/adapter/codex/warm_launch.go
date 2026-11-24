@@ -93,7 +93,7 @@ func (a *Adapter) prepareWarm(spec adapter.TurnSpec) (warmLaunch, error) {
 		if err != nil {
 			return warmLaunch{}, err
 		}
-		l.key = strings.Join(adapter.DockerAgentKeyEnv(header), "")
+		l.key = adapter.DockerAgentKeyEnv(header)
 		l.env = append(childEnv(""), "CODEX_LAUNCH_FLAGS=")
 		for _, override := range overrides {
 			l.args = append(l.args, "-c", override)
@@ -115,8 +115,14 @@ func (a *Adapter) prepareWarm(spec adapter.TurnSpec) (warmLaunch, error) {
 	l.args = append(l.args, "app-server")
 	l.args = adapter.LauncherArgs(spec, l.args)
 	l.env = adapter.LauncherEnv(l.env, spec.LauncherEnvRefs)
+	// Set last, so an owner's environment reference cannot replace the key the
+	// harness reads by name; the forwarding list that carries its name merges
+	// into one entry, so an owner's own list is kept instead of overwritten.
 	if l.key != "" {
 		l.env = append(l.env, l.key)
+		if a.variant() == "docker" {
+			l.env = adapter.AppendForwardEnv(l.env, adapter.AgentKeyEnv)
+		}
 	}
 	return l, nil
 }

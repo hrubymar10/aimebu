@@ -128,6 +128,40 @@ func TestDockerFeaturesTellANewLauncherFromAnOldOne(t *testing.T) {
 	}
 }
 
+// Every Docker turn that names forwarded variables must leave the launcher exactly one HARNESS_DOCKER_FORWARD_ENV entry: a second entry
+// would win silently and the harness would miss the names the first one carried.
+func TestAppendForwardEnvMergesIntoOneList(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		env, add   []string
+	}{
+		{"no entry yet", "HARNESS_DOCKER_FORWARD_ENV=A", nil, []string{"A"}},
+		{"no entry yet, several names", "HARNESS_DOCKER_FORWARD_ENV=A,B", []string{"X=1"}, []string{"A", "B"}},
+		{"an existing entry keeps its names first", "HARNESS_DOCKER_FORWARD_ENV=C,A", []string{"HARNESS_DOCKER_FORWARD_ENV=C"}, []string{"A"}},
+		{"a name already listed is not added twice", "HARNESS_DOCKER_FORWARD_ENV=A,C,B", []string{"HARNESS_DOCKER_FORWARD_ENV=A,C"}, []string{"A", "B"}},
+		{"an empty entry is filled", "HARNESS_DOCKER_FORWARD_ENV=A", []string{"HARNESS_DOCKER_FORWARD_ENV="}, []string{"A"}},
+		{"nothing to add leaves the entry alone", "HARNESS_DOCKER_FORWARD_ENV=A", []string{"HARNESS_DOCKER_FORWARD_ENV=A"}, nil},
+	} {
+		got := AppendForwardEnv(tc.env, tc.add...)
+		count := 0
+		for _, item := range got {
+			if strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV=") {
+				count++
+				if item != tc.want {
+					t.Fatalf("%s: list = %q, want %q (env %q, add %q)", tc.name, item, tc.want, tc.env, tc.add)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%s: %d forwarding lists after the merge (env %q, add %q): %q", tc.name, count, tc.env, tc.add, got)
+		}
+	}
+	other := AppendForwardEnv([]string{"HARNESS_DOCKER_FORWARD_ENV=A"}, "A")
+	if len(other) != 1 || other[0] != "HARNESS_DOCKER_FORWARD_ENV=A" {
+		t.Fatalf("a name that is already the only one changed the env: %q", other)
+	}
+}
+
 func TestDockerPreflightOfOpenCodeNeedsALauncherThatForwards(t *testing.T) {
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")

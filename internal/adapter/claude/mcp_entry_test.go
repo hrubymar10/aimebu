@@ -115,30 +115,9 @@ func TestHarnessBackgroundJobsAreOff(t *testing.T) {
 	}
 }
 
-func TestForwardToDockerAddsToTheList(t *testing.T) {
-	for _, tc := range []struct {
-		env  []string
-		want string
-	}{
-		{nil, "HARNESS_DOCKER_FORWARD_ENV=X"},
-		{[]string{"A=1", "HARNESS_DOCKER_FORWARD_ENV=A"}, "HARNESS_DOCKER_FORWARD_ENV=A,X"},
-		{[]string{"HARNESS_DOCKER_FORWARD_ENV="}, "HARNESS_DOCKER_FORWARD_ENV=X"},
-	} {
-		got := forwardToDocker(tc.env, "X")
-		count := 0
-		for _, item := range got {
-			if strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV=") {
-				count++
-				if item != tc.want {
-					t.Fatalf("forwardToDocker(%q) = %q, want %q", tc.env, item, tc.want)
-				}
-			}
-		}
-		if count != 1 {
-			t.Fatalf("forwardToDocker(%q) gave %d lists: %q", tc.env, count, got)
-		}
-	}
-}
+// The turn merges its own names into one forwarding list (the helper's table
+// test lives next to it in internal/adapter); the launch-level assertions that
+// both names arrive follow in the tests below.
 
 // The Docker entry is used inside the container: an HTTP endpoint at an address the container reaches (a loopback server becomes
 // host.docker.internal, or the launcher's own server URL), with the bearer a reference to a variable the launcher forwards into the

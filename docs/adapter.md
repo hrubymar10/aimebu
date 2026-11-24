@@ -459,7 +459,13 @@ handshake/resume failure ends it and the supervisor falls back to `codex exec`.
 The adapter declines app-server approval requests and never asks it to refresh
 credentials. Docker app-server has no `--ignore-user-config` flag: the adapter
 disables host MCP servers the cold Docker path would omit, and falls back cold
-when a server name or config cannot be overridden safely. `model` and
+when a server name or config cannot be overridden safely. The warm process
+gets the toolbox the same way a cold turn does: its launcher environment
+carries the agent's key and, set after every owner reference, the
+`HARNESS_DOCKER_FORWARD_ENV` list that names it (an owner's own list merges
+into the one entry), so the container's `bearer_token_env_var` finds the key
+and Codex starts the aimebu MCP server.
+`model` and
 `mcp_servers` are handled separately; `projects` (trust), `notice`, `tui`,
 `history`, `file_opener`, and `desktop` are allowed. Both credential-store
 keys (`cli_auth_credentials_store`, `mcp_oauth_credentials_store`) are allowed

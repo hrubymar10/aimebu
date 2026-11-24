@@ -539,6 +539,66 @@ func TestWarmDockerResetsPluginDefault(t *testing.T) {
 	}
 }
 
+// A Docker warm launch hands the launcher the same two variables a cold turn
+// does: the agent's key and the forwarding list that names it. The launcher
+// forwards what HARNESS_DOCKER_FORWARD_ENV names, so without the list the
+// container's Codex finds bearer_token_env_var unset and silently starts no
+// aimebu MCP server at all. An owner's environment reference may bring its own
+// forwarding list; the names must merge into one entry, because a second entry
+// would win silently and drop the other names.
+func TestWarmDockerCarriesTheKeyAndItsForwardList(t *testing.T) {
+	home := t.TempDir()
+	auth := filepath.Join(home, "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"auth_mode":"chatgptAuthTokens","tokens":{"access_token":"token","account_id":"account"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OWNER_FORWARD_LIST", "CODEX_HOME")
+	a := NewDocker()
+	spec := adapter.TurnSpec{TurnID: "turn", Agent: adapter.AgentSpec{ID: "agt_warm", Tool: "codex", Variant: "docker", Model: "gpt-6-sol"},
+		CheckoutPath: t.TempDir(), Mode: adapter.ModeNormal,
+		AgentTools:        &adapter.AgentToolsAccess{AgentID: "agt_warm", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"},
+		LauncherCodexHome: home}
+	launch, err := a.prepareWarm(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, lists := 0, []string(nil)
+	for _, item := range launch.env {
+		switch {
+		case item == "AIMEBU_AGENT_KEY=aak_secret":
+			key++
+		case strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="):
+			lists = append(lists, strings.TrimPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="))
+		}
+	}
+	if key != 1 || len(lists) != 1 {
+		t.Fatalf("the launcher needs the key once and exactly one forwarding list, got key %d and lists %q", key, lists)
+	}
+	if lists[0] != "AIMEBU_AGENT_KEY" {
+		t.Fatalf("the forwarding list must name the key, got %q", lists[0])
+	}
+	spec.LauncherEnvRefs = map[string]string{"HARNESS_DOCKER_FORWARD_ENV": "OWNER_FORWARD_LIST"}
+	launch, err = a.prepareWarm(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey, ownerLists := 0, []string(nil)
+	for _, item := range launch.env {
+		switch {
+		case item == "AIMEBU_AGENT_KEY=aak_secret":
+			ownerKey++
+		case strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="):
+			ownerLists = append(ownerLists, strings.TrimPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="))
+		}
+	}
+	if ownerKey != 1 || len(ownerLists) != 1 {
+		t.Fatalf("an owner's list must merge, not duplicate: key %d, lists %q", ownerKey, ownerLists)
+	}
+	if ownerLists[0] != "CODEX_HOME,AIMEBU_AGENT_KEY" {
+		t.Fatalf("the merged list must keep the owner's names and the key's name, got %q", ownerLists[0])
+	}
+}
+
 func TestDockerWarmUsesOnlyReportedCodexHome(t *testing.T) {
 	reported := t.TempDir()
 	t.Setenv("CODEX_HOME", t.TempDir())

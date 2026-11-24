@@ -239,7 +239,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	if spec.NativeSessionStarted && spec.NativeSessionHandle == "" {
 		return nil, fmt.Errorf("resumed turn requires native session handle")
 	}
-	var agentKey []string
+	var agentKey string // the agent's key as an environment entry: never in an argument list, and only a hash of it in a fingerprint
 	if a.variant() == "docker" {
 		if err := adapter.DockerCheckout(spec.CheckoutPath); err != nil {
 			return nil, err
@@ -316,7 +316,7 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 				if err != nil {
 					return nil, err
 				}
-				agentKey = []string{adapter.AgentKeyEnv + "=" + spec.AgentTools.Key}
+				agentKey = adapter.AgentKeyEnv + "=" + spec.AgentTools.Key
 				args = append(args, "--mcp-config", string(config))
 			}
 		}
@@ -339,37 +339,27 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 	if a.variant() == "docker" {
 		env = append(env, "CLAUDE_LAUNCH_FLAGS=")
 	}
-	env = append(env, agentKey...)
+	if agentKey != "" {
+		env = append(env, agentKey)
+		if a.variant() == "docker" {
+			// The launcher hands the key over by name, merged into one forwarding list so an owner's own list is kept.
+			env = adapter.AppendForwardEnv(env, adapter.AgentKeyEnv)
+		}
+	}
 	if version.supports(featureDisableBackgroundTasks) {
 		env = append(env, backgroundTasksEnv)
 		if a.variant() == "docker" {
 			// docker exec carries only the variables the launcher is told to forward by name.
-			env = forwardToDocker(env, backgroundTasksEnvVar)
+			env = adapter.AppendForwardEnv(env, backgroundTasksEnvVar)
 		}
 	}
 	full := adapter.LauncherArgs(spec, args)
 	shift := len(full) - len(args) // what the launcher puts before the protocol arguments
 	l := &launch{name: command, args: full, env: env, dir: dir, input: input, sessionAt: [2]int{shift + sessionStart, shift + sessionEnd}}
-	if len(agentKey) > 0 {
-		l.agentKey = agentKey[0]
+	if agentKey != "" {
+		l.agentKey = agentKey
 	}
 	return l, nil
-}
-
-// forwardToDocker adds name to the HARNESS_DOCKER_FORWARD_ENV list in env, creating the list when there is none.
-func forwardToDocker(env []string, name string) []string {
-	const key = "HARNESS_DOCKER_FORWARD_ENV="
-	for i, item := range env {
-		if list, ok := strings.CutPrefix(item, key); ok {
-			if list == "" {
-				env[i] = key + name
-			} else {
-				env[i] = key + list + "," + name
-			}
-			return env
-		}
-	}
-	return append(env, key+name)
 }
 
 func childEnv() []string {

@@ -85,10 +85,56 @@ func DockerNeedsForwardEnv(tool string) bool {
 // to every local user): the harness's MCP entry names this variable, and the launcher hands it over by name (HARNESS_DOCKER_FORWARD_ENV).
 const AgentKeyEnv = "AIMEBU_AGENT_KEY"
 
-// DockerAgentKeyEnv is what a Docker turn adds to the launcher's environment so the harness can read the agent's key from AgentKeyEnv: the
-// variable itself and the forwarding list that names it. They are set last, so an owner's environment reference cannot replace either.
-func DockerAgentKeyEnv(authorization string) []string {
-	return []string{AgentKeyEnv + "=" + strings.TrimPrefix(authorization, "Bearer "), "HARNESS_DOCKER_FORWARD_ENV=" + AgentKeyEnv}
+// DockerAgentKeyEnv is the environment entry that gives a Docker harness the agent's key: the harness's MCP entry names AgentKeyEnv, and the
+// launcher hands the variable over by name (AppendForwardEnv). The key never appears in an argument list (ps shows those to every local user).
+func DockerAgentKeyEnv(authorization string) string {
+	return AgentKeyEnv + "=" + strings.TrimPrefix(authorization, "Bearer ")
+}
+
+// AppendForwardEnv adds names to the HARNESS_DOCKER_FORWARD_ENV list in env, creating the list when there is none. An entry already in env
+// keeps its names first and each new name is added once, so the launcher reads one list: a second entry would win silently and drop the
+// names an earlier one carried, and the harness would then miss what was dropped. With no names to add, env is returned unchanged.
+func AppendForwardEnv(env []string, names ...string) []string {
+	const key = "HARNESS_DOCKER_FORWARD_ENV="
+	at, have := -1, []string(nil)
+	for i, item := range env {
+		if list, ok := strings.CutPrefix(item, key); ok {
+			at = i
+			for _, name := range strings.Split(list, ",") {
+				if name != "" {
+					have = append(have, name)
+				}
+			}
+			break
+		}
+	}
+	merged := false
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		seen := false
+		for _, item := range have {
+			if item == name {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			have = append(have, name)
+			merged = true
+		}
+	}
+	if at < 0 {
+		if len(have) == 0 {
+			return env
+		}
+		return append(env, key+strings.Join(have, ","))
+	}
+	if merged {
+		env[at] = key + strings.Join(have, ",")
+	}
+	return env
 }
 
 // DockerFeatureReport is the launcher's one cached probe answer. CodexHome is

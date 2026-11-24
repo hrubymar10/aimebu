@@ -139,7 +139,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	var agentDir string
 	var visibleAgentDir string // what the launcher's container sees, for a Docker turn
-	var ownEnv []string       // variables the person's own MCP servers read, passed through to a native turn
+	var ownEnv []string        // variables the person's own MCP servers read, passed through to a native turn
 	var endpoint string
 	if spec.Mode == adapter.ModeNormal {
 		// mcp__* names every MCP tool: Pi keeps an unmatched MCP tool registered but
@@ -239,7 +239,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		// configures the launcher, not the agent, and is ignored.
 		env := childEnv("")
 		env = append(env, "PI_LAUNCH_FLAGS=", "PI_CODING_AGENT_DIR="+visibleAgentDir,
-			adapter.AgentKeyEnv+"="+spec.AgentTools.Key, "HARNESS_DOCKER_FORWARD_ENV=PI_CODING_AGENT_DIR,"+adapter.AgentKeyEnv)
+			adapter.AgentKeyEnv+"="+spec.AgentTools.Key)
+		// One list names everything the launcher hands over by name; the key's name merges into it.
+		env = adapter.AppendForwardEnv(env, "PI_CODING_AGENT_DIR", adapter.AgentKeyEnv)
 		cmd.Env = adapter.LauncherEnv(env, dockerLauncherRefs(spec.LauncherEnvRefs))
 	} else {
 		cmd.Env = childEnv(agentDir, ownEnv...)
