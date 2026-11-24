@@ -242,6 +242,13 @@ See [docs/doctor.md](doctor.md).
 `-ldflags "-X main.version=..."` override is printed unchanged). `aimebu help`
 lists every command and the `AIMEBU_*` environment variables.
 
+`AIMEBU_TURN_MAX` sets the wall-clock cap for a whole agent turn, including
+tool calls (default `90m`; `0` disables it). When it ends a turn, the
+supervisor and telemetry report `turn exceeded the <duration> turn limit`,
+and recovery evidence delivered to the lead carries the same reason.
+`AIMEBU_TURN_IDLE` separately bounds silence (default `30m`) and reports a
+stalled turn. Both accept Go durations. See [supervisor turn limits](supervisor.md).
+
 `aimebu usages [provider] [--json|--plain]` prints the usage snapshots the server last
 cached, read straight from the config root (no login, no network, works with
 the server stopped); see [usage snapshots](usages.md).

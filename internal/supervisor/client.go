@@ -1614,7 +1614,12 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 				stall = reason
 				// A limit kill is the watchdog doing its job, not a failure to triage: the local log keeps the whole error, and telemetry
 				// gets it as a warning (a degraded state the system recovers from by continuing the turn once on its own).
-				c.degraded("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
+				if stall == turnStallMax {
+					reason := stall.describe(limits)
+					c.degraded(reason, fmt.Errorf("agent %s turn %s %s; killing harness", delivery.AgentID, delivery.TurnID, reason))
+				} else {
+					c.degraded("a turn stalled; killing harness", fmt.Errorf("agent %s turn %s stalled: %s; killing harness", delivery.AgentID, delivery.TurnID, stall.describe(limits)))
+				}
 				if killer, ok := turn.(interface{ Kill() error }); ok {
 					_ = killer.Kill()
 				} else {

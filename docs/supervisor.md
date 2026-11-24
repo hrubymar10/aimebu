@@ -1063,7 +1063,7 @@ processes are never on one session.
   Docker launcher runs, so a warm Docker agent is one `docker exec` kept open.
 - Output the process writes to stderr goes to the log of the turn that is running.
 
-A running turn is bounded by two stall deadlines, ported from v1's pi
+A running turn is bounded by two deadlines, ported from v1's pi
 watchdog. `AIMEBU_TURN_IDLE` fires when the harness writes no output at all
 for that long (any stdout line counts, including streamed partial output,
 not only the events the adapter forwards); it is suspended while a tool execution is in flight, since a long
@@ -1108,9 +1108,10 @@ durations, `0` disables a deadline, and an invalid value fails startup. The
 deadlines apply to the local and remote supervisors alike and stop
 counting once the final answer has been received. A tool that never reports
 its end keeps the idle deadline suspended, so only `AIMEBU_TURN_MAX` bounds
-a hung tool. On expiry the
-supervisor logs the stall (as a warning, not an error), kills the harness
-process group, and reports the
+a hung tool. On expiry the supervisor logs `stalled` for an idle timeout or
+`turn exceeded the <duration> turn limit` for a wall-clock cap. Both are
+telemetry warnings with separate fingerprints. It kills the harness process
+group, and reports the
 exit as a failure (not an owner cancel) whose evidence names the deadline.
 The exit also says what the killed turn left in its checkout:
 `git log -1 --oneline` and the count of dirty files (`git status --porcelain`,

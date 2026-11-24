@@ -63,6 +63,9 @@ func TestRunTurnStallIsReportedAsAWarning(t *testing.T) {
 	if stall.Tags["area"] != "supervisor" {
 		t.Fatalf("area tag: %v", stall.Tags)
 	}
+	if got := stall.Exception[0].Value; got != "a turn stalled; killing harness" {
+		t.Fatalf("idle event = %q", got)
+	}
 }
 
 // A kill by the wall-clock cap (AIMEBU_TURN_MAX) is reported as a warning, like the idle one: the watchdog did its job,
@@ -78,7 +81,7 @@ func TestRunTurnWallClockLimitKillIsReportedAsAWarning(t *testing.T) {
 	stalledTurn(t, "claude", TurnLimitOverrides{Idle: durationPtr(time.Second), Max: durationPtr(80 * time.Millisecond)}, adapter.Step{Kind: adapter.StepHang})
 	var stall *sentry.Event
 	for _, event := range transport.sent() {
-		if len(event.Fingerprint) == 1 && strings.Contains(event.Fingerprint[0], "a turn stalled; killing harness") {
+		if len(event.Fingerprint) == 1 && strings.Contains(event.Fingerprint[0], "turn exceeded the 80ms turn limit") {
 			stall = event
 		}
 	}
@@ -87,5 +90,11 @@ func TestRunTurnWallClockLimitKillIsReportedAsAWarning(t *testing.T) {
 	}
 	if got := fmt.Sprintf("%v", stall.Level); got != "warning" {
 		t.Fatalf("a wall-clock limit kill must be a warning, got %q", got)
+	}
+	if got := stall.Exception[0].Value; got != "turn exceeded the 80ms turn limit" {
+		t.Fatalf("max event = %q", got)
+	}
+	if stall.Fingerprint[0] == "supervisor: a turn stalled; killing harness" {
+		t.Fatalf("max and idle share a fingerprint: %v", stall.Fingerprint)
 	}
 }

@@ -94,6 +94,16 @@ func TestTurnWatchPolicy(t *testing.T) {
 	}
 }
 
+func TestTurnLimitReasonText(t *testing.T) {
+	limits := TurnLimits{Idle: 30 * time.Minute, Max: 2 * time.Hour}
+	if got := turnStallMax.describe(limits); got != "turn exceeded the 2h0m0s turn limit" {
+		t.Fatalf("max reason = %q", got)
+	}
+	if got := turnStallIdle.describe(limits); got != "turn produced no output for 30m0s (AIMEBU_TURN_IDLE)" {
+		t.Fatalf("idle reason = %q", got)
+	}
+}
+
 // stallWindDownBudget bounds how long a killed turn may take to finish winding down.
 const stallWindDownBudget = 60 * time.Second
 
@@ -118,7 +128,7 @@ func stalledTurn(t *testing.T, tool string, limits TurnLimitOverrides, steps ...
 	client.TurnLimits = limits
 	reported := make(chan error, 4)
 	client.OnError = func(err error) {
-		if strings.Contains(err.Error(), "stalled") {
+		if strings.Contains(err.Error(), "stalled") || strings.Contains(err.Error(), "turn exceeded the") {
 			select {
 			case reported <- err:
 			default:
@@ -191,8 +201,11 @@ func TestRunTurnWallClockCapKillsChattyHarness(t *testing.T) {
 			adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventActivity, SourceEventID: fmt.Sprintf("tick-%d", i), Summary: "turn_start"}},
 			adapter.Step{Kind: adapter.StepEffect, Effect: func(context.Context) error { time.Sleep(30 * time.Millisecond); return nil }})
 	}
-	journal, _, _ := stalledTurn(t, "pi", TurnLimitOverrides{Idle: durationPtr(time.Second), Max: durationPtr(150 * time.Millisecond)}, steps...)
-	assertStallRecorded(t, journal, "wall-clock")
+	journal, _, report := stalledTurn(t, "pi", TurnLimitOverrides{Idle: durationPtr(time.Second), Max: durationPtr(150 * time.Millisecond)}, steps...)
+	assertStallRecorded(t, journal, "turn exceeded the 150ms turn limit")
+	if !strings.Contains(report, "turn exceeded the 150ms turn limit") || strings.Contains(report, "stalled") {
+		t.Fatalf("supervisor log = %q", report)
+	}
 }
 
 func TestRunTurnWithoutLimitsLeavesCleanExitAlone(t *testing.T) {
@@ -216,7 +229,7 @@ func TestRunTurnSilentToolSuspendsIdleKill(t *testing.T) {
 			if err != nil || len(exits) != 1 {
 				t.Fatalf("exits=%+v %v", exits, err)
 			}
-			if !strings.Contains(exits[0].Exit.ErrorEvent, "wall-clock") {
+			if !strings.Contains(exits[0].Exit.ErrorEvent, "turn exceeded the 400ms turn limit") {
 				t.Fatalf("a running tool must defer the idle kill to the wall-clock cap, got %q", exits[0].Exit.ErrorEvent)
 			}
 		})

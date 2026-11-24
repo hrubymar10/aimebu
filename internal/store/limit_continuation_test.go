@@ -10,7 +10,7 @@ import (
 )
 
 // The stall evidence the supervisor sends for a turn its own watchdog killed: marked, and its evidence names the deadline.
-var limitStallExit = adapter.ExitInfo{ExitCode: 124, ErrorEvent: "turn exceeded the 30m0s wall-clock limit (AIMEBU_TURN_MAX)", LimitStall: true}
+var limitStallExit = adapter.ExitInfo{ExitCode: 124, ErrorEvent: "turn exceeded the 30m0s turn limit", LimitStall: true}
 
 // A limit kill is continued once, on its own: the notes move to a child turn with a note that says why, the room gets a
 // system event, and no recovery card blocks the agent.

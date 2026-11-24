@@ -84,7 +84,7 @@ const (
 
 func (s turnStall) describe(limits TurnLimits) string {
 	if s == turnStallMax {
-		return fmt.Sprintf("turn exceeded the %s wall-clock limit (%s)", limits.Max, TurnMaxEnv)
+		return fmt.Sprintf("turn exceeded the %s turn limit", limits.Max)
 	}
 	return fmt.Sprintf("turn produced no output for %s (%s)", limits.Idle, TurnIdleEnv)
 }

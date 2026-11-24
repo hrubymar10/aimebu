@@ -3,8 +3,46 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
+
+func TestTurnLimitRecoveryNoticeNamesTheDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+	}{
+		{"max", "turn exceeded the 2h0m0s turn limit"},
+		{"idle", "turn produced no output for 30m0s (AIMEBU_TURN_IDLE)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, _, lead := workerRecoveryFixture(t)
+			ctx := context.Background()
+			exit := adapter.ExitInfo{ExitCode: 124, ErrorEvent: tc.reason, LimitStall: true}
+			if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, exit); err != nil {
+				t.Fatal(err)
+			}
+			var childID string
+			if err := s.db.QueryRow(`SELECT id FROM turn WHERE parent_turn_id=? AND mode='normal'`, f.turn.ID).Scan(&childID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordProcessInfo(ctx, childID, f.agent.ID, 0, exit); err != nil {
+				t.Fatal(err)
+			}
+			var body string
+			if err := s.db.QueryRow(`SELECT m.body FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.wake_reason='worker_recovery'`, lead.ID).Scan(&body); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(body, "Evidence: ") || !strings.Contains(body, "error event: "+tc.reason) {
+				t.Fatalf("lead notice = %q", body)
+			}
+			if tc.name == "max" && strings.Contains(body, "stalled") {
+				t.Fatalf("limit described as a stall: %q", body)
+			}
+		})
+	}
+}
 
 func workerRecoveryFixture(t *testing.T) (*Store, executionFixture, string, Agent) {
 	t.Helper()
