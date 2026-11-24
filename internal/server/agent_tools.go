@@ -271,6 +271,8 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		MachineID string `json:"machine_id"`
 		Worktree  bool   `json:"worktree"`
 		BaseRef   string `json:"base_ref"`
+		// JoinParent is spawn_agent's join_parent: the store allows it to a lead or the flow's dispatcher only (store.SpawnInput.JoinParent).
+		JoinParent bool `json:"join_parent"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -285,7 +287,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.spawnAgentRequest(w, r, room, spawnRequest{RoleKey: req.RoleKey, Tool: req.Tool,
-		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason}, "agent", caller.ID)
+		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason, JoinParent: req.JoinParent}, "agent", caller.ID)
 }
 
 func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {
