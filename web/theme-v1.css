@@ -991,7 +991,11 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
-/* A touch tablet's larger toolbar sits above the bubble and gets room while selected. */
+/* A touch screen's larger toolbar (a phone's too) floats at the top right of the message, over its top edge, as on the desktop: it is out of
+   the flow, so selecting a message never makes the row taller. A tablet (701px and wider) also leaves room above the selected message. */
+@media (hover: none) and (pointer: coarse) {
+  .chat-msg .message-actions { top: -34px; }
+}
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
   .chat-msg .message-actions { top: -48px; }
   .chat-msg.actions-open:not(.chat-msg-system) { margin-top: 34px; }
@@ -1012,10 +1016,6 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
   .message-actions .message-action { width: 40px; height: 40px; flex-basis: 40px; }
   .message-reaction-row .quick-reaction { width: 40px; height: 40px; }
 }
-/* On a phone the toolbar goes under the text, in the bubble's flow, so it covers neither the message nor its sender line; it takes room only
-   while a message is selected. A tablet (701px and wider) keeps the desktop and v1 place: the top right of the message, over its edge. */
-@media (hover: none) and (pointer: coarse) and (max-width: 700px) {
-  .message-actions, .chat-msg.self .message-actions { position: relative; top: auto; right: auto; left: auto; display: none; width: fit-content; margin: 8px 0 0 auto; }
   .chat-msg.actions-open .message-actions, .chat-msg:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
 }
 

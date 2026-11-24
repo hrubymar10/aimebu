@@ -104,11 +104,11 @@ async function main() {
   const errors = [];
   const room = (id, extra = {}) => ({ id, project_id: 'prj_a', title: id, kind: 'task', lifecycle: 'open', member_count: 2, ...extra });
   // `openPage` is the size of the page a room opens on: the tests below were written for 100 messages, and one block checks the default.
-  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false, openPage = 100 } = {}) => {
+  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false, openPage = 100, viewport = { width: 1280, height: 900 } } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => { errors.push(error.message); if (process.env.DEBUG_ERRORS) console.error('PAGEERROR', error.message, error.stack?.split('\n').slice(0, 4).join(' | ')); });
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) { errors.push(message.text()); if (process.env.DEBUG_ERRORS) console.error('CONSOLE', message.text().slice(0, 400)); } });
-    await page.setViewport({ width: 1280, height: 900 });
+    await page.setViewport(viewport);
     await page.evaluateOnNewDocument((plain, openPage) => { try { localStorage.clear(); if (plain) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} if (openPage) window.__openPageSize = openPage; }, plain, openPage);
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installServer);
@@ -2896,6 +2896,41 @@ async function main() {
     const native = await page.evaluate(() => { const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }); document.querySelector('[data-message-id=rm_s_m3] .chat-msg-body a').dispatchEvent(event); return event.defaultPrevented; });
     assert.equal(native, false, 'a right-click on a link is left to the browser');
     assert.equal(await menu(), null);
+    await page.close();
+  }
+
+  // A phone (390 wide, touch): a tap on a message, the viewer's own or someone else's, opens its actions at the message's top-right corner,
+  // over its top edge like the desktop's, without making the row taller; the desktop keeps its hover place.
+  {
+    let page = await mount({ rooms: { rm_a: 6 } });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_own', seq: 200, no: 200, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'mine alone', created_at: '2026-01-10T12:09:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
+    const geometry = id => page.evaluate(id => {
+      const row = document.querySelector(`#messages [data-message-id=${id}]`), bubble = row.querySelector('.chat-msg-bubble').getBoundingClientRect(), bar = row.querySelector('.message-actions'), box = bar.getBoundingClientRect();
+      const cs = getComputedStyle(bar);
+      return { open: row.classList.contains('actions-open'), visible: Number(cs.opacity) > 0.9 && cs.display !== 'none' && cs.pointerEvents !== 'none', position: cs.position, height: Math.round(row.getBoundingClientRect().height), topRight: Math.abs(box.right - (bubble.right - 6)) < 2 && box.top < bubble.top && box.bottom > bubble.top };
+    }, id);
+    // Desktop first: hovering shows the bar at the top-right corner.
+    await hover(page, '#messages [data-message-id=rm_a_own] .chat-msg-body'); await settle(page);
+    assert.deepEqual(await geometry('rm_a_own'), { ...(await geometry('rm_a_own')), open: false, visible: true, position: 'absolute', topRight: true }, 'desktop: the bar floats at the top-right corner on hover');
+    await page.close();
+    // The phone: a viewport with touch is set when the page opens (changing it afterwards reloads the page).
+    page = await mount({ rooms: { rm_a: 6 }, viewport: { width: 390, height: 844, hasTouch: true, isMobile: true, deviceScaleFactor: 2 } });
+    await page.evaluate(() => { document.querySelector('#app-view').classList.add('chat-open'); }); // as the app does when a room is opened on a phone
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_own', seq: 200, no: 200, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_me', author_name: 'me', body: 'mine alone', created_at: '2026-01-10T12:09:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
+    assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true, 'the emulated phone is a touch screen');
+    await page.evaluate(() => { document.activeElement?.blur(); });
+    for (const id of ['rm_a_own', 'rm_a_m2']) {
+      const before = await geometry(id);
+      assert.equal(before.visible, false, `${id}: the bar is not shown before a tap`);
+      await page.evaluate(id => document.querySelector(`#messages [data-message-id=${id}]`).scrollIntoView({ block: 'center' }), id);
+      const point = await page.evaluate(id => { const box = document.querySelector(`#messages [data-message-id=${id}] .chat-msg-body`).getBoundingClientRect(); return { x: box.left + 20, y: box.top + box.height / 2 }; }, id);
+      await page.touchscreen.tap(point.x, point.y); await settle(page);
+      const after = await geometry(id);
+      assert.deepEqual(after, { ...after, open: true, visible: true, position: 'absolute', topRight: true, height: before.height }, `${id}: a tap opens the bar at the top-right corner, over the message, without changing its height`);
+      await page.keyboard.press('Escape'); await settle(page);
+    }
     await page.close();
   }
 
