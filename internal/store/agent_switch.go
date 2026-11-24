@@ -424,7 +424,7 @@ func (s *Store) AdvanceAgentSwitches(ctx context.Context) ([]AgentCard, error) {
 			if _, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id) VALUES (?,?,?,'fresh_with_history',?,?)`, sessionID, item.id, generation+1, timestamp(), nullableString(nativeID)); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(`UPDATE agent SET tool=?,variant=?,launcher_id=?,model=?,provider=?,desired='active',desired_rev=desired_rev+1,generation=generation+1,observed='idle' WHERE id=?`, item.tool, item.variant, nullableString(item.launcherID), item.model, item.provider, item.id); err != nil {
+			if _, err := tx.Exec(`UPDATE agent SET tool=?,variant=?,launcher_id=?,model=?,provider=?,desired='active',desired_rev=desired_rev+1,generation=generation+1,observed='idle',stopped_at=NULL WHERE id=?`, item.tool, item.variant, nullableString(item.launcherID), item.model, item.provider, item.id); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(`UPDATE switch_handoff SET successor_generation=? WHERE agent_id=?`, generation+1, item.id); err != nil {
@@ -501,6 +501,8 @@ func (tx *Tx) insertSwitchHandoff(agentID, roomID, oldTool, newTool, oldModel, n
 			rows.Close()
 			return err
 		}
+		// The summary quotes the stored bodies for the agent that takes over: mentions stay @agt_<id> (ids are the truth),
+		// and the display rewrite is the human view's job.
 		if len(body) > 500 {
 			cut := 500
 			for !utf8.RuneStart(body[cut]) {

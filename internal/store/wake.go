@@ -18,6 +18,9 @@ type roomRecipient struct {
 	// project is the agent's own project (an ID and a name). In a chat between agents the room has no project, so a
 	// project-qualified mention is read against this.
 	projectID, projectName string
+	// createdAt orders agents that share a name: the display of the later duplicate is `name-2`, and `@name-2`
+	// resolves to it (see the `-N` branch of resolveMentions).
+	createdAt string
 	// auto marks a lead that is in the room only because leads are put into every project room: it is addressable, and woken when addressed,
 	// but an unaddressed human message does not wake it.
 	auto bool
@@ -32,7 +35,7 @@ func (tx *Tx) roomRecipients(roomID string) ([]roomRecipient, error) {
 }
 
 func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, error), ctx context.Context, roomID string) ([]roomRecipient, error) {
-	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name
+	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name,a.created_at
 		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
 		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL
 		ORDER BY a.id`, roomID)
@@ -43,7 +46,7 @@ func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, 
 	for rows.Next() {
 		var item roomRecipient
 		item.kind = "agent"
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName, &item.createdAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -440,6 +443,14 @@ func resolveMentions(body, authorID string, members []roomRecipient, projectID, 
 						}
 					}
 					if len(reached) == 0 {
+						reached = resolveDuplicateSuffix(parts[0], members, func(member roomRecipient) bool { return inProject(member) })
+						if len(reached) > 0 {
+							for _, member := range reached {
+								add(member, "mention")
+							}
+							record(token, "duplicate_suffix", "addressed", "slug with an ordinal suffix plus project: the later agent of that name in this project", reached)
+							continue
+						}
 						record(token, "project_qualified", "no_match", fmt.Sprintf("the project part matches, but no agent in this room has the slug %q", parts[0]), nil)
 					} else {
 						record(token, "project_qualified", "addressed", "slug plus project: the agent with that slug in this project", reached)
@@ -503,9 +514,19 @@ func resolveMentions(body, authorID string, members []roomRecipient, projectID, 
 				}
 				if len(revoked) > 0 {
 					record(token, "revoked", "addressed", "only revoked agents answer to this name; they are recorded as not woken", revoked)
-				} else {
-					record(token, "none", "no_match", "no room member, role key, or group tag has this name", nil)
+					continue
 				}
+				// A `-2`, `-3`, ... suffix names a later duplicate of a name in this room (the display of the second agent called
+				// `name` is `name-2`), so a person can address it. An exact slug always wins first, so a real agent called
+				// `name-2` is never shadowed by the ordinal reading.
+				if reached := resolveDuplicateSuffix(token, members, func(member roomRecipient) bool { return !member.revoked }); len(reached) > 0 {
+					for _, member := range reached {
+						add(member, "mention")
+					}
+					record(token, "duplicate_suffix", "addressed", "ordinal suffix: the later agent of that name in this room (shown as name-2, name-3, ...)", reached)
+					continue
+				}
+				record(token, "none", "no_match", "no room member, role key, or group tag has this name", nil)
 			}
 		}
 	}
@@ -550,6 +571,28 @@ func ignoredMentions(body string) []MentionTrace {
 			Reason: "written inside backticks or a code block, or escaped with a backslash, so it is shown literally and addresses nobody"})
 	}
 	return out
+}
+
+// resolveDuplicateSuffix reads a `name-2` token as the n-th agent (1-based,
+// n-1 >= 1) of that name among the room's live agents in creation order, and
+// returns it when it exists. Agents sharing a name show as `name`, `name-2`,
+// ... in creation order, so this is the token the display teaches.
+func resolveDuplicateSuffix(token string, members []roomRecipient, keep func(roomRecipient) bool) []roomRecipient {
+	base, n, ok := splitDuplicateSuffix(token)
+	if !ok {
+		return nil
+	}
+	var agents []roomRecipient
+	for _, member := range members {
+		if member.kind == "agent" && strings.ToLower(member.slug) == base && keep(member) {
+			agents = append(agents, member)
+		}
+	}
+	sort.Slice(agents, func(i, j int) bool { return agentOrder(agents[i], agents[j]) })
+	if n > len(agents) {
+		return nil
+	}
+	return []roomRecipient{agents[n-1]}
 }
 
 func mentionReasonStrength(reason string) int {
@@ -695,81 +738,8 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 // liveProse returns body with code (fenced, indented, inline) and escaped
 // \@ mentions blanked to spaces, so only live prose remains for addressing.
 func liveProse(body string) string {
-	var live strings.Builder
-	inFence, fence := false, ""
-	lines := strings.Split(body, "\n")
-	previousBlank := true
-	indented := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			marker := trimmed[:3]
-			if !inFence {
-				inFence, fence = true, marker
-			} else if marker == fence {
-				inFence = false
-			}
-			live.WriteByte('\n')
-			previousBlank = false
-			continue
-		}
-		if inFence {
-			live.WriteByte('\n')
-			previousBlank = trimmed == ""
-			continue
-		}
-		if trimmed == "" {
-			indented = false
-			previousBlank = true
-			live.WriteByte('\n')
-			continue
-		}
-		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
-			if previousBlank || indented {
-				indented = true
-				live.WriteByte('\n')
-				previousBlank = false
-				continue
-			}
-		}
-		indented = false
-		codeRun := 0
-		for i := 0; i < len(line); i++ {
-			switch line[i] {
-			case '`':
-				end := i + 1
-				for end < len(line) && line[end] == '`' {
-					end++
-				}
-				run := end - i
-				if codeRun == run {
-					codeRun = 0
-				} else if codeRun == 0 && hasClosingBacktickRun(line, end, run) {
-					codeRun = run
-				}
-				for j := i; j < end; j++ {
-					live.WriteByte(' ')
-				}
-				i = end - 1
-			case '\\':
-				if i+1 < len(line) && line[i+1] == '@' {
-					live.WriteString("  ")
-					i++
-				} else {
-					live.WriteByte(line[i])
-				}
-			default:
-				if codeRun != 0 {
-					live.WriteByte(' ')
-				} else {
-					live.WriteByte(line[i])
-				}
-			}
-		}
-		live.WriteByte('\n')
-		previousBlank = false
-	}
-	return live.String()
+	live, _ := liveProseSpans(body)
+	return live
 }
 
 // The live group tags, once: who a group-tagged message reaches is decided by groupTag.

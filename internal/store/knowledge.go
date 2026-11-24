@@ -542,6 +542,8 @@ func (s *Store) RecallKnowledge(ctx context.Context, agentID, query string, limi
 		if err := rows.Scan(&id, &roomID, &body, &created); err != nil {
 			return nil, err
 		}
+		// Recall quotes the stored body: mentions stay @agt_<id> (ids are the
+		// truth; the entities table of a note or message view names them).
 		if score := knowledgeScore(body, query, terms); score > 0 {
 			hits = append(hits, KnowledgeHit{"message", id, roomID, knowledgeSnippet(body, terms, query), score, created})
 		}

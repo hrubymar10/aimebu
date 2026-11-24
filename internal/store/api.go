@@ -176,7 +176,38 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // before the preview rewrite: it queries this database too
+	if err := displayRoomPreviews(ctx, s.readDB, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// displayRoomPreviews rewrites the stored agent-ID mentions of the room list's
+// last-message previews to display names.
+func displayRoomPreviews(ctx context.Context, q rowQuerier, rooms []Room) error {
+	var previews []Message
+	at := map[string]int{}
+	for i, room := range rooms {
+		if room.LastMessageBody == "" {
+			continue
+		}
+		at[room.ID] = i
+		previews = append(previews, Message{RoomID: room.ID, Body: room.LastMessageBody})
+	}
+	if len(previews) == 0 {
+		return nil
+	}
+	if err := displayMentions(ctx, q, previews); err != nil {
+		return err
+	}
+	for _, preview := range previews {
+		rooms[at[preview.RoomID]].LastMessageBody = preview.Body
+	}
+	return nil
 }
 
 // RoomsForUserProject keeps private rooms out of another member's sidebar.
@@ -248,6 +279,9 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		return nil, err
 	}
 	rows.Close()
+	if err := displayRoomPreviews(ctx, s.readDB, out); err != nil {
+		return nil, err
+	}
 	attention, err := s.attentionByRoom(ctx, userID)
 	if err != nil {
 		return nil, err

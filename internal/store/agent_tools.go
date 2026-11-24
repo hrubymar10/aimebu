@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 type AgentToolIdentity struct {
@@ -90,17 +91,37 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 	}
 	defer rows.Close()
 	all := make([]AgentMessage, 0, limit+1)
+	type raw struct {
+		m    AgentMessage
+		body string
+	}
+	var raws []raw
 	for rows.Next() {
-		m := AgentMessage{Available: true, RoomID: roomID}
+		r := raw{m: AgentMessage{Available: true, RoomID: roomID}}
 		var pages string
-		if err := rows.Scan(&m.No, &m.Room, &m.From, &m.Body, &m.CreatedAt, &pages, &m.Outcome); err != nil {
+		if err := rows.Scan(&r.m.No, &r.m.Room, &r.m.From, &r.body, &r.m.CreatedAt, &pages, &r.m.Outcome); err != nil {
 			return AgentHistoryPage{}, err
 		}
-		m.AppendixPageCount = appendixPageCount(pages)
-		all = append(all, m)
+		r.m.Body = r.body
+		r.m.AppendixPageCount = appendixPageCount(pages)
+		raws = append(raws, r)
 	}
 	if err := rows.Err(); err != nil {
 		return AgentHistoryPage{}, err
+	}
+	rows.Close()
+	// The entities table is computed after the scan: the entity queries share
+	// this database, and an open cursor here would deadlock a single connection.
+	for _, r := range raws {
+		entities, err := mentionEntities(ctx, s.db, agentID, projectID, roomID, r.body)
+		if err != nil {
+			return AgentHistoryPage{}, err
+		}
+		r.m.Entities = make([]protocol.Entity, 0, len(entities))
+		for _, entity := range entities {
+			r.m.Entities = append(r.m.Entities, protocol.Entity{ID: entity.ID, Name: entity.Name, Kind: entity.Kind})
+		}
+		all = append(all, r.m)
 	}
 	page := AgentHistoryPage{Messages: make([]AgentMessage, 0, limit)}
 	size := 32 // JSON wrapper and cursor

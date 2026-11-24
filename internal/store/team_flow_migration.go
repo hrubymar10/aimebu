@@ -1201,7 +1201,7 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 					}
 				}
 			}
-			if _, err := tx.Exec(`UPDATE agent SET desired='stopped',desired_rev=desired_rev+1 WHERE id=? AND desired<>'stopped'`, a.agentID); err != nil {
+			if _, err := tx.Exec(`UPDATE agent SET desired='stopped',desired_rev=desired_rev+1,stopped_at=COALESCE(stopped_at,?) WHERE id=? AND desired<>'stopped'`, timestamp(), a.agentID); err != nil {
 				return nil, err
 			}
 			if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: a.agentID,

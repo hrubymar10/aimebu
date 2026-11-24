@@ -282,7 +282,8 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 				if priorDesired != "not_accepting" {
 					priorDesired = "active"
 				}
-				if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1 WHERE id=?`, priorDesired, agentID); err != nil {
+				if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1,
+					stopped_at=CASE WHEN ?='stopped' THEN COALESCE(stopped_at,?) ELSE NULL END WHERE id=?`, priorDesired, priorDesired, timestamp(), agentID); err != nil {
 					return "", err
 				}
 				if _, err := tx.AppendEvent(Event{Kind: "agent_spawn_requested", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
@@ -323,7 +324,7 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 		} else {
 			switch operation {
 			case "spawn":
-				if _, err := tx.Exec(`UPDATE agent SET desired='stopped',desired_rev=desired_rev+1 WHERE id=?`, agentID); err != nil {
+				if _, err := tx.Exec(`UPDATE agent SET desired='stopped',desired_rev=desired_rev+1,stopped_at=COALESCE(stopped_at,?) WHERE id=?`, timestamp(), agentID); err != nil {
 					return "", err
 				}
 				if err := tx.confirmStoppedIfQuiescent(agentID); err != nil {
@@ -341,7 +342,7 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 				if _, err := tx.Exec(`DELETE FROM agent_switch WHERE agent_id=?`, agentID); err != nil {
 					return "", err
 				}
-				if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1 WHERE id=?`, resume, agentID); err != nil {
+				if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1,stopped_at=NULL WHERE id=?`, resume, agentID); err != nil {
 					return "", err
 				}
 			}

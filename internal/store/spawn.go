@@ -495,7 +495,9 @@ func (tx *Tx) authorizeSpawnActor(projectID, actorKind, actorID string, spawning
 
 var agentNamePool = []string{"alice", "bob", "carol", "dave", "eve", "frank", "grace", "hugo", "iris", "jack", "kate", "leo", "mia", "nate", "olive", "pete", "quinn", "ruth", "sam", "tina", "vera", "will", "xena", "yara", "zeke", "amy", "ben", "cora", "dan", "ella", "finn", "gina", "hal", "ivy", "jade", "kai", "lena", "max", "nora", "otto", "piper", "rhea", "seth", "theo", "una", "vince", "wren", "xavi", "yuki", "zoe", "arlo", "beth", "cleo", "drew", "elsa", "felix", "gus", "hana", "ian", "june", "kira", "luna", "milo", "nina", "owen", "penny", "rex", "sage", "tara", "uma", "vlad", "wade", "xio", "yann", "zane", "ada", "boris", "cass", "deon", "emma", "ford", "gwen", "hans", "ines", "jonas", "kyra", "lars", "mona", "nils", "opal", "pia", "quin", "remi", "sven", "tessa", "umar", "viv", "wes", "xan", "yael", "zeno"}
 
-// takenSlugs is every name a new agent in the project cannot have: an agent's, any person's login (no name is shared by a login and an agent), or a role key that @name would clash with.
+// takenSlugs is every name a new agent in the project cannot have: the slug of a live agent (see liveAgentCondition: a
+// name is free again once its agent is stopped, its home room is closed, and it has been stopped for at least 24 hours),
+// any person's login (no name is shared by a login and an agent), or a role key that @name would clash with.
 func (tx *Tx) takenSlugs(projectID string) (map[string]bool, error) {
 	return takenSlugs(tx.ctx, tx.tx, projectID)
 }
@@ -506,7 +508,9 @@ type rowQuerier interface {
 }
 
 func takenSlugs(ctx context.Context, q rowQuerier, projectID string) (map[string]bool, error) {
-	rows, err := q.QueryContext(ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT login FROM user UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`, projectID, projectID)
+	rows, err := q.QueryContext(ctx, `SELECT slug FROM agent a WHERE a.project_id=? AND `+liveAgentCondition+
+		` UNION SELECT login FROM user UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`,
+		projectID, nameFreeCutoff(), projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1056,8 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 			}
 		}
 	}
-	if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1,observed=?,generation=? WHERE id=?`, desired, observed, generation, id); err != nil {
+	if _, err := tx.Exec(`UPDATE agent SET desired=?,desired_rev=desired_rev+1,observed=?,generation=?,
+		stopped_at=CASE WHEN ?='stopped' THEN COALESCE(stopped_at,?) ELSE NULL END WHERE id=?`, desired, observed, generation, desired, timestamp(), id); err != nil {
 		return AgentCard{}, err
 	}
 	if current == "stopped" && desired == "active" {

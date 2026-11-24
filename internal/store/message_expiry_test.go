@@ -96,7 +96,12 @@ func TestOldAIGroupNotesAreDroppedAndEverythingElseIsAlwaysDelivered(t *testing.
 	if !got.Ready {
 		t.Fatal("the agent has live and addressed notes and must be woken")
 	}
-	want := []string{"old untargeted human message", "@channel old human broadcast", "@one please do the old thing", "@channel fresh AI chatter"}
+	// The mention is stored by agent ID (A10-3); the delivery shows the stored body text.
+	var storedMention string
+	if err := s.db.QueryRow(`SELECT body FROM message WHERE id=?`, mentionOld.ID).Scan(&storedMention); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"old untargeted human message", "@channel old human broadcast", storedMention, "@channel fresh AI chatter"}
 	if fmt.Sprint(got.Bodies) != fmt.Sprint(want) {
 		t.Fatalf("delivered %q, want %q: human messages and addressed notes are delivered however old, old AI group chatter is not", got.Bodies, want)
 	}

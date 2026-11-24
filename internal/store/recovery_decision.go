@@ -137,7 +137,7 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 				return "", ErrInvalidTransition
 			}
 			if choice == "continue" {
-				updated, err := tx.Exec(`UPDATE agent SET desired='active',desired_rev=desired_rev+1 WHERE id=? AND desired='not_accepting'`, agentID)
+				updated, err := tx.Exec(`UPDATE agent SET desired='active',desired_rev=desired_rev+1,stopped_at=NULL WHERE id=? AND desired='not_accepting'`, agentID)
 				if err != nil {
 					return "", err
 				}

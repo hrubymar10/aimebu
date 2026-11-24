@@ -637,6 +637,11 @@ type DeliveryNote struct {
 	// Outcome is what a task-result handoff reports (done, partial or failed), so the lead or dispatcher it wakes reads it without parsing the
 	// body. Absent on every other message and on a handoff written before outcomes.
 	Outcome string `json:"outcome,omitempty"`
+	// Entities names the agent and person IDs the body mentions (mentions are stored by ID): one entry per distinct id in
+	// body order, {id,name,kind}. A name is present only when the recipient may see it (an agent of the recipient's
+	// project, a peer of the private chat, a person addressable in the room); an id whose holder is gone is left out, and
+	// the body keeps its @agt_<id> text.
+	Entities []Entity `json:"entities,omitempty"`
 	// WorkerOutput is the end of what a worker's turn said, on a notice about that worker (it ended its turn without a message, or its
 	// turn failed and its recovery was handed to the lead). It is the worker's text, not the server's: the recipient reads it as data.
 	WorkerOutput *WorkerOutput `json:"worker_output,omitempty"`
@@ -673,6 +678,14 @@ type NoteParent struct {
 	AgentID string `json:"agent_id,omitempty"`
 	Body    string `json:"body"`
 	Yours   bool   `json:"yours,omitempty"`
+}
+
+// Entity is one entry of a note's or message view's entities table: an id the body mentions and the name the recipient
+// is shown for it (empty when the recipient may not see one). Kind is "agent" or "person".
+type Entity struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind"`
 }
 
 type DeliveryAttachment struct {

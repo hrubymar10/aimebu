@@ -26,7 +26,7 @@ func (s *Store) PruneRuntime(ctx context.Context) error {
 		args  []any
 	}{
 		{`UPDATE checkout SET writer_agent_id=NULL,writer_state='none' WHERE writer_agent_id IS NOT NULL`, nil},
-		{`UPDATE agent SET desired='stopped',observed='stopped',desired_rev=desired_rev+1,recovery_block=0,key_hash=''`, nil},
+		{`UPDATE agent SET desired='stopped',observed='stopped',desired_rev=desired_rev+1,recovery_block=0,key_hash='',stopped_at=?`, []any{now}},
 		{`UPDATE session SET ended_at=? WHERE ended_at IS NULL`, []any{now}},
 		{`UPDATE turn SET exec='killed',outcome='cancelled',settle='settled',ended_at=COALESCE(ended_at,?) WHERE exec IN ('pending','running','lost')`, []any{now}},
 		{`UPDATE turn SET settle='settled' WHERE settle='pending'`, nil},

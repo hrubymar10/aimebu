@@ -20,12 +20,19 @@ const archiveHitLimit = 50
 
 // ArchiveSearch finds message bodies in this project's closed rooms for one
 // member, keeping other members' private chats out like the room lists do.
+// A stored body keeps its mentions as agent IDs, so an `@name` in the query
+// also matches the stored IDs of the project's agents of that name, and the
+// snippets come back as display text.
 func (s *Store) ArchiveSearch(ctx context.Context, projectID, userID, query string, limit int) ([]ArchiveHit, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > archiveHitLimit {
 		limit = archiveHitLimit
+	}
+	matchClause, matchArgs, err := archiveMatchPattern(ctx, s.db, projectID, query)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.room_id,m.body,m.created_at,r.title
 		FROM message m JOIN room r ON r.id=m.room_id
@@ -38,23 +45,82 @@ func (s *Store) ArchiveSearch(ctx context.Context, projectID, userID, query stri
 			AND oversight.user_id=? AND oversight.role IN ('owner','operator')) OR EXISTS (
 			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
 			AND own.member_id=? AND own.left_at IS NULL))
-		  AND m.body LIKE ? ESCAPE '\'
-		ORDER BY m.created_at DESC,m.seq DESC LIMIT ?`, projectID, userID, userID, userID, likePattern(query), limit)
+		  AND (`+matchClause+`)
+		ORDER BY m.created_at DESC,m.seq DESC LIMIT ?`,
+		append([]any{projectID, userID, userID, userID}, append(matchArgs, any(limit))...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []ArchiveHit{}
+	var messages []Message
 	for rows.Next() {
 		var hit ArchiveHit
 		var body string
 		if err := rows.Scan(&hit.MessageID, &hit.RoomID, &body, &hit.CreatedAt, &hit.RoomName); err != nil {
 			return nil, err
 		}
-		hit.Snippet = snippetAround(body, query)
+		messages = append(messages, Message{RoomID: hit.RoomID, Body: body})
 		out = append(out, hit)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // before the entity rewrite: it queries this database too
+	if err := displayMentions(ctx, s.db, messages); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Snippet = snippetAround(messages[i].Body, query)
+	}
+	return out, nil
+}
+
+// archiveMatchPattern builds the LIKE clause that matches the query in a
+// stored body: the query itself, plus, for every `@name` in it, the stored ID
+// form of each not-removed agent of the project with that name.
+func archiveMatchPattern(ctx context.Context, q rowQuerier, projectID, query string) (string, []any, error) {
+	clauses := []string{`m.body LIKE ? ESCAPE '\'`}
+	args := []any{likePattern(query)}
+	var names []string
+	seen := map[string]bool{}
+	for _, m := range mentionPattern.FindAllStringSubmatch(query, -1) {
+		token := strings.TrimRight(strings.ToLower(m[1]), "-_")
+		if strings.HasPrefix(token, "agt_") || seen[token] {
+			continue
+		}
+		seen[token] = true
+		names = append(names, token)
+	}
+	if len(names) > 0 {
+		rows, err := q.QueryContext(ctx, `SELECT a.id,a.slug FROM agent a
+			WHERE a.project_id=? AND a.revoked_at IS NULL AND lower(a.slug) IN (`+strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")+`)`,
+			append([]any{projectID}, namesToArgs(names)...)...)
+		if err != nil {
+			return "", nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, slug string
+			if err := rows.Scan(&id, &slug); err != nil {
+				return "", nil, err
+			}
+			clauses = append(clauses, `m.body LIKE ? ESCAPE '\'`)
+			args = append(args, likePattern("@"+id))
+		}
+		if err := rows.Err(); err != nil {
+			return "", nil, err
+		}
+	}
+	return strings.Join(clauses, " OR "), args, nil
+}
+
+func namesToArgs(names []string) []any {
+	args := make([]any, len(names))
+	for i, name := range names {
+		args[i] = name
+	}
+	return args
 }
 
 // likePattern escapes LIKE wildcards so a query cannot widen its own match.

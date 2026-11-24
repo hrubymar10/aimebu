@@ -71,6 +71,9 @@ type AgentMessage struct {
 	Project string `json:"project,omitempty"`
 	// Outcome is a task-result handoff's outcome (done, partial or failed); absent on any other message and on an older handoff.
 	Outcome string `json:"outcome,omitempty"`
+	// Entities names the agent and person IDs the stored body mentions (the body keeps the raw @agt_<id> text; the human
+	// view is the translation layer). A name is present only when the reading agent may see it; see mentionEntities.
+	Entities []protocol.Entity `json:"entities,omitempty"`
 }
 
 // personReadsRoomSQL is true when the user given by the SQL expression user may read the room aliased tr right now, for a citation across
@@ -101,7 +104,7 @@ func appendixPageCount(raw string) int {
 	return len(pages)
 }
 
-func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectID string, no int64, limit int, withPages bool) (AgentMessage, error) {
+func agentMessageByNo(ctx context.Context, q rowQuerier, agentID, projectID string, no int64, limit int, withPages bool) (AgentMessage, error) {
 	unavailable := AgentMessage{No: no}
 	var roomID, title, kind, authorKind, authorID, body, createdAt, targetProject, targetProjectName, pages, outcome string
 	// System citation grants come from server-created missed-mention pointers.
@@ -144,8 +147,19 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 	if targetProject != projectID && targetProject != AgentDMProjectID {
 		out.Project = targetProjectName
 	}
+	entities, err := mentionEntities(ctx, q, agentID, projectID, roomID, body)
+	if err != nil {
+		return AgentMessage{}, err
+	}
+	for _, entity := range entities {
+		out.Entities = append(out.Entities, protocol.Entity{ID: entity.ID, Name: entity.Name, Kind: entity.Kind})
+	}
 	return out, nil
 }
+
+// displayAgentMessage is gone: agent-facing reads keep the stored @agt_<id>
+// bodies (ids are the truth; the human view is the translation layer) and name
+// what they mention in the entities table instead (mentionEntities).
 
 // authorLabel is how an agent is shown who wrote a message: a person's login, an agent's name (its old one when it was removed), "system".
 func authorLabel(ctx context.Context, q singleRowQuerier, authorKind, authorID string) string {
@@ -340,6 +354,39 @@ func (tx *Tx) noteContext(agentID string, notes []protocol.DeliveryNote, reasons
 			note.Why = noteWhy(reasons[i], replyParent)
 			note.FYI = reasons[i] == "broadcast"
 		}
+		// The entities table names the ids the note's body (and its quoted
+		// parents) mention, under the no-leak rule of mentionEntities.
+		note.Entities, err = noteEntities(tx.ctx, tx.tx, agentID, ownProject, *note)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// noteEntities collects the entity table of one delivered note: the stored
+// body plus the bodies of its quoted parents, deduplicated in that order.
+func noteEntities(ctx context.Context, q rowQuerier, agentID, projectID string, note protocol.DeliveryNote) ([]protocol.Entity, error) {
+	parts := []string{note.Body}
+	for _, parent := range []*protocol.NoteParent{note.InReplyTo, note.Conversation} {
+		if parent != nil && parent.Body != "" {
+			parts = append(parts, parent.Body)
+		}
+	}
+	out := []protocol.Entity{}
+	seen := map[string]bool{}
+	for _, part := range parts {
+		entities, err := mentionEntities(ctx, q, agentID, projectID, note.RoomID, part)
+		if err != nil {
+			return nil, err
+		}
+		for _, entity := range entities {
+			if seen[entity.ID] {
+				continue
+			}
+			seen[entity.ID] = true
+			out = append(out, protocol.Entity{ID: entity.ID, Name: entity.Name, Kind: entity.Kind})
+		}
+	}
+	return out, nil
 }

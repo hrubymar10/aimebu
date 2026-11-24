@@ -553,6 +553,10 @@ type Message struct {
 	// instead of the account or agent id; AuthorProjectID is the removed agent's project, which names it (slug@project).
 	AuthorName      string `json:"-"`
 	AuthorProjectID string `json:"-"`
+	// Mentions is what each stored agent-ID mention of the body resolved to for this reader (id and display name). It is
+	// filled by the read paths (displayMentions); a stored body keeps the IDs themselves. Empty when the body stores no
+	// agent-ID mention.
+	Mentions []MentionRef `json:"mentions,omitempty"`
 	// Outcome is what a task-result handoff reports: done, partial or failed. Empty on every other message and on a handoff written
 	// before outcomes existed (or by an agent whose supervisor predates them), which a client shows without one.
 	Outcome string `json:"outcome,omitempty"`
@@ -578,6 +582,12 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return Message{}, err
 		}
+	}
+	// Mentions are stored by agent ID: every live prose mention that names exactly one agent of the room is rewritten to
+	// @agt_<id> before addressing is resolved (which accepts a full member ID as a token), so the mention keeps addressing
+	// the same agent when its name is later freed and reused. Readers get the display form back.
+	if _, err := tx.storeMentionsByID(&message); err != nil {
+		return Message{}, err
 	}
 	targets, wake, guard, err := tx.resolveMessageTargets(message)
 	if err != nil {
@@ -776,6 +786,11 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Readers see display names: the stored agent-ID mentions are rewritten per room, and the mentions array names what
+	// each one resolved to. The stored rows keep the IDs.
+	if err := displayMentions(ctx, s.readDB, messages); err != nil {
 		return nil, err
 	}
 	if err := s.answerStateForMessages(ctx, messages); err != nil {

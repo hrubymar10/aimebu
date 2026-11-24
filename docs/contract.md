@@ -519,7 +519,7 @@ Roles, agents
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
   launch_path (default empty), removed_slug (default empty, migration 93),
-  created_by, created_at) — **one role per agent**: one agent cannot hold
+  stopped_at? (migration 137), created_by, created_at) — **one role per agent**: one agent cannot hold
   different roles in different rooms; `@role` resolves to room members whose
   agent role matches; `home_room_id` is set on the first non-DM agent join and
   limits room bulk control to that agent's current home membership; `generation`
@@ -528,9 +528,16 @@ Roles, agents
   differs from the canonical `checkout.canonical_path`: the harness is started
   there (`launch_path` on the delivery), and it is ignored once the agent is not a
   Claude agent and cleared when a switch moves it to another checkout
-  (a removed agent — `DELETE /api/agents/{id}` — is revoked; its `slug`, unique within
-  the project, is rewritten to a tombstone so the name is free, and `removed_slug`
-  keeps the name its messages are shown under).
+  (a removed agent — `DELETE /api/agents/{id}` — is revoked; its `slug` is
+  rewritten to a tombstone and `removed_slug` keeps the name its messages are
+  shown under). **A slug is unique only among live agents** (migration 137
+  dropped the per-project UNIQUE): a name is held by an agent that is not
+  removed and not (stopped, with its home room closed, for at least 24 hours —
+  `stopped_at`, backfilled from the agent's stop events, set when the desired
+  state enters `stopped` and cleared when it leaves it; the 24 hours read an
+  injectable clock). A freed name can be given to a new agent of the project;
+  an old agent reactivated next to its successor keeps its name and the room
+  shows the later duplicate as `name-2` (below).
   `approved_by` (migration 133) is the message of a person that approved this
   agent's exact harness and model choice outside its role's default pool, set
   only on an agent-initiated spawn that carried it (a person's own spawn and a
@@ -2332,12 +2339,44 @@ without a `room_member` row); a DM resolves only its peers. Group tags
 (`@channel`, `@humans`, ...) still mean the room's explicit members. A login
 that equals the slug of exactly one agent of the room addresses that agent and
 every person with the login (a live mention of an agent always wakes it; the
-`@slug@<project>` form names the agent alone). Two agents with one slug are
-ambiguous and address nobody. A new collision cannot arise: no name is shared
-by a login and an agent, so a login is refused when it equals (case-insensitive)
-the slug of any agent in any project, and an agent's slug is refused when it
+`@slug@<project>` form names the agent alone). Two live agents with one slug
+are ambiguous and address nobody; the later one (creation order in that room)
+is displayed, and addressable, as `@name-2`, then `@name-3`, ..., and an exact
+slug always wins over the ordinal reading (an agent really called `name-2` is
+not shadowed). A login is refused when it equals (case-insensitive) the slug
+of any **live** agent in any project, and an agent's slug is refused when it
 equals any login (409 `login_in_use` / `name_in_use`, naming the name and what
-holds it; an unauthenticated redemption answers `login_in_use` without naming the holder). Collisions that predate the rule stay, and `aimebu doctor` lists them.
+holds it; an unauthenticated redemption answers `login_in_use` without naming
+the holder). Collisions that predate the rule stay, and `aimebu doctor` lists
+them.
+
+Mentions are stored by agent ID (migration 137 converted the stored bodies of
+old messages once, idempotently). When a message is written, the server
+rewrites every live-prose mention that names exactly one live agent of the
+room — `@slug`, `@slug@<project>` or `@slug-2` — to `@agt_<id>` in the stored
+body; an `@agt_<id>` written directly is accepted when it names a member the
+room may address. Code (fenced, inline, indented), escaped `\@`, ambiguous
+names, people's logins, role keys and group tags are stored as written. Wake
+and addressing resolve the stored IDs (a full member ID has always been a
+valid token), so a mention keeps reaching the same agent after its name is
+freed and reused. **Ids are the truth; the human view is only a translation
+layer.** Agents see and write IDs: the agent-facing reads (room history,
+message view, delivered notes and their quoted parents, the conversation log)
+keep the stored `@agt_<id>` bodies untouched — no translation to a name — and
+carry an `entities` table instead: one `{id,name,kind}` entry per distinct id
+the live prose mentions, in body order (`kind` is `agent` or `person`; an
+`@usr_<id>` an agent wrote is covered as a person). A name is present only
+when the reading agent may see it — an agent of its own project (its slug, or
+a removed agent's kept `removed_slug`), a member agent of a private chat
+between agents it sits in, or a person addressable in the message's room; an
+id whose holder is gone is left out entirely and the body keeps its stored
+text. The delivered prompt says to mention agents and people by id. Only the
+web and the other human-facing paths translate: the room history and previews
+for people, the archive search snippets and the human message list rewrite
+each stored ID to `@<name>` — with the `-2` suffix in a duplicate room — and
+carry `mentions: [{id,name,resolved}]`; a person's `usr_` id shows the
+person's display name. A stored body is internal: the debug inspector shows
+it as stored, and its addressing trace resolves it by ID.
 
 ## 7. Spawn / move / role change checks
 

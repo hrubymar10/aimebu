@@ -42,11 +42,13 @@ func loginHolder(ctx context.Context, q rowQuerier, name string) (string, error)
 	return "the person with the login " + login, nil
 }
 
-// agentSlugHolder describes the agent whose slug equals name (case-insensitive) in any project, or "" when none does. A removed agent's slug
-// is a tombstone, so it never matches.
+// agentSlugHolder describes the live agent whose slug equals name (case-insensitive) in any project, or "" when none
+// does. A removed agent's slug is a tombstone, so it never matches; an agent that is stopped for at least 24 hours with
+// its home room closed no longer holds its name either (the name-free rule), so the login is free again.
 func agentSlugHolder(ctx context.Context, q rowQuerier, name string) (string, error) {
 	var slug, project string
-	err := q.QueryRowContext(ctx, `SELECT a.slug,COALESCE(p.name,'') FROM agent a LEFT JOIN project p ON p.id=a.project_id WHERE lower(a.slug)=lower(?) AND a.revoked_at IS NULL ORDER BY a.created_at,a.id LIMIT 1`, name).Scan(&slug, &project)
+	err := q.QueryRowContext(ctx, `SELECT a.slug,COALESCE(p.name,'') FROM agent a LEFT JOIN project p ON p.id=a.project_id
+		WHERE lower(a.slug)=lower(?) AND `+liveAgentCondition+` ORDER BY a.created_at,a.id LIMIT 1`, name, nameFreeCutoff()).Scan(&slug, &project)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -77,7 +79,7 @@ func slugInUse(ctx context.Context, q rowQuerier, projectID, name string) error 
 		return &NameInUseError{Name: name, Holder: holder, kind: ErrSlugTaken}
 	}
 	var found string
-	err := q.QueryRowContext(ctx, `SELECT slug FROM agent WHERE project_id=? AND lower(slug)=lower(?) LIMIT 1`, projectID, name).Scan(&found)
+	err := q.QueryRowContext(ctx, `SELECT slug FROM agent a WHERE a.project_id=? AND lower(a.slug)=lower(?) AND `+liveAgentCondition+` LIMIT 1`, projectID, name, nameFreeCutoff()).Scan(&found)
 	if err == nil {
 		return &NameInUseError{Name: name, Holder: "an agent of this project", kind: ErrSlugTaken}
 	}

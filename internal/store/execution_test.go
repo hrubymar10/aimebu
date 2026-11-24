@@ -156,7 +156,8 @@ func TestExecutionSchemaConstraints(t *testing.T) {
 		{"agent role FK", `UPDATE agent SET role_id='role_missing' WHERE id=?`, []any{f.agent.ID}},
 		{"agent machine FK", `UPDATE agent SET machine_id='mch_missing' WHERE id=?`, []any{f.agent.ID}},
 		{"agent checkout FK", `UPDATE agent SET checkout_id='chk_missing' WHERE id=?`, []any{f.agent.ID}},
-		{"agent slug unique", `INSERT INTO agent(id,slug,project_id,role_id,tool,variant,model,provider,machine_id,checkout_id,key_hash,created_by,created_at) VALUES ('agt_2','worker',?,'role_test','codex','native','x','x','mch_test','chk_test','x','u','now')`, []any{f.project.ID}},
+		// (The per-project agent slug UNIQUE went with A10-3: names are reusable, and the live-name rule is the store's code,
+		// so a same-named row is no longer an invalid row.)
 		{"session mode", `UPDATE session SET start_mode='bad' WHERE id='ses_test'`, nil},
 		{"session agent FK", `UPDATE session SET agent_id='agt_missing' WHERE id='ses_test'`, nil},
 		{"session generation unique", `INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_2',?,0,'fresh_with_history','now')`, []any{f.agent.ID}},

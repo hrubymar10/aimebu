@@ -2118,6 +2118,55 @@ CREATE TABLE IF NOT EXISTS role_body_extension (
   updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS role_body_extension_scope ON role_body_extension(COALESCE(project_id,''),role_id);
+`}, {137, `
+-- Agent names become reusable. The per-project UNIQUE (project_id, slug) is dropped: a name is held only by a live agent
+-- (not removed, and not stopped for at least 24 hours with its home room closed — the store checks that rule in code,
+-- which needs the stopped_at column this migration adds and backfills from the agent's stop events), so an old agent's
+-- name can be given to a new agent. Mentions survive a reused name because they are stored by agent ID: this migration
+-- also rewrites the agent names in the stored bodies of old messages to the agent's full ID (migrateMentionsToIDs, in
+-- Go, idempotent: a second pass finds nothing left to rewrite). SQLite cannot drop a table constraint, so the table is
+-- rebuilt (create, copy, drop, rename); the migration runs with foreign keys off, or dropping the old table would
+-- cascade away the rows that point at it.
+CREATE TABLE agent_new (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  role_id TEXT NOT NULL REFERENCES role(id),
+  recovery_block INTEGER NOT NULL DEFAULT 0 CHECK (recovery_block IN (0,1)),
+  tool TEXT NOT NULL,
+  variant TEXT NOT NULL,
+  model TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  machine_id TEXT NOT NULL REFERENCES machine(id),
+  checkout_id TEXT NOT NULL REFERENCES checkout(id),
+  key_hash TEXT NOT NULL,
+  revoked_at TEXT,
+  desired TEXT NOT NULL DEFAULT 'active' CHECK (desired IN ('active','not_accepting','stopped')),
+  desired_rev INTEGER NOT NULL DEFAULT 0 CHECK (desired_rev >= 0),
+  observed TEXT NOT NULL DEFAULT 'idle' CHECK (observed IN ('idle','in_turn','interrupting','stopped','lost')),
+  generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  home_room_id TEXT REFERENCES room(id),
+  launcher_id TEXT REFERENCES machine_launcher(id),
+  resumed_from_legacy_id TEXT,
+  launch_path TEXT NOT NULL DEFAULT '',
+  removed_slug TEXT NOT NULL DEFAULT '',
+  approved_by TEXT,
+  stopped_at TEXT
+);
+INSERT INTO agent_new (id,slug,project_id,role_id,recovery_block,tool,variant,model,provider,machine_id,checkout_id,key_hash,
+    revoked_at,desired,desired_rev,observed,generation,created_by,created_at,home_room_id,launcher_id,resumed_from_legacy_id,launch_path,removed_slug,approved_by)
+  SELECT id,slug,project_id,role_id,recovery_block,tool,variant,model,provider,machine_id,checkout_id,key_hash,
+    revoked_at,desired,desired_rev,observed,generation,created_by,created_at,home_room_id,launcher_id,resumed_from_legacy_id,launch_path,removed_slug,approved_by FROM agent;
+UPDATE agent_new SET stopped_at = (
+  SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=agent_new.id
+    AND (e.kind='agent_stopped' OR (e.kind='agent_control_applied' AND json_extract(e.payload_json,'$.desired')='stopped'))
+);
+DROP TABLE agent;
+ALTER TABLE agent_new RENAME TO agent;
+CREATE INDEX agent_home_room ON agent(home_room_id);
+CREATE INDEX agent_launcher_active ON agent(launcher_id,desired,observed);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2204,7 +2253,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if limit > 0 && m.version > limit {
 			break
 		}
-		if m.version == 103 || m.version == 117 || m.version == 123 {
+		if m.version == 103 || m.version == 117 || m.version == 123 || m.version == 137 {
 			if err := migrateWithForeignKeysOff(ctx, db, m); err != nil {
 				return fmt.Errorf("migration %d: %w", m.version, err)
 			}
@@ -2434,6 +2483,11 @@ func migrateWithForeignKeysOff(ctx context.Context, db *sql.DB, m migration) (re
 	}
 	if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 		return err
+	}
+	if m.version == 137 {
+		if err := migrateMentionsToIDs(ctx, tx); err != nil {
+			return err
+		}
 	}
 	after, err := countForeignKeyViolations(ctx, tx)
 	if err != nil {
