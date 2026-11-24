@@ -595,7 +595,10 @@ The Codex conversation log maps these item shapes, checked against real
 camelCase for the app-server): `agent_message` (assistant), `reasoning`
 (thinking), `command_execution` (`shell` call and result, the exit status when
 it is not 0), `mcp_tool_call` (`<server>.<tool>`; the result is its text
-content blocks, else its structured content, else the result as JSON; the
+content blocks, else its structured content, else the result as JSON; text
+mixed with other blocks and no structured content keeps the text with one
+`[<type> omitted]` line per other block, `[image omitted]` for an image and
+`[block omitted]` for a block with no type; the
 error is the message of its error object), `file_change` (one `kind path`
 line per change; the app-server's kind object gives its type),
 `collab_tool_call` / `collabAgentToolCall` (`collab.<tool>` with its prompt

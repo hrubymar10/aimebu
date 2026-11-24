@@ -3,6 +3,8 @@ package codex
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
@@ -115,7 +117,9 @@ func messageOf(raw json.RawMessage) string {
 }
 
 // toolResultText is the text of an MCP tool's result: its text content blocks joined, then its structured content (structured_content or
-// structuredContent), then the result itself as JSON when neither is there to read.
+// structuredContent), then the result itself as JSON when neither is there to read. A result that mixes text with other blocks (an image,
+// a resource) and has no structured content keeps its text, with one placeholder line per other block in its place (omittedBlock), so the
+// log shows that the tool returned more than the text without dumping the block.
 func toolResultText(raw json.RawMessage) string {
 	var value struct {
 		Content []struct {
@@ -129,15 +133,17 @@ func toolResultText(raw json.RawMessage) string {
 		return adapter.ConversationJSON(raw)
 	}
 	var parts []string
-	other := false
+	text, other := false, false
 	for _, block := range value.Content {
 		if block.Type == "text" {
 			parts = append(parts, block.Text)
+			text = true
 		} else {
+			parts = append(parts, omittedBlock(block.Type))
 			other = true
 		}
 	}
-	if len(parts) > 0 && !other {
+	if text && !other {
 		return strings.Join(parts, "\n")
 	}
 	if structured := adapter.ConversationJSON(value.Structured); structured != "" {
@@ -146,10 +152,35 @@ func toolResultText(raw json.RawMessage) string {
 	if structured := adapter.ConversationJSON(value.StructuredCamel); structured != "" {
 		return structured
 	}
-	if len(parts) > 0 {
+	if text {
 		return strings.Join(parts, "\n")
 	}
 	return adapter.ConversationJSON(raw)
+}
+
+// omittedBlockType bounds the length of a block type a placeholder names.
+const omittedBlockType = 32
+
+// omittedBlock is the placeholder for a non-text content block of a tool result: "[image omitted]", "[<type> omitted]" with the type cut to
+// omittedBlockType runes and its control and format characters and brackets removed (it comes from the tool), "[block omitted]" for a block with no type.
+func omittedBlock(kind string) string {
+	var clean strings.Builder
+	runes := 0
+	for _, r := range kind {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError || r == '[' || r == ']' {
+			continue
+		}
+		if runes == omittedBlockType {
+			break
+		}
+		clean.WriteRune(r)
+		runes++
+	}
+	kind = strings.TrimSpace(clean.String())
+	if kind == "" {
+		kind = "block"
+	}
+	return "[" + kind + " omitted]"
 }
 
 // fileChanges is the input of a file_change item: one line per change, its kind and path (the kind a string in `codex exec --json`, an

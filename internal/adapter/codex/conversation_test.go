@@ -2,6 +2,7 @@ package codex
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -173,6 +174,8 @@ func TestConversationOfRecordedExecShapes(t *testing.T) {
 		m{"type": "item.completed", "item": m{"id": "item_2", "type": "file_change", "changes": []m{{"kind": "update", "path": "/work/a.go"}, {"kind": "delete", "path": "/work/b.go"}}, "status": "completed"}},
 		m{"type": "item.started", "item": m{"id": "item_3", "type": "collab_tool_call", "tool": "wait", "sender_thread_id": "th1", "receiver_thread_ids": []string{}, "prompt": nil, "agents_states": m{}, "status": "in_progress"}},
 		m{"type": "item.completed", "item": m{"id": "item_3", "type": "collab_tool_call", "tool": "wait", "sender_thread_id": "th1", "receiver_thread_ids": []string{}, "prompt": nil, "agents_states": m{}, "status": "completed"}},
+		m{"type": "item.completed", "item": m{"id": "item_6", "type": "mcp_tool_call", "server": "aimebu", "tool": "attachment_get", "arguments": m{"id": "att1"},
+			"result": m{"content": []m{{"type": "text", "text": "a chart"}, {"type": "image", "data": "AAAA", "mimeType": "image/png"}}, "structured_content": nil}, "error": nil, "status": "completed"}},
 		m{"type": "item.completed", "item": m{"id": "item_4", "type": "error", "message": "a tool was not available"}},
 		m{"type": "error", "message": "Reconnecting... 1/5 (request timed out)"},
 		m{"type": "item.completed", "item": m{"id": "item_5", "type": "agent_message", "text": `{"messages":[]}`}},
@@ -194,6 +197,8 @@ func TestConversationOfRecordedExecShapes(t *testing.T) {
 		{Kind: adapter.ConversationToolResult, Text: "file_change\ncompleted"},
 		{Kind: adapter.ConversationToolCall, Text: "collab.wait"},
 		{Kind: adapter.ConversationToolResult, Text: "collab.wait\ncompleted"},
+		{Kind: adapter.ConversationToolCall, Text: `aimebu.attachment_get {"id":"att1"}`},
+		{Kind: adapter.ConversationToolResult, Text: "aimebu.attachment_get\na chart\n[image omitted]"},
 		{Kind: adapter.ConversationError, Text: "a tool was not available"},
 		{Kind: adapter.ConversationEvent, Text: "warning: Reconnecting... 1/5 (request timed out)"},
 		{Kind: adapter.ConversationAssistant, Text: `{"messages":[]}`},
@@ -216,6 +221,8 @@ func TestConversationOfAppServerToolShapes(t *testing.T) {
 		"result": m{"content": []m{}, "structuredContent": m{"rooms": []string{"r1"}}}, "error": nil})
 	item(m{"id": "m2", "type": "mcpToolCall", "server": "aimebu", "tool": "react", "arguments": m{"no": 1}, "status": "completed",
 		"result": m{"content": []m{{"type": "image", "data": "AAAA"}}, "structuredContent": nil}, "error": nil})
+	item(m{"id": "m3", "type": "mcpToolCall", "server": "aimebu", "tool": "attachment_get", "arguments": m{"id": "att1"}, "status": "completed",
+		"result": m{"content": []m{{"type": "text", "text": "a chart"}, {"type": "image", "data": "AAAA", "mimeType": "image/png"}, {"type": "resource", "resource": m{"uri": "file:///x"}}}, "structuredContent": nil}, "error": nil})
 	item(m{"id": "f1", "type": "fileChange", "changes": []m{{"path": "/work/c.go", "kind": m{"type": "add"}, "diff": "+x"}}, "status": "completed"})
 	item(m{"id": "g1", "type": "collabAgentToolCall", "tool": "spawnAgent", "prompt": "check the tests", "receiverThreadIds": []string{"th2"}, "agentsStates": m{"th2": m{"status": "running"}}, "status": "completed"})
 	sameRecords(t, sink.got, []adaptertest.ConversationRecord{
@@ -223,6 +230,8 @@ func TestConversationOfAppServerToolShapes(t *testing.T) {
 		{Kind: adapter.ConversationToolResult, Text: `aimebu.list_rooms` + "\n" + `{"rooms":["r1"]}`},
 		{Kind: adapter.ConversationToolCall, Text: `aimebu.react {"no":1}`},
 		{Kind: adapter.ConversationToolResult, Text: `aimebu.react` + "\n" + `{"content":[{"data":"AAAA","type":"image"}],"structuredContent":null}`},
+		{Kind: adapter.ConversationToolCall, Text: `aimebu.attachment_get {"id":"att1"}`},
+		{Kind: adapter.ConversationToolResult, Text: "aimebu.attachment_get\na chart\n[image omitted]\n[resource omitted]"},
 		{Kind: adapter.ConversationToolCall, Text: "file_change add /work/c.go"},
 		{Kind: adapter.ConversationToolResult, Text: "file_change\ncompleted"},
 		{Kind: adapter.ConversationToolCall, Text: `collab.spawnAgent {"prompt":"check the tests","receiverThreadIds":["th2"]}`},
@@ -241,6 +250,29 @@ func sameRecords(t *testing.T, got, want []adaptertest.ConversationRecord) {
 			t.Errorf("record %d is not expected: %+v", i, got[i])
 		case got[i] != want[i]:
 			t.Errorf("record %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// A tool result that mixes text with other blocks and has no structured content keeps its text and names each other block in its place,
+// never dumping it; a text-only result is its text, an image-only one is still written as JSON, and structured content still wins.
+func TestToolResultTextOfMixedContent(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, want string
+	}{
+		{"text only", `{"content":[{"type":"text","text":"one"},{"type":"text","text":"two"}]}`, "one\ntwo"},
+		{"text and image", `{"content":[{"type":"text","text":"a chart"},{"type":"image","data":"AAAA","mimeType":"image/png"}],"structured_content":null}`,
+			"a chart\n[image omitted]"},
+		{"text and two other blocks", `{"content":[{"type":"audio","data":"BBBB"},{"type":"text","text":"between"},{"type":"resource_link","uri":"file:///x"}]}`,
+			"[audio omitted]\nbetween\n[resource_link omitted]"},
+		{"a block with no type", `{"content":[{"type":"text","text":"t"},{"data":"CCCC"}]}`, "t\n[block omitted]"},
+		{"a type with control characters and brackets", `{"content":[{"type":"text","text":"t"},{"type":"ev\u0000il]\n[x\u202e"}]}`, "t\n[evilx omitted]"},
+		{"a long type", `{"content":[{"type":"text","text":"t"},{"type":"` + strings.Repeat("k", 100) + `"}]}`, "t\n[" + strings.Repeat("k", omittedBlockType) + " omitted]"},
+		{"image only", `{"content":[{"type":"image","data":"AAAA"}],"structuredContent":null}`, `{"content":[{"type":"image","data":"AAAA"}],"structuredContent":null}`},
+		{"mixed with structured content", `{"content":[{"type":"text","text":"t"},{"type":"image","data":"AAAA"}],"structuredContent":{"ok":true}}`, `{"ok":true}`},
+	} {
+		if got := toolResultText(json.RawMessage(tc.raw)); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
