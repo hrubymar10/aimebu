@@ -288,6 +288,10 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .chat-msg-body .md-copy-btn { font-weight: 400; }
 .chat-msg-body .md-copy-btn .icon-mask { display: block; width: 14px; height: 14px; }
 .chat-msg-body .mention-group { opacity: .85; }
+/* A room reference is a link to the room when the reader may see it; the private and unknown forms are plain text. */
+.chat-msg-body .room-ref { color: var(--accent); text-decoration: none; font-family: var(--font-mono); font-size: 0.9em; cursor: pointer; }
+.chat-msg-body .room-ref:hover { text-decoration: underline; text-underline-offset: 3px; }
+.chat-msg-body .room-ref-plain { opacity: .75; }
 .chat-msg-body .mention[role=button] { cursor: pointer; }
 .chat-msg-body .mention[role=button]:is(:hover, :focus-visible) { text-decoration: underline; text-underline-offset: 3px; }
 .chat-msg-body .mention[role=button]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 type Project struct {
@@ -557,6 +558,11 @@ type Message struct {
 	// filled by the read paths (displayMentions); a stored body keeps the IDs themselves. Empty when the body stores no
 	// agent-ID mention.
 	Mentions []MentionRef `json:"mentions,omitempty"`
+	// Entities carries the room references the stored body mentions (`#room_<id>` tokens) for a human reader: one
+	// {id,name,kind:"room"} entry per distinct id in body order, the title only when the reader may see the room. Filled
+	// by RoomRefsForUser on the user-facing read paths; a stored body keeps the ids, and an agent-facing read carries the
+	// same table (agents and people included) from mentionEntities.
+	Entities []protocol.Entity `json:"entities,omitempty"`
 	// Outcome is what a task-result handoff reports: done, partial or failed. Empty on every other message and on a handoff written
 	// before outcomes existed (or by an agent whose supervisor predates them), which a client shows without one.
 	Outcome string `json:"outcome,omitempty"`
@@ -587,6 +593,11 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 	// @agt_<id> before addressing is resolved (which accepts a full member ID as a token), so the mention keeps addressing
 	// the same agent when its name is later freed and reused. Readers get the display form back.
 	if _, err := tx.storeMentionsByID(&message); err != nil {
+		return Message{}, err
+	}
+	// Rooms are referenced by id: a person's typed `#<title>` that names exactly one room they can see is resolved to the
+	// room's id on save, so the reference keeps working when the room is renamed. Agents write the id form themselves.
+	if _, err := tx.storeRoomRefsByID(&message); err != nil {
 		return Message{}, err
 	}
 	targets, wake, guard, err := tx.resolveMessageTargets(message)

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Mentions are stored by agent ID. When a message is written, every live
@@ -159,6 +160,52 @@ func proseMentionSpans(body string) []MentionSpan {
 		out = append(out, MentionSpan{Start: pos[start], End: pos[end-1] + 1, Token: token})
 	}
 	return out
+}
+
+// proseMarkedSpans lists every match of pattern in the live prose of body,
+// where the match begins with a marker character (`#`) and its first capture
+// group is the token after it. A match is kept only when the rune before the
+// marker is not a word character, "/", "&", ".", "-" or the marker itself (the
+// same guard the `#N` message-reference pattern applies), and each span covers
+// the marker and the token in the raw body.
+func proseMarkedSpans(body string, pattern *regexp.Regexp) []MentionSpan {
+	live, pos := liveProseSpans(body)
+	matches := pattern.FindAllStringSubmatchIndex(live, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]MentionSpan, 0, len(matches))
+	for _, m := range matches {
+		start, tokenStart, tokenEnd, end := m[0], m[2], m[3], m[1]
+		if pos[start] < 0 || pos[end-1] < 0 {
+			continue // a match across a synthesised newline cannot happen; stay safe
+		}
+		if !markerStartsToken(live, start) {
+			continue
+		}
+		out = append(out, MentionSpan{Start: pos[start], End: pos[end-1] + 1, Token: live[tokenStart:tokenEnd]})
+	}
+	return out
+}
+
+// markerStartsToken says whether the rune before the marker leaves the token
+// standalone: a word character or one of / & # . - glued to the marker makes it
+// part of something else (a URL fragment, another reference, an identifier).
+func markerStartsToken(live string, start int) bool {
+	if start == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(live[:start])
+	if r >= utf8.RuneSelf {
+		return true // a non-ASCII rune is outside the guard's ASCII classes
+	}
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		return false
+	case r == '/' || r == '&' || r == '#' || r == '.' || r == '-':
+		return false
+	}
+	return true
 }
 
 // roomAgentNameContext is what rewriting mentions needs about one room: the
@@ -547,20 +594,46 @@ type MentionEntity struct {
 // humans, the same set @login addressing reads). An id whose holder is gone is
 // left out entirely: the body keeps its stored text.
 func mentionEntities(ctx context.Context, q rowQuerier, readerID, readerProjectID, roomID, body string) ([]MentionEntity, error) {
-	spans := proseMentionSpans(body)
-	if len(spans) == 0 {
+	mentionSpans := proseMentionSpans(body)
+	roomSpans := proseRoomRefSpans(body)
+	if len(mentionSpans) == 0 && len(roomSpans) == 0 {
 		return nil, nil
 	}
-	var agentTokens, userTokens []string
-	seenAgent, seenUser := map[string]bool{}, map[string]bool{}
-	for _, span := range spans {
+	// One pass over both kinds of reference in body order: a mention span and a
+	// room span never overlap, so merging the two ordered lists by position is
+	// enough.
+	type scanned struct {
+		span MentionSpan
+		room bool
+	}
+	merged := make([]scanned, 0, len(mentionSpans)+len(roomSpans))
+	mi, ri := 0, 0
+	for mi < len(mentionSpans) || ri < len(roomSpans) {
 		switch {
-		case strings.HasPrefix(span.Token, "agt_") && !seenAgent[span.Token]:
-			seenAgent[span.Token] = true
-			agentTokens = append(agentTokens, span.Token)
-		case strings.HasPrefix(span.Token, "usr_") && !seenUser[span.Token]:
-			seenUser[span.Token] = true
-			userTokens = append(userTokens, span.Token)
+		case ri >= len(roomSpans) || (mi < len(mentionSpans) && mentionSpans[mi].Start < roomSpans[ri].Start):
+			merged = append(merged, scanned{mentionSpans[mi], false})
+			mi++
+		default:
+			merged = append(merged, scanned{roomSpans[ri], true})
+			ri++
+		}
+	}
+	var agentTokens, userTokens, roomTokens []string
+	seenAgent, seenUser, seenRoom := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, item := range merged {
+		token := strings.ToLower(item.span.Token)
+		switch {
+		case item.room:
+			if !seenRoom[token] {
+				seenRoom[token] = true
+				roomTokens = append(roomTokens, token)
+			}
+		case strings.HasPrefix(token, "agt_") && !seenAgent[token]:
+			seenAgent[token] = true
+			agentTokens = append(agentTokens, token)
+		case strings.HasPrefix(token, "usr_") && !seenUser[token]:
+			seenUser[token] = true
+			userTokens = append(userTokens, token)
 		}
 	}
 	type holder struct {
@@ -603,6 +676,15 @@ func mentionEntities(ctx context.Context, q rowQuerier, readerID, readerProjectI
 	if err != nil {
 		return nil, err
 	}
+	rooms, roomMembers := map[string]roomRef{}, map[string]bool{}
+	if len(roomTokens) > 0 {
+		if rooms, err = loadRoomRefs(ctx, q, roomTokens); err != nil {
+			return nil, err
+		}
+		if roomMembers, err = roomMembersOf(ctx, q, "agent", readerID, roomTokens); err != nil {
+			return nil, err
+		}
+	}
 	// Names the reader may see: an agent of its own project, a member agent of
 	// its private chat (when the message is in one), a person addressable in
 	// the room.
@@ -642,11 +724,23 @@ func mentionEntities(ctx context.Context, q rowQuerier, readerID, readerProjectI
 	}
 	out := []MentionEntity{}
 	seen := map[string]bool{}
-	for _, span := range spans {
+	for _, item := range merged {
+		span := item.span
 		var entity MentionEntity
+		token := strings.ToLower(span.Token)
 		switch {
-		case strings.HasPrefix(span.Token, "agt_"):
-			h, ok := agents[span.Token] // the map is keyed by lower(id); tokens are lower-cased
+		case item.room:
+			ref := rooms[token]
+			if ref.gone {
+				continue // unknown or deleted: the body keeps the stored id text
+			}
+			name := ""
+			if agentSeesRoom(ref, roomMembers[token], readerProjectID) {
+				name = ref.title
+			}
+			entity = MentionEntity{ID: ref.id, Name: name, Kind: "room"}
+		case strings.HasPrefix(token, "agt_"):
+			h, ok := agents[token] // the map is keyed by lower(id); tokens are lower-cased
 			if !ok {
 				continue // unknown or deleted: the body keeps the stored text
 			}
@@ -655,8 +749,8 @@ func mentionEntities(ctx context.Context, q rowQuerier, readerID, readerProjectI
 				name = ""
 			}
 			entity = MentionEntity{ID: h.id, Name: name, Kind: "agent"}
-		case strings.HasPrefix(span.Token, "usr_"):
-			h, ok := users[span.Token]
+		case strings.HasPrefix(token, "usr_"):
+			h, ok := users[token]
 			if !ok || !addressable[h.id] {
 				continue
 			}
@@ -664,10 +758,10 @@ func mentionEntities(ctx context.Context, q rowQuerier, readerID, readerProjectI
 		default:
 			continue
 		}
-		if seen[span.Token] {
+		if seen[token] {
 			continue
 		}
-		seen[span.Token] = true
+		seen[token] = true
 		out = append(out, entity)
 	}
 	return out, nil

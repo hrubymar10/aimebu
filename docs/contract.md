@@ -2378,6 +2378,17 @@ carry `mentions: [{id,name,resolved}]`; a person's `usr_` id shows the
 person's display name. A stored body is internal: the debug inspector shows
 it as stored, and its addressing trace resolves it by ID.
 
+Rooms are referenced by id: a `#room_<id>` token in a stored body stays the
+id. When a message is written, a person's typed `#<title>` is resolved to the
+id on save — an exact, case-insensitive match among the rooms the author can
+see, and only when it names exactly one; an ambiguous title, a room the author
+cannot see, a bare `#<n>` message reference, and the id form itself stay as
+written, and code is never resolved. Agent bodies are never rewritten. The
+`entities` table carries `kind:"room"` entries under the same no-leak rule as
+agents: the title only when the reader may see the room, and an unknown or
+deleted id has no entry at all. No data migration exists: no stored form of a
+room-name reference ever did.
+
 ## 7. Spawn / move / role change checks
 
 Adapter-listed (tool, variant, model, provider) with provider pinned; actor

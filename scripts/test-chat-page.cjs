@@ -3087,6 +3087,90 @@ async function main() {
     await page.close();
   }
 
+  // A10-3b: rooms are referenced by id. A stored `#room_<id>` renders as `#<title>` and is a link when the entities table
+  // names the room for the reader; an unnamed entry (a room the reader may not see) renders as plain `#private-room`, an
+  // id with no entry as plain `#unknown-room`, and two visible rooms that share a title get `-2` on the later one.
+  {
+    const page = await mount({ rooms: { rm_a: 1 } });
+    const result = await page.evaluate(async () => {
+      const { renderRoomRefs, roomOrdinals, RoomRefIndex } = await import('/js/room-refs.js');
+      const entities = [
+        { id: 'room_r1', name: 'General', kind: 'room' },
+        { id: 'room_r2', name: '', kind: 'room' },
+        { id: 'room_r3', name: 'Annexe', kind: 'room' },
+      ];
+      const { ordinals } = roomOrdinals([{ entities }, { entities: [{ id: 'room_r4', name: 'General', kind: 'room' }] }]);
+      const row = document.createElement('div');
+      row.textContent = 'moved to #room_r1 from #room_r2 and #room_r3, not #room_r9';
+      renderRoomRefs(row, entities, ordinals);
+      const shown = [...row.querySelectorAll('.room-ref')].map(node => [node.tagName, node.textContent, node.getAttribute('href')]);
+      const later = document.createElement('div');
+      later.textContent = 'also #room_r4';
+      renderRoomRefs(later, [{ id: 'room_r4', name: 'General', kind: 'room' }], ordinals);
+      const ordinal = [...later.querySelectorAll('.room-ref')].map(node => [node.tagName, node.textContent]);
+      const index = new RoomRefIndex([{ id: 'room_g1', title: 'General' }, { id: 'room_g2', title: 'Vault' }]);
+      return {
+        shown, ordinal,
+        typed: index.rewrite('see #General and #vault, but #nope and #1 and #room_g1 stay'),
+        ambiguous: index.rewrite('two rooms: #twin').length === 'two rooms: #twin'.length,
+        number: index.rewrite('#42 stays'),
+        id: index.resolve('room_g1'),
+      };
+    });
+    assert.deepEqual(result.shown, [
+      ['A', '#General', '#room_r1'], ['SPAN', '#private-room', null], ['A', '#Annexe', '#room_r3'], ['SPAN', '#unknown-room', null],
+    ], 'a named room is a link to the room, an unnamed one is #private-room, an unknown id is #unknown-room');
+    assert.deepEqual(result.ordinal, [['A', '#General-2']], 'the later of two rooms that share a title in the view is #-2');
+    assert.equal(result.typed, 'see #room_g1 and #room_g2, but #nope and #1 and #room_g1 stay', 'a typed title resolves on send; unknown, numbered and id tokens stay');
+    assert.equal(result.ambiguous, true, 'an ambiguous title is left as it was typed');
+    assert.equal(result.number, '#42 stays', 'a message number is never a room');
+    assert.equal(result.id, null, 'a stored id token is resolved no further');
+    await page.close();
+  }
+  // A drawn row renders its room references from the message's entities table, and the composer resolves a typed title
+  // against the rooms the person can see before the message is sent.
+  {
+    const page = await mount({ rooms: { rm_a: 1 }, plain: true });
+    await page.evaluate(() => {
+      window.__seed('rm_r', 2, i => (i === 1
+        ? { body: 'moved to #room_g1 from #room_h1 and #room_x9', entities: [{ id: 'room_g1', name: 'General', kind: 'room' }, { id: 'room_h1', name: '', kind: 'room' }] }
+        : { body: 'also #room_g2', entities: [{ id: 'room_g2', name: 'General', kind: 'room' }] }));
+    });
+    await openRoom(page, 'rm_r'); await opened(page); await settle(page);
+    const shown = await page.evaluate(() => [...document.querySelectorAll('#messages [data-message-id] .chat-msg-body .room-ref')].map(node => [node.tagName, node.textContent, node.getAttribute('href')]));
+    assert.deepEqual(shown, [
+      ['A', '#General', '#room_g1'], ['SPAN', '#private-room', null], ['SPAN', '#unknown-room', null], ['A', '#General-2', '#room_g2'],
+    ], 'a drawn row links its named rooms and marks the unnamed one private; an id with no entity is unknown; the second General of the view is #-2');
+    await page.evaluate(() => {
+      window.__chat.visibleRooms = () => [{ id: 'room_g1', title: 'General' }, { id: 'room_g2', title: 'Vault' }];
+      window.__chat.refreshRoomRefs();
+      const draft = document.querySelector('#composer textarea[name=body]');
+      draft.value = 'see #General and #vault about #nope';
+      draft.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.evaluate(() => window.__chat.send()); await settle(page);
+    assert.equal(await page.evaluate(() => window.__posted[0]?.body), 'see #room_g1 and #room_g2 about #nope', 'the composer resolves typed titles to ids on send');
+    // The picker offers the visible rooms while a `#` token is typed and inserts the picked room's id.
+    await page.evaluate(() => {
+      const draft = document.querySelector('#composer textarea[name=body]');
+      draft.focus();
+      draft.value = 'ask in #Gen';
+      draft.setSelectionRange(draft.value.length, draft.value.length);
+      draft.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await settle(page);
+    const picker = await page.evaluate(() => {
+      const list = window.__chat.roomRefAutocomplete;
+      const open = list.popup.hidden === false;
+      const items = open ? [...list.popup.querySelectorAll('.quick-command')].map(node => node.textContent.trim()) : [];
+      return { open, items };
+    });
+    assert.equal(picker.open, true, 'typing a `#` title opens the room picker');
+    await page.evaluate(() => window.__chat.roomRefAutocomplete.pick(0)); await settle(page);
+    assert.equal(await page.evaluate(() => document.querySelector('#composer textarea[name=body]').value), 'ask in #room_g1 ', 'picking a room inserts its id');
+    await page.close();
+  }
+
   assert.deepEqual(errors, []);
   await browser.close(); server.close();
   console.log('chat page: ok');

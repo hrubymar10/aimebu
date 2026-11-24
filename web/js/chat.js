@@ -13,6 +13,7 @@ import { RoomPanel } from './pages/room-panel/page.js';
 import { QuickCommands } from './quick-commands.js';
 import { MacroAutocomplete } from './macros.js';
 import { MentionAutocomplete, MentionIndex, highlightMentions } from './mentions.js';
+import { RoomRefAutocomplete, RoomRefIndex, renderRoomRefs, roomOrdinals } from './room-refs.js';
 import { EmojiAutocomplete } from './emoji-suggest.js';
 import { Notice } from './notice.js';
 import { enterSends } from './enter-key.js';
@@ -113,11 +114,11 @@ export class Chat {
     this.threadFormatting.input.addEventListener('keydown', event => { this.recallKey(event, true); });
     for (const field of [this.draft, this.threadDraft]) field.addEventListener('focus', () => { if (this.room) this.loadMentionLogins(this.room); });
     this.draft.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.quickCommands?.popup.hidden !== false && this.macroAutocomplete?.popup.hidden !== false && this.mentionAutocomplete?.popup.hidden !== false && this.emojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.form.requestSubmit(); }
+      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.quickCommands?.popup.hidden !== false && this.macroAutocomplete?.popup.hidden !== false && this.mentionAutocomplete?.popup.hidden !== false && this.emojiAutocomplete?.popup.hidden !== false && this.roomRefAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.form.requestSubmit(); }
     });
     this.threadDraft.addEventListener('input', () => this.resizeThreadDraft());
     this.threadDraft.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
+      if (event.key === 'Enter' && enterSends() && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false && this.threadRoomRefAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
     });
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
     this.raw = false;
@@ -128,6 +129,7 @@ export class Chat {
       () => this.canArchiveRoom(), () => this.canSpawnAgent());
     this.macroAutocomplete = new MacroAutocomplete(this.formatting.input);
     this.notice = new Notice(this.form, 'composer-notice'); this.threadNotice = new Notice(this.threadForm, 'thread-notice'); this.mentionAutocomplete = new MentionAutocomplete(this.formatting.input); this.threadMentionAutocomplete = new MentionAutocomplete(this.threadFormatting.input); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
+    this.roomRefAutocomplete = new RoomRefAutocomplete(this.formatting.input); this.threadRoomRefAutocomplete = new RoomRefAutocomplete(this.threadFormatting.input); this.roomRefIndex = null; this.roomRefSignature = ''; this.roomOrdinals = new Map(); this.roomOrdinalKey = '';
     this.emojiAutocomplete = new EmojiAutocomplete(this.formatting.input); this.threadEmojiAutocomplete = new EmojiAutocomplete(this.threadFormatting.input);
     this.emojiButton = document.querySelector('#emoji-button'); this.emojiButton.onclick = () => openEmojiPicker({ anchor: this.emojiButton, onPick: glyph => this.insertEmoji(glyph) });
     this.threadEmojiButton = document.querySelector('#thread-emoji-button'); this.threadEmojiButton.onclick = () => openEmojiPicker({ anchor: this.threadEmojiButton, onPick: glyph => this.insertEmoji(glyph, this.threadDraft) });
@@ -177,7 +179,7 @@ export class Chat {
     this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.renderPending(); this.draft.value = ''; this.recall.index = null; this.resizeDraft();
     this.lightbox.close();
-    this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
+    this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); this.roomRefAutocomplete?.reset(); this.threadRoomRefAutocomplete?.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1; this.roomRefIndex = null; this.roomRefSignature = ''; this.roomOrdinals = new Map(); this.roomOrdinalKey = '';
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.setupPending = false; this.form.inert = false; this.draft.placeholder = 'Message'; this.formatting.setPlaceholder('Message');
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
@@ -429,7 +431,7 @@ export class Chat {
   showWindow() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.latestButton.hidden = false; }
   showReply(message) { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
   showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.chat-msg-bubble') || row); }
-  renderBody(element, message) { element.replaceChildren(); if (this.raw) element.append(renderRaw(message.body)); else { element.append(renderMarkdown(message.body)); highlightMentions(element, this.mentionIndex); expandShortcodes(element); } if (message.attachments?.length) this.renderAttachments(element, message.attachments); }
+  renderBody(element, message) { element.replaceChildren(); if (this.raw) element.append(renderRaw(message.body)); else { element.append(renderMarkdown(message.body)); highlightMentions(element, this.mentionIndex); renderRoomRefs(element, message.entities, this.roomOrdinals); expandShortcodes(element); } if (message.attachments?.length) this.renderAttachments(element, message.attachments); }
   renderAttachments(element, attachments) {
     const host = document.createElement('div'); host.style.display = 'contents'; // takes no part in the layout: the strip is the box the page's styles see
     render(html`<${AttachmentStrip} attachments=${attachments} />`, host);
@@ -572,7 +574,7 @@ export class Chat {
   // Returns true when the key was consumed. Open pickers (mentions, macros, commands, emoji) keep their own arrow keys.
   recallKey(event, thread = false) {
     if (event.defaultPrevented || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
-    const popups = thread ? [this.threadMentionAutocomplete, this.threadEmojiAutocomplete] : [this.quickCommands, this.macroAutocomplete, this.mentionAutocomplete, this.emojiAutocomplete];
+    const popups = thread ? [this.threadMentionAutocomplete, this.threadEmojiAutocomplete, this.threadRoomRefAutocomplete] : [this.quickCommands, this.macroAutocomplete, this.mentionAutocomplete, this.emojiAutocomplete, this.roomRefAutocomplete];
     if (!popups.every(popup => popup?.popup.hidden !== false)) return false;
     const draft = thread ? this.threadDraft : this.draft, formatting = thread ? this.threadFormatting : this.formatting, input = formatting.input, recall = thread ? this.threadRecall : this.recall;
     const walking = event.key === 'ArrowUp' || event.key === 'ArrowDown';
@@ -603,14 +605,28 @@ export class Chat {
   showThreadCount(id, count) { if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(count); }
   // The panel's entries are a Preact list (rows.js): the root first, the replies by seq. An update renders at once, so callers read the rows back.
   threadUpdate(restore) {
+    this.refreshRoomRefs();
     if (!this.threadView) return;
     this.delegateRows(this.threadList);
     this.threadView.update({ entries: this.threadEntries, host: this, viewOf: message => this.rowView(message), restore });
   }
   listUpdate(restore) {
+    this.refreshRoomRefs();
     if (!this.listView) return;
     this.delegateRows(this.list);
     this.listView.update({ entries: this.rows, host: this, viewOf: message => this.rowView(message, true), restore });
+  }
+  // The rooms the person can see (the sidebar's list) resolve a typed `#<title>` on send, and the rooms the view's
+  // messages name, in order of first appearance, give a shared title its `-2` ordinal. Cheap enough to rebuild per draw.
+  refreshRoomRefs() {
+    const rooms = this.visibleRooms ? this.visibleRooms() : [];
+    const index = rooms.length ? new RoomRefIndex(rooms) : null;
+    const signature = index ? JSON.stringify(index.rooms.map(room => [room.id, room.title])) : '';
+    if (signature !== (this.roomRefSignature || '')) { this.roomRefIndex = index; this.roomRefSignature = signature; }
+    this.roomRefAutocomplete?.setIndex(this.roomRefIndex); this.threadRoomRefAutocomplete?.setIndex(this.roomRefIndex);
+    const { ordinals, signature: ordinalSignature } = roomOrdinals([...this.rows || [], ...this.threadEntries || []]);
+    this.roomOrdinals = ordinals;
+    this.roomOrdinalKey = ordinalSignature;
   }
   registerNode(id, element) { if (element) this.nodes.set(id, element); else this.nodes.delete(id); }
   // The line a reply quotes, as the row shows it: the author named by the same rule as a message header (authorName), looked up now so a name that became known later shows.
@@ -626,7 +642,7 @@ export class Chat {
     const agent = this.authorAgent(message), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
     const author = { name: this.authorName(message), kind, link: kind !== 'live' || live, title: live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`,
       identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
-    const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
+    const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}|${this.roomOrdinalKey ?? ''}`;
     const view = { author, answer, bodyKey, raw: this.raw, mentionKey: this.mentionIndex?.signature ?? '', usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention };
     view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser); view.quote = this.quoteView(message);
     view.articleClass = articleClass(message, currentUser); // the panel's entries wear the room's row classes, so one set of rules styles both
@@ -758,8 +774,12 @@ export class Chat {
   hasDraft() { return !!(this.draft.value.trim() || this.threadDraft.value.trim() || this.pendingAttachments?.length || this.pendingUploads || this.store.threadPending?.length || this.store.threadUploads); }
   sendInput() {
     if (this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return null;
-    return { body: this.draft.value, reply: this.reply, attachments: this.pendingAttachments.map(a => a.id) };
+    return { body: this.resolveRoomRefs(this.draft.value), reply: this.reply, attachments: this.pendingAttachments.map(a => a.id) };
   }
+  // A typed `#<title>` becomes the room's id before the message is sent, so the stored body references the room by id
+  // like an agent's does; the server resolves whatever is left the same way on save. The index is rebuilt at send time,
+  // so a room that appeared since the last draw is resolved too.
+  resolveRoomRefs(body) { this.refreshRoomRefs(); return this.roomRefIndex ? this.roomRefIndex.rewrite(body) : body; }
   beginSend() { this.error.textContent = ''; this.notice.clear(); this.announcer.sendStarted(); }
   async sendAsAnswer(reply, attachments, body, current) {
     // A reply resolves a plain free-text ask, or a structured draft explicitly started from its controls.

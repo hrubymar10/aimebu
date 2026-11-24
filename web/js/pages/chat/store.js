@@ -608,7 +608,7 @@ export class ChatStore {
 
   async sendThread() {
     if (!this.alive || !this.host.threadRoot || this.threadUploads || (!this.host.threadDraft.value.trim() && !this.threadPending.length)) return;
-    const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration, attachments = this.threadPending.map(item => item.id);
+    const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.resolveRoomRefs ? this.host.resolveRoomRefs(this.host.threadDraft.value) : this.host.threadDraft.value, generation = this.openGeneration, attachments = this.threadPending.map(item => item.id);
     this.host.beginThreadSend();
     try {
       const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, reply_to: await this.lastInThread(room, root), ...(attachments.length ? { attachments } : {}) } });

@@ -681,7 +681,8 @@ type NoteParent struct {
 }
 
 // Entity is one entry of a note's or message view's entities table: an id the body mentions and the name the recipient
-// is shown for it (empty when the recipient may not see one). Kind is "agent" or "person".
+// is shown for it (empty when the recipient may not see one). Kind is "agent", "person" or "room"; a room entry carries
+// the room's title only when the recipient may see it, never a title of a room they may not.
 type Entity struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`

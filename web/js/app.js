@@ -94,6 +94,8 @@ chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, fie
 sidebar.bindSort(document.querySelector('#rooms-sort'));
 sidebar.bindCollapseAll(document.querySelector('#rooms-fold'));
 chat.roomPath = { room: id => sidebar.rooms.get(id), project: id => sidebar.projects.get(id), home: projectID => [...sidebar.rooms.values()].find(item => item.project_id === projectID && item.kind === 'home') };
+// The rooms the person can see (the sidebar's list): what a typed `#<title>` may resolve to, and what a room reference links against.
+chat.visibleRooms = () => [...sidebar.rooms.values()];
 chat.openCrumb = id => { const target = sidebar.rooms.get(id); if (target) void selectByPerson(target); };
 chat.projectRole = projectID => sidebar.projects.get(projectID)?.role;
 chat.projectArchived = projectID => !!sidebar.projects.get(projectID)?.archived_at;

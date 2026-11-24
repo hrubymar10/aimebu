@@ -842,6 +842,9 @@ func messageView(m store.Message) map[string]any {
 	if len(m.Attachments) > 0 {
 		view["attachments"] = m.Attachments
 	}
+	if len(m.Entities) > 0 {
+		view["entities"] = m.Entities
+	}
 	return view
 }
 func userID(r *http.Request) string { id, _ := auth.UserIDFromContext(r.Context()); return id }
@@ -1692,6 +1695,12 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		if messages == nil {
 			messages = []store.Message{}
 		}
+		// The room references a body mentions are named for this reader only: a room
+		// the reader may not see stays unnamed (#private-room in the web).
+		if err := s.Store.RoomRefsForUser(r.Context(), userID(r), messages); err != nil {
+			fail(w, err)
+			return
+		}
 		reactions, err := s.Store.ReactionsForMessages(r.Context(), messages)
 		if err != nil {
 			fail(w, err)
@@ -1804,6 +1813,12 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		if author, err := s.Store.UserByID(r.Context(), m.AuthorID); err == nil {
 			m.AuthorName = author.Login
 		}
+	}
+	// The room references the saved body mentions are named for the author the way the
+	// room list will show them.
+	if err := s.Store.RoomRefsForUser(r.Context(), userID(r), []store.Message{m}); err != nil {
+		fail(w, err)
+		return
 	}
 	view := messageView(m)
 	if m.ReplyTo != "" {
