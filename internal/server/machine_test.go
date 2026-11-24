@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1232,6 +1233,23 @@ func TestSupervisorReconnectsAfterAgentSwitchedAwayFromAnswerlessExit(t *testing
 	}
 }
 
+// turnGoroutines is the stacks of the goroutines that run a supervisor's turn (its runTurn and the fake harness under it) when a wait for
+// a turn's end times out: whether the turn was stuck, and where, or only slow. Other parallel tests' turns show too; there are few.
+func turnGoroutines() string {
+	buf := make([]byte, 16<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	var kept []string
+	for _, stack := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(stack, "supervisor.(*Client).runTurn") || strings.Contains(stack, "adapter.(*fakeTurn)") {
+			kept = append(kept, stack)
+		}
+	}
+	if len(kept) == 0 {
+		return "(none: no turn of the supervisor is running)"
+	}
+	return strings.Join(kept, "\n\n")
+}
+
 // Usage and compaction events journaled while the machine socket is down
 // must reach the server after reconnect, exactly once each.
 func TestReconnectReplaysUsageAndCompactionOnce(t *testing.T) {
@@ -1276,7 +1294,7 @@ func TestReconnectReplaysUsageAndCompactionOnce(t *testing.T) {
 		deadline := time.Now().Add(20 * time.Second)
 		for !ok() {
 			if time.Now().After(deadline) {
-				t.Fatalf("timed out waiting for %s", what)
+				t.Fatalf("timed out waiting for %s; the supervisor's turn goroutines of this test binary now:\n%s", what, turnGoroutines())
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

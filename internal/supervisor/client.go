@@ -100,6 +100,9 @@ type Client struct {
 	currentConn        *websocket.Conn
 	stopping           bool
 	turns              sync.WaitGroup
+	// unreported counts the turns that left admission (c.active) but whose process frame was not sent yet: a supervisor retiring at idle
+	// waits for them too, or it would close the socket between a turn's release and its exit (see runTurnRestartable).
+	unreported atomic.Int64
 	// Warm keeps an agent's harness process up for an idle window after a turn (see warm.go); the zero value is off.
 	Warm             WarmConfig
 	codexWarmEnabled bool
@@ -1466,6 +1469,10 @@ func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn a
 // turn whose launcher found its container being replaced and started nothing (see containerRestart).
 func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn, restart func() (adapter.Turn, error)) {
 	defer c.turns.Done()
+	// Counted from before release() to after the process frame (deferred, so every return is covered): until then the turn is retire-
+	// blocking work although its agent's admission is already free.
+	c.unreported.Add(1)
+	defer c.unreported.Add(-1)
 	// The connection or process context may be cancelled while the harness is
 	// exiting. Keep its final journal writes possible so a replacement can
 	// replay the answer and exit after the socket is gone.

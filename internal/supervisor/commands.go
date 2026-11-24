@@ -190,11 +190,12 @@ func (c *Client) hasActiveWork() bool {
 	return err != nil || len(open) > 0
 }
 
-// hasRetireBlockingWork is hasActiveWork for a supervisor that retires or is replaced: a turn holds it, a command only when it cannot be
-// left to the replacement (its output passes through this process). The journal's open commands do not: the replacement adopts them.
+// hasRetireBlockingWork is hasActiveWork for a supervisor that retires or is replaced: a turn holds it until its process frame was sent
+// (a turn frees its agent's admission just before that send), a command only when it cannot be left to the replacement (its output passes
+// through this process). The journal's open commands do not: the replacement adopts them.
 func (c *Client) hasRetireBlockingWork() bool {
 	c.mu.Lock()
-	active := len(c.active) > 0 || len(c.running) > 0
+	active := len(c.active) > 0 || len(c.running) > 0 || c.unreported.Load() > 0
 	runner := c.commands
 	c.mu.Unlock()
 	if active || runner == nil {

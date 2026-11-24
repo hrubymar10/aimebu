@@ -67,7 +67,9 @@ heartbeat sweeps it, about fifteen seconds after the host side is gone. For a
 container turn the no-overlap guarantee therefore holds only after that
 sweep: for up to about fifteen seconds the old process can still write in the
 checkout while the new supervisor continues the turn. The journal keeps what its turns reported, and
-the replacement delivers it.
+the replacement delivers it. A supervisor asked to retire at idle counts a turn as work until its
+`process` frame is sent, not only until it frees its agent for the next delivery (which comes just
+before that frame), so a connected supervisor reports each turn's end itself before it exits.
 **`run_command` jobs survive a swap.** A native job runs in a session of its
 own and writes its log and exit marker without the supervisor (see "Long
 commands outside a turn" below), so a supervisor that retires or is replaced

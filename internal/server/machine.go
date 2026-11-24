@@ -421,6 +421,12 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusInternalError, "agent key error")
 		return
 	}
+	if localSupervisor && !restartPending {
+		// Before the ack, as a pending restart is set before it: a supervisor that sees its hello_ack is told it can work, so local dispatch
+		// must not still be held then (a dispatch pass in between would skip it, and a replacement's first turn would wait for the next).
+		s.localSupervisorPending.Store(false)
+		s.clearLocalDrain()
+	}
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
@@ -430,10 +436,6 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			s.localSupervisorLoggedBuild.Store(hello.SupervisorVersion)
 			log.Printf("supervisor swap: local supervisor connected: build %s", hello.SupervisorVersion)
 		}
-	}
-	if localSupervisor && !restartPending {
-		s.localSupervisorPending.Store(false)
-		s.clearLocalDrain()
 	}
 	if restartPending {
 		if hello.SupportsRetireAtIdle {
