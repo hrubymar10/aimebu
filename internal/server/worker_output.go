@@ -240,7 +240,7 @@ func (s *Server) prefetchNoticeOutputs(ctx context.Context) {
 
 // addWorkerOutput gives each notice of a delivery that is about a worker's turn (a silent turn, a recovery handed to the lead) the end of
 // that turn's conversation: at most noticeOutputBytes, masked, marked as untrusted, and left out when the turn served a room the
-// recipient may not read. The read was started when the notice was written; a delivery waits for an unfinished one at most
+// recipient may not read, judged when the read is made and again, from the membership then, on the first delivery that uses it. The read was started when the notice was written; a delivery waits for an unfinished one at most
 // noticeOutputDeliveryWait (ctx is the dispatcher's, which outlives the pass, so a read it starts can finish for a later delivery) and
 // otherwise says not_ready. The rooms the turn served are recorded against the recipient's turn before the text is given to it, since its
 // own log records what it is given. Nothing here fails a delivery.
@@ -269,6 +269,17 @@ func (s *Server) addWorkerOutput(ctx context.Context, delivery *protocol.Deliver
 				output = fetch.output
 				rooms := fetch.rooms
 				c.mu.Unlock()
+				if output.Text != "" {
+					// The read may be up to noticeOutputKeep old and the recipient may have lost a room since: decide again, from the
+					// membership now, before the text goes out. A resend (above) repeats what was sent first and is not decided again.
+					_, hidden, _, err := s.Store.TurnShownToAgent(ctx, source.TurnID, source.AgentID, delivery.AgentID)
+					if err != nil || hidden {
+						if err != nil {
+							log.Printf("worker output: may %s still read %s's turn %s: %v", delivery.AgentID, source.AgentID, source.TurnID, err)
+						}
+						output = &protocol.WorkerOutput{Untrusted: untrustedWorkerOutput, AgentID: source.AgentID, TurnID: source.TurnID, Withheld: noticeOutputWithheld}
+					}
+				}
 				if output.Text != "" {
 					if err := s.Store.RecordTurnRoomReads(ctx, delivery.TurnID, rooms...); err != nil {
 						log.Printf("worker output: recording the rooms of %s's turn %s for %s: %v", source.AgentID, source.TurnID, delivery.AgentID, err)

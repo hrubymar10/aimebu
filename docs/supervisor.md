@@ -1507,8 +1507,11 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
     recipient), so nothing of the log is stored on the server. The delivery
     waits at most about 250 ms for a read that has not finished, so a slow
     machine never holds up the dispatcher's pass for other agents; the lead
-    can still call `agent_output`. A turn sent again carries the notes it
-    carried first. Without text, `withheld` says why: `room_not_readable` (the turn served a room the recipient may not read), `not_found` (the turn is no longer in the end of the worker's log), `unreadable` (the machine is offline or too old, or the read failed) or `not_ready` (the read had not finished when the note was delivered). An older
+    can still call `agent_output`. The turn is judged against the
+    recipient's room access when the read is made and again, from the
+    membership at that moment, on the first delivery that uses a kept read,
+    so a lead removed from a room meanwhile gets `room_not_readable`. A turn
+    sent again carries the notes it carried first. Without text, `withheld` says why: `room_not_readable` (the turn served a room the recipient may not read), `not_found` (the turn is no longer in the end of the worker's log), `unreadable` (the machine is offline or too old, or the read failed) or `not_ready` (the read had not finished when the note was delivered). An older
     supervisor drops the field and the notice reads as before.
   - The `agent_output` tool (`GET /api/agent/agents/{id}/output`, see
     [the API](api.md)) reads a worker's latest turns (1–10, 32 KiB) for an

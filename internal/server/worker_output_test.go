@@ -497,3 +497,83 @@ func TestTurnsBeforeRoomReadRecordsAreJudgedByTheWorkersRoomsThen(t *testing.T) 
 		t.Fatalf("an owner outside the private chat (withheld=%v):\n%s", view.Withheld, view.Text)
 	}
 }
+
+// A read kept for a notice is judged again, from the membership at the moment, on the first delivery that uses it: a lead removed from
+// the worker's private chat after the read was made gets no text. A resend repeats what the first delivery carried, whichever way the
+// access changed in between.
+func TestNoticeOutputRechecksRoomAccessOnFirstDelivery(t *testing.T) {
+	o := newOutputFixture(t)
+	lead, _ := o.createToolAgentNamed(t, "role_leader_default", "outputlead")
+	_, dm := workerLog(t, o)
+	if err := o.db.AddMember(t.Context(), dm.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	privateTurn := protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_private"}
+	lastTurn := protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_last"}
+
+	// The normal case: the lead may read the private chat, and the first delivery carries the text.
+	leadTurn(t, o, lead.ID, "trn_lead_sent")
+	sent := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_sent", Notes: []protocol.DeliveryNote{{NoteID: "note_sent", OutputSource: &privateTurn}}}
+	o.srv.addWorkerOutput(t.Context(), &sent)
+	first := sent.Notes[0].WorkerOutput
+	if first == nil || first.Withheld != "" || !strings.Contains(first.Text, "a private answer") {
+		t.Fatalf("a lead in the private chat: %+v", first)
+	}
+
+	// The read of another turn of the private chat is made while the lead is a member; it leaves before the notice is delivered.
+	o.conversationTurn(t, "trn_private_late", dm.ID)
+	late := protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_private_late"}
+	o.mu.Lock()
+	logAnswer := o.answer
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		text := "2026-10-22T12:00:05Z turn_start turn trn_private_late gen 0 normal claude/native test\n2026-10-22T12:00:05Z assistant a later private answer\n"
+		page, _ := json.Marshal(agentlog.Page{Text: text, Bytes: int64(len(text)), Files: 1, UpdatedAt: time.Date(2026, 10, 22, 12, 0, 6, 0, time.UTC)})
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, AgentID: request.AgentID, Details: page}
+	}
+	o.mu.Unlock()
+	o.srv.fetchNoticeOutput(t.Context(), late, lead.ID)
+	waitFetch(t, o, late, lead.ID)
+	o.srv.noticeOutputs.mu.Lock()
+	kept := o.srv.noticeOutputs.fetches[noticeFetchKey(late, lead.ID)].output
+	o.srv.noticeOutputs.mu.Unlock()
+	if !strings.Contains(kept.Text, "a later private answer") {
+		t.Fatalf("the kept read: %+v", kept)
+	}
+	o.mu.Lock()
+	o.answer = logAnswer
+	o.mu.Unlock()
+	if err := o.db.RemoveMember(t.Context(), dm.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := o.exec(`UPDATE turn SET exec='exited' WHERE id='trn_lead_sent'`); err != nil {
+		t.Fatal(err)
+	}
+	leadRoom := leadTurn(t, o, lead.ID, "trn_lead_after")
+	after := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_after", Notes: []protocol.DeliveryNote{
+		{NoteID: "note_late", OutputSource: &late},
+		{NoteID: "note_last", OutputSource: &lastTurn},
+	}}
+	o.srv.addWorkerOutput(t.Context(), &after)
+	if out := after.Notes[0].WorkerOutput; out == nil || out.Text != "" || out.Withheld != noticeOutputWithheld {
+		t.Fatalf("a lead removed from the private chat after the read: %+v", out)
+	}
+	if out := after.Notes[1].WorkerOutput; out == nil || out.Withheld != "" || !strings.Contains(out.Text, "turn trn_last") {
+		t.Fatalf("a turn of a room the lead still reads: %+v", out)
+	}
+	if rooms := roomReadsOf(t, o, lead.ID, "trn_lead_after"); !sameRooms(rooms, leadRoom, o.room.ID) {
+		t.Fatalf("recipient turn room reads=%v (private chat %s must not be among them)", rooms, dm.ID)
+	}
+
+	// Resends repeat the first delivery: the withheld note stays withheld, and the note sent with text before the lead left keeps it.
+	again := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_after", Notes: []protocol.DeliveryNote{{NoteID: "note_late", OutputSource: &late}}}
+	o.srv.addWorkerOutput(t.Context(), &again)
+	if out := again.Notes[0].WorkerOutput; out != after.Notes[0].WorkerOutput {
+		t.Fatalf("the resent withheld note changed: %+v", out)
+	}
+	resent := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_sent", Notes: []protocol.DeliveryNote{{NoteID: "note_sent", OutputSource: &privateTurn}}}
+	o.srv.addWorkerOutput(t.Context(), &resent)
+	if out := resent.Notes[0].WorkerOutput; out != first {
+		t.Fatalf("the resent note changed after the lead left: %+v", out)
+	}
+}
