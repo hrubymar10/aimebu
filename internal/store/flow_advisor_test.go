@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -183,17 +182,8 @@ func TestAdvisorWakesOnlyWhenAddressed(t *testing.T) {
 
 func TestAdvisorMigrationPreservesCustomRole(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "advisor.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "advisor.sqlite"), 111)
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE schema_version(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateUpTo(ctx, db, 111); err != nil {
-		t.Fatal(err)
-	}
 	// Deleted global roles keep their role_key. The live advisor, not the
 	// older tombstone, must move aside for the built-in role.
 	if _, err := db.Exec(`INSERT INTO role(id,key,role_key,label,body,emoji,cardinality,deleted_at) VALUES ('role_old_advisor','deleted:role_old_advisor','advisor','Old advisor','old guidance','⭐','multi','2026-01-01T00:00:00Z')`); err != nil {

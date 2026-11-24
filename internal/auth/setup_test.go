@@ -9,17 +9,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func newSetupFixture(t *testing.T) (*Service, *OwnerSetup, string, string) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "setup.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestStore(t, filepath.Join(t.TempDir(), "setup.sqlite"))
 	service := NewService(db)
 	service.Policy = PasswordPolicy{Iterations: 1000, SaltBytes: 16}
 	path := filepath.Join(t.TempDir(), "setup-token")

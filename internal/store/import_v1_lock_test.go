@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // The v1 source openers read a copy that another process may be opening at that moment. They wait out a brief exclusive
@@ -20,7 +18,7 @@ func TestV1SourceOpenersWaitOutABriefLock(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, false))
+	db, err := sql.Open("sqlite", fixtureDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}

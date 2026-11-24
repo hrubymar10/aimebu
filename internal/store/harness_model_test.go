@@ -323,15 +323,9 @@ func TestSettleAgentModelFallsBackToTheDefaultAndLogsIt(t *testing.T) {
 // The log of migration 69 says what it removed, what it kept and why, and writes out in full a model list that is dropped.
 func TestHarnessMigrationFactsDescribeWhatChanges(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "facts.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "facts.sqlite"), 68)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(context.Background(), db, 68); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
 		t.Fatal(err)
 	}
@@ -377,15 +371,9 @@ func TestHarnessMigrationFactsDescribeWhatChanges(t *testing.T) {
 // wrapper that happens to sort first by name.
 func TestMigrationKeepsTheNativeHarnessForAnEditedList(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "native.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "native.sqlite"), 68)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(context.Background(), db, 68); err != nil {
-		t.Fatal(err)
-	}
 	for _, statement := range []string{
 		`INSERT INTO machine(id,name,key_hash,approved,is_host) VALUES ('mch_a','host','k',1,1)`,
 		// "harness-docker" sorts before "native" by name; only the containerized flag says which is which.

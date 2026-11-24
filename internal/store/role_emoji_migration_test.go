@@ -9,15 +9,9 @@ import (
 
 func migratedFrom88(t *testing.T, prepare func(db *sql.DB)) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-88.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "from-88.sqlite"), 88)
 	t.Cleanup(func() { db.Close() })
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(context.Background(), db, 88); err != nil {
-		t.Fatal(err)
-	}
 	prepare(db)
 	if err := migrateUpTo(context.Background(), db, 0); err != nil {
 		t.Fatal(err)

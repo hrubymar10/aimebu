@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 func mp3Bytes(extra int) []byte {
@@ -24,7 +23,7 @@ func wavBytes() []byte { return []byte("RIFF\x24\x00\x00\x00WAVEfmt ") }
 func v1SoundFixture(t *testing.T) (string, V1ImportMap) {
 	t.Helper()
 	root, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(root, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +218,7 @@ func TestV1ImportWithoutSoundsTableIsFine(t *testing.T) {
 // addRawSound inserts a sounds row (and optionally its file) into a fixture.
 func addRawSound(t *testing.T, root, id, data string, content []byte) {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(root, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

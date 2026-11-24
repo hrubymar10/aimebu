@@ -100,15 +100,9 @@ func TestMessageByNoAndReferenceResolution(t *testing.T) {
 func TestMigrationRefusesToNumberExistingMessages(t *testing.T) {
 	t.Parallel()
 	path := t.TempDir() + "/old.sqlite"
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, path, 70)
 	defer db.Close()
 	ctx := context.Background()
-	if err := migrateUpTo(ctx, db, 70); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`INSERT INTO project(id,name,folder,created_at) VALUES ('p','p','/tmp/p',?)`, timestamp()); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +112,7 @@ func TestMigrationRefusesToNumberExistingMessages(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('m',1,'r','system','system','x','[]',?)`, timestamp()); err != nil {
 		t.Fatal(err)
 	}
-	err = migrate(ctx, db)
+	err := migrate(ctx, db)
 	if err == nil || !strings.Contains(err.Error(), "already has 1 messages") || !strings.Contains(err.Error(), "reset") {
 		t.Fatalf("migration over history: %v", err)
 	}

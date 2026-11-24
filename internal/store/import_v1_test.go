@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // skipFsync turns off fsync on a fixture database that a test builds by hand. Each autocommit
@@ -36,7 +35,7 @@ func v1Fixture(t *testing.T) (string, V1ImportMap) {
 	if err := os.MkdirAll(filepath.Join(dir, "attachments"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(dir, "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(dir, "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +183,7 @@ func TestV1MacroPreviewDryRunConflictAndRerun(t *testing.T) {
 func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +316,7 @@ func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 func TestV1MalformedSettingsAndRolesAreReported(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +354,7 @@ func TestV1MalformedSettingsAndRolesAreReported(t *testing.T) {
 	if err != nil || report.SkippedRoles["broken"] != "invalid v1 JSON" || report.Skipped["settings"] != 1 {
 		t.Fatalf("dry run=%+v err=%v", report, err)
 	}
-	db, err = sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err = sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +394,7 @@ func TestV1MacroExplicitUseSource(t *testing.T) {
 
 func TestV1PreviewEmptyCollectionsUseArrays(t *testing.T) {
 	source, _ := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +659,7 @@ func TestV1WizardCanImportPreviouslySkippedGlobalMemory(t *testing.T) {
 func TestV1WizardExplainsMergedProfileCap(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +717,7 @@ func TestV1ImportFlatLayoutAttachment(t *testing.T) {
 func TestV1PreviewSuggestsOnlyPairedRoomsAndMostUsedFolders(t *testing.T) {
 	t.Parallel()
 	source, _ := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +758,7 @@ func TestV1ImportSniffsAttachmentAndSanitizesName(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -824,7 +823,7 @@ func TestV1ImportRejectsSystemMemberOrReactionInPreflight(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, mapping := v1Fixture(t)
-			db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+			db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -850,7 +849,7 @@ func TestV1ImportRejectsSystemMemberOrReactionInPreflight(t *testing.T) {
 func TestMigration24To25AddsImportAndActivationSchema(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "migration24.sqlite")
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, false))
+	db, err := sql.Open("sqlite", fixtureDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -915,7 +914,7 @@ func TestV1ImportMissingBlobDoesNotWriteDestination(t *testing.T) {
 func TestV1ImportReportsTablesItDoesNotCarry(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1126,7 +1125,7 @@ func TestImportedMessagesWithoutTargetsStoreAnEmptyList(t *testing.T) {
 func TestV1ImportLeavesRatingCardsBehind(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1191,7 +1190,7 @@ func TestV1ImportLeavesRatingCardsBehind(t *testing.T) {
 func TestV1ImportChildOfASkippedParentIsFlattened(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1270,7 +1269,7 @@ func v1RoleImportRun(t *testing.T, s *Store, source string, mapping V1ImportMap)
 
 func insertV1CustomRoles(t *testing.T, source string, rows map[string]string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1425,7 +1424,7 @@ func TestV1ImportEmptyBodyTakesTheDestinationParent(t *testing.T) {
 	source, mapping := v1Fixture(t)
 	s := newV1RoleStore(t)
 	// v1 has the shipped specialist with no body of its own, so v2's text stands, and v2's parent with it.
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1557,7 +1556,7 @@ func TestV1ImportRepairsALinkMadeTooDeepByAConflictChoice(t *testing.T) {
 func TestV1ImportCarriesAgentSessionsAndImageSizes(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1623,7 +1622,7 @@ func TestV1ImportCarriesAgentSessionsAndImageSizes(t *testing.T) {
 func TestV1ImportToleratesAnAgentSessionsTableOfAnotherShape(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1654,7 +1653,7 @@ func TestV1ImportSkipsPresenceLinesButNotPeopleTypingThem(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
 	mapping.Wizard = true
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1727,7 +1726,7 @@ func TestV1ImportSkipsPresenceLinesButNotPeopleTypingThem(t *testing.T) {
 func TestV1ImportKeepsMessageSessionsAndTheSessionHistory(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

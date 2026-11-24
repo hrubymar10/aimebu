@@ -9,12 +9,11 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 func openV1Fixture(t *testing.T, source string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

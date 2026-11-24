@@ -179,8 +179,8 @@ func TestAVeryLongLineIsSplitWithoutSplittingASecret(t *testing.T) {
 	}
 	cases["a bearer token with punctuation across the cut"] = strings.Repeat("x", cutAt-12) + " Bearer SECRETSECRETSECRET./+=SECRETSECRET " + strings.Repeat("y ", 20000) + "\n"
 	cases["a bearer token and a key together"] = strings.Repeat("x ", (cutAt-30)/2) + "Bearer " + secret + "./+=tail " + strings.Repeat("y ", 20000) + "\n"
-	cases["a blob too long to hold, with a key in it"] = strings.Repeat("z", 15*70000-carry-10) + secret + strings.Repeat("y", 300000) + "\n"
-	cases["a blob too long to hold"] = strings.Repeat("z", hardLine+200000) + "\n"
+	cases["a blob too long to hold, with a key in it"] = strings.Repeat("z", 15*70000-carry-10) + secret + strings.Repeat("y", 20000) + "\n"
+	cases["a blob too long to hold"] = strings.Repeat("z", hardLine+2000) + "\n"
 	for name, line := range cases {
 		agent := "agt_" + strings.NewReplacer(" ", "_", ",", "").Replace(name)
 		log, err := store.OpenTurn(agent, "t", 1, "normal")
@@ -339,10 +339,10 @@ func TestHoldingALongLineIsNotQuadratic(t *testing.T) {
 		words      bool
 		ending     string
 	}{
-		"1-byte writes, a line that ends": {1, 200000, false, "\n"},
-		"64-byte writes, a blob held":     {64, hardLine - 1000, false, ""},
-		"64-byte writes, then a newline":  {64, hardLine - 1000, false, "\n"},
-		"1-byte writes of words":          {1, 200000, true, "\n"},
+		"1-byte writes, a line that ends": {1, 80000, false, "\n"},
+		"64-byte writes, a blob held":     {64, maxLine + maxLine/2, false, ""},
+		"64-byte writes, then a newline":  {64, maxLine + maxLine/2, false, "\n"},
+		"1-byte writes of words":          {1, 80000, true, "\n"},
 	} {
 		small := timeIt(tc.step, tc.size/4, tc.words, tc.ending)
 		large := timeIt(tc.step, tc.size, tc.words, tc.ending)

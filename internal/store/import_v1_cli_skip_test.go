@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // The CLI used to refuse every skip choice ("require the web import wizard"),
@@ -61,7 +60,7 @@ func TestV1CLIMapAcceptsTheWizardsSkipChoices(t *testing.T) {
 func TestV1WizardSuggestedMapImportsThroughTheCLIPath(t *testing.T) {
 	t.Parallel()
 	source, _ := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

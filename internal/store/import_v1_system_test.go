@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // v1's _system room is never imported: a mapping that sends it to a project (a saved draft, a hand-written map) is ignored, in the
@@ -15,7 +14,7 @@ import (
 func TestV1ImportAlwaysSkipsTheSystemRoom(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

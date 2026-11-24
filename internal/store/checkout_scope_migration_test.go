@@ -2,22 +2,15 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 )
 
 func TestCheckoutPerProjectMigrationPreservesAgents(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open(SQLDriverName, sqliteDSN(filepath.Join(t.TempDir(), "scope.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "scope.sqlite"), 101)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(ctx, db, 101); err != nil {
-		t.Fatal(err)
-	}
 	for _, statement := range []string{
 		`INSERT INTO project(id,name,folder,created_at) VALUES ('p1','one','/tmp/shared','2026-01-01T00:00:00Z'),('p2','two','/tmp/shared','2026-01-01T00:00:00Z')`,
 		`INSERT INTO machine(id,name,key_hash,approved) VALUES ('m1','host','hash',1)`,

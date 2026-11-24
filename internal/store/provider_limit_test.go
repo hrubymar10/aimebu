@@ -279,15 +279,9 @@ func TestMigrationFortySixRebuildKeepsRowsAndWidensTool(t *testing.T) {
 // Migration 83 lets a usage-limit hold be recorded for a Vibe agent, and keeps the holds that exist.
 func TestMigrationEightyThreeAddsVibeToTheProviderLimitTools(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-82.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "from-82.sqlite"), 82)
 	defer db.Close()
-	db.SetMaxOpenConns(1) // one connection, so the pragma below holds for every statement
-	if err := migrateUpTo(context.Background(), db, 82); err != nil {
-		t.Fatal(err)
-	}
+	db.SetMaxOpenConns(1)                                         // one connection, so the pragma below holds for every statement
 	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil { // the rows name an agent and a turn that do not exist
 		t.Fatal(err)
 	}

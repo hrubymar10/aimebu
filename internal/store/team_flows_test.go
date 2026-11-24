@@ -11,17 +11,8 @@ import (
 
 func TestTeamFlowMigrationMarksExistingProjectCustom(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "before-flow.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "before-flow.sqlite"), 105)
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE schema_version(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateUpTo(ctx, db, 105); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`INSERT INTO project(id,name,folder,created_at) VALUES ('prj_before_flow','before','/tmp',?)`, timestamp()); err != nil {
 		t.Fatal(err)
 	}
@@ -41,14 +32,8 @@ func TestTeamFlowMigrationMarksExistingProjectCustom(t *testing.T) {
 
 func TestFlowRoomHierarchyMigration(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "flow-hierarchy.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "flow-hierarchy.sqlite"), 108)
 	defer db.Close()
-	if err := migrateUpTo(ctx, db, 108); err != nil {
-		t.Fatal(err)
-	}
 	for _, project := range []string{"has_home", "no_home"} {
 		if _, err := db.Exec(`INSERT INTO project(id,name,folder,created_at) VALUES (?,?,?,?)`, project, project, "/tmp/"+project, timestamp()); err != nil {
 			t.Fatal(err)

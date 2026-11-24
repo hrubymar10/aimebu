@@ -21,11 +21,7 @@ const testPassword = "correct horse battery staple"
 
 func testService(t *testing.T) (*Service, string, string) {
 	t.Helper()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "auth.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestStore(t, filepath.Join(t.TempDir(), "auth.sqlite"))
 	service := NewService(db)
 	service.Policy = PasswordPolicy{Iterations: 1000, SaltBytes: 16}
 	_, machineID, machineKey, created, err := service.Bootstrap(context.Background(), "owner", testPassword, "host")
@@ -214,11 +210,7 @@ func TestPairingFailuresDoNotThrottleAnotherTokenAndIP(t *testing.T) {
 
 func TestBootstrapKeyWriteFailureRollsBack(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "bootstrap.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestStore(t, filepath.Join(t.TempDir(), "bootstrap.sqlite"))
 	service := NewService(db)
 	service.Policy = PasswordPolicy{Iterations: 1000, SaltBytes: 16}
 	want := errors.New("key write failed")

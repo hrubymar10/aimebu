@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 type executionFixture struct {
@@ -64,7 +62,7 @@ func seedExecution(t *testing.T, s *Store) executionFixture {
 func TestMigrationOneToTwoPreservesContent(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "from-v1.sqlite")
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, false))
+	db, err := sql.Open("sqlite", fixtureDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -11,15 +10,9 @@ import (
 // research for a task room whose only agents besides leads are researchers, and task for everything else.
 func TestRoomPurposeMigrationBackfills(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open(SQLDriverName, sqliteDSN(filepath.Join(t.TempDir(), "purpose.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "purpose.sqlite"), 125)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(ctx, db, 125); err != nil {
-		t.Fatal(err)
-	}
 	statements := []string{
 		`INSERT INTO project(id,name,folder,created_at) VALUES ('p1','one','/tmp/one','2026-01-01T00:00:00Z')`,
 		`INSERT INTO machine(id,name,key_hash,approved) VALUES ('m1','host','hash',1)`,

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -359,15 +358,9 @@ func TestHomeRoomScheduleFiresToActiveLead(t *testing.T) {
 // with foreign keys on would cascade the history away), keep the due index and the foreign keys, and start old rows with no expression.
 func TestCronScheduleMigrationKeepsRowsRunsAndIndex(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open(SQLDriverName, sqliteDSN(filepath.Join(t.TempDir(), "cron.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "cron.sqlite"), 122)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(ctx, db, 122); err != nil {
-		t.Fatal(err)
-	}
 	for _, statement := range []string{
 		`INSERT INTO project(id,name,folder,created_at) VALUES ('p1','one','/tmp/one','2026-01-01T00:00:00Z')`,
 		`INSERT INTO room(id,project_id,depth,kind,title,created_by,created_at) VALUES ('r1','p1',0,'home','home','usr','2026-01-01T00:00:00.000000Z')`,

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // v1CursorFixture is the shared v1 fixture with alice's read cursors set:
@@ -16,7 +15,7 @@ import (
 func v1CursorFixture(t *testing.T, cursors map[string]int64) (string, V1ImportMap) {
 	t.Helper()
 	root, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(root, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +189,7 @@ func TestV1ImportBaselinesReadersWithoutAV1Cursor(t *testing.T) {
 func TestV1ImportReadCursorOnAPresenceLineFallsBackToTheMessageBefore(t *testing.T) {
 	t.Parallel()
 	source, mapping := v1CursorFixture(t, map[string]int64{"work": 11})
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

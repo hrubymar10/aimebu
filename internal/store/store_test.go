@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 func TestStoreStartupRetriesSQLiteBusy(t *testing.T) {
@@ -617,7 +615,7 @@ func TestDSNPragmasOnEveryConnection(t *testing.T) {
 func TestMigrationTwoToThreePreservesSessions(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "from-v2.sqlite")
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, false))
+	db, err := sql.Open("sqlite", fixtureDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}

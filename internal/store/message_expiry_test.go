@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
 // Message expiry at delivery: a note that names the agent is always delivered; a
@@ -224,7 +223,7 @@ func TestOnlyGroupWakeReasonIsAmbient(t *testing.T) {
 func v1ExpiryFixture(t *testing.T, settingsJSON string) (string, V1ImportMap) {
 	t.Helper()
 	source, mapping := v1Fixture(t)
-	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	db, err := sql.Open("sqlite", fixtureDSN(filepath.Join(source, "server", "aimebu.sqlite")))
 	if err != nil {
 		t.Fatal(err)
 	}

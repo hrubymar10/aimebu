@@ -10,13 +10,7 @@ import (
 
 func leaderRoleDatabaseBefore(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "leader.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateUpTo(context.Background(), db, 101); err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "leader.sqlite"), 101)
 	return db
 }
 

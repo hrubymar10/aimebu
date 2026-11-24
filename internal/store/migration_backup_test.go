@@ -13,14 +13,8 @@ import (
 
 func databaseBeforeLatestMigration(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", sqliteDSN(path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, path, LatestSchemaVersion()-1)
 	t.Cleanup(func() { _ = db.Close() })
-	if err := migrateUpTo(context.Background(), db, LatestSchemaVersion()-1); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`CREATE TABLE backup_probe (value TEXT); INSERT INTO backup_probe(value) VALUES ('committed WAL data')`); err != nil {
 		t.Fatal(err)
 	}

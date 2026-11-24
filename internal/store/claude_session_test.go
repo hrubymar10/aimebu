@@ -339,15 +339,9 @@ func TestForkedSessionNamesItsCopyOnce(t *testing.T) {
 // Migration 86 rekeys imported_session by agent (copies of one session are many) and keeps what exists as continued sessions, still held.
 func TestMigrationEightySixKeepsImportedSessionsAsContinued(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-85.sqlite")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := databaseAtVersion(t, filepath.Join(t.TempDir(), "from-85.sqlite"), 85)
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := migrateUpTo(context.Background(), db, 85); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil { // the rows name an agent that does not exist
 		t.Fatal(err)
 	}
