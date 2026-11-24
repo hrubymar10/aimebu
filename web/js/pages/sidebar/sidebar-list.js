@@ -2,8 +2,10 @@ import { html, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js'
 import { previewText } from '../../preview.js';
 import { formDialog } from '../../dialogs.js';
 import { roomSilenced, mutedNow } from '../../room-notify.js';
+import { rights } from '../../api.js';
 import { countedActive, leafView, roomStatus, roomType, tracksStatus, treeOf } from './model.js';
 import { loadPreviewAll } from './store.js';
+import { ProjectStatus } from './project-status.js';
 
 const CHEVRONS = { down: '6 9 12 15 18 9', right: '9 18 15 12 9 6' };
 
@@ -119,6 +121,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
     ${view.mention && html`<span class="room-item-mention" role="img" title="You were mentioned" aria-label="You were mentioned"></span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
+    ${room.kind === 'home' && !archivedProject && html`<${ProjectStatus} counts=${ctx.statusCounts.get(room.project_id)} variant=${ctx.statusVariant} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} />`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
   return row;
@@ -187,7 +190,7 @@ function FilterBox({ store, button }) {
     if (button && form.current) form.current.append(button);
     return () => { if (button && header && button.parentElement !== header) header.insertBefore(button, header.querySelector('#edge-rooms')); };
   }, [button]);
-  return html`<form class="room-filter" ref=${form} onSubmit=${event => event.preventDefault()}><input type="text" class="room-filter-input" placeholder="Filter rooms…" autocomplete="off" aria-label="Filter rooms" value=${store.filter.value} onInput=${event => store.setFilter(event.currentTarget.value)} /></form>`;
+  return html`<form class="room-filter" ref=${form} onSubmit=${event => event.preventDefault()}><input type="text" class="room-filter-input" placeholder="Filter rooms…" autocomplete="off" aria-label="Filter rooms" value=${store.filter.value} onInput=${event => store.setFilter(event.currentTarget.value)} /></form>${(rights.owner || rights.admin) && html`<div class="project-status-switch" role="group" aria-label="Project status style">${['a', 'b', 'c', 'd'].map(variant => html`<button type="button" class="row-btn" key=${variant} aria-label=${`Project status style ${variant.toUpperCase()}`} aria-pressed=${String(store.statusVariant.value === variant)} onClick=${() => store.setStatusVariant(variant)}>${variant.toUpperCase()}</button>`)}</div>`}`;
 }
 
 export function SidebarList({ store, projectButton }) {
@@ -218,7 +221,7 @@ export function SidebarList({ store, projectButton }) {
     if (!room || room.kind === 'dm' || !room.attention_count) continue;
     projectAttention.set(room.project_id, (projectAttention.get(room.project_id) || 0) + room.attention_count);
   }
-  const ctx = { sort, active, counted, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention };
+  const ctx = { sort, active, counted, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention, statusCounts: store.projectStatus, statusVariant: store.statusVariant.value };
   useLayoutEffect(() => {
     if (!tree) return;
     store.collapsible.value = tree.collapsible;

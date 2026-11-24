@@ -205,6 +205,30 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 @container (max-width: 100px) { .room-item-top { gap: 4px; } .room-item-count, .room-muted, .room-status:not(.room-status-waiting, .room-status-finished) { display: none; } .room-item-top :is(.room-health, .room-item-attention, .room-item-unread) { padding-left: 3px; padding-right: 3px; margin-left: 0; min-width: 0; } }
 /* A child room holds a message that names the person: a small dot in the theme accent colour (a ring in the row colour keeps it apart from the row). */
 .room-item-mention { flex-shrink: 0; width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1px var(--bg-primary); }
+.project-status-wrap { display: inline-flex; flex: none; min-width: 0; }
+.room-item .project-status { display: inline-flex; align-items: center; justify-content: center; min-height: 20px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); color: var(--text-secondary); font: inherit; font-size: 10px; line-height: 1; cursor: pointer; }
+.room-item .project-status:is(:hover, :focus-visible) { border-color: var(--accent); outline-color: var(--accent); }
+.project-status-a, .project-status-b, .project-status-b-part, .project-status-c, .project-status-d { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.room-item .project-status-a.project-status-needs { color: var(--orange); font-weight: 700; }
+:is([data-theme="light"], [data-theme$="-light"]) .room-item .project-status-a.project-status-needs { color: color-mix(in srgb, var(--orange) 75%, #000); }
+.room-item .project-status:has(.project-status-a.project-status-needs) { background: color-mix(in srgb, var(--orange) 19%, var(--bg-primary)); border-color: var(--orange); }
+.project-status-mark.project-status-needs { color: var(--orange); }
+.project-status-mark.project-status-waiting { color: var(--text-secondary); opacity: .5; }
+.project-status-mark.project-status-working { color: var(--accent); }
+.project-status-b-total { display: none; }
+.project-status-c { gap: 2px; }
+.project-status-overflow { margin-left: 2px; }
+.project-status-d { position: relative; justify-content: center; width: 21px; height: 21px; font-weight: 700; }
+.project-status-d svg { position: absolute; inset: 0; }
+.project-status-d span { position: relative; }
+.project-status-switch { display: flex; gap: 2px; padding: 2px 8px 5px; }
+.project-status-switch button { min-width: 21px; min-height: 21px; padding: 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 10px; cursor: pointer; }
+.project-status-switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-dim); font-weight: 700; }
+[data-theme^="high-contrast"] .room-item .project-status { border-color: var(--text-primary); color: var(--text-primary); }
+[data-theme^="high-contrast"] .project-status-mark { color: var(--text-primary); }
+[data-theme^="high-contrast"] .project-status-switch button[aria-pressed="true"] { outline: 2px solid var(--accent); }
+@container (max-width: 125px) { .project-status-b-part { display: none; } .project-status-b-total { display: inline; } }
+@media (prefers-reduced-motion: reduce) { .project-status, .project-status-mark { animation: none; transition: none; } }
 .room-item .room-item-name:hover { background: transparent; border-color: transparent; }
 .room-item.archived .room-item-name, .room-item.closing .room-item-name, .agent-chat-offer .room-item-name { color: var(--text-muted); }
 /* A room's kind is an icon (a CSS mask in the current colour) with a tooltip; a task or research room trades its counts for a small bordered status word.

@@ -259,7 +259,7 @@ async function main() {
       [false, 'home', true, false], 'archived project uses the live project row and child tree');
     await page.evaluate(() => document.documentElement.dataset.theme = 'high-contrast-dark');
     assert.equal(await page.$eval('.archived-project > .room-item', node => getComputedStyle(node).opacity), '1', 'archived row stays legible in high contrast');
-    assert.deepEqual(await tops(page), ['room-filter', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
+    assert.deepEqual(await tops(page), ['room-filter', 'project-status-switch', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
     // The bells and the chip: a room with items waiting, a muted one, the project's name on a direct message when there are several projects.
     const marks = await page.evaluate(() => ({ attention: document.querySelector('[data-room-id=rm_api] .room-item-attention')?.title, muted: document.querySelector('[data-room-id=rm_mute] .room-muted')?.title.startsWith('Muted until'),
       chip: document.querySelector('[data-room-id=rm_dm] .room-project')?.textContent, none: document.querySelector('[data-room-id=rm_gen] .room-muted') === null, title: document.querySelector('[data-room-id=rm_api] .room-item-name').title,
@@ -366,10 +366,12 @@ async function main() {
     const page = await mount();
     await settle(page);
     const before = await count(page, 'GET', '/api/projects/prj_a/rooms');
+    const beforeDraw = await page.evaluate(() => window.__sidebar.store.version.peek());
     await page.evaluate(() => { for (let i = 0; i < 6; i++) window.__sidebar.scheduleRefresh('prj_a'); });
     await page.waitForFunction(n => window.__requests.filter(request => request.path.startsWith('/api/projects/prj_a/rooms')).length > n, {}, before);
     await new Promise(resolve => setTimeout(resolve, 500));
     assert.equal(await count(page, 'GET', '/api/projects/prj_a/rooms'), before + 1, 'six scheduled refreshes of a project make one request');
+    assert.equal(await page.evaluate(() => window.__sidebar.store.version.peek()), beforeDraw + 1, 'a burst causes one list redraw');
     await page.close();
   }
 
@@ -1753,6 +1755,81 @@ async function main() {
     await page.close();
   }
 
+  // The project status remains available when the tree is folded, and each
+  // display retains the same full breakdown for sight and speech.
+  {
+    const page = await mount({ auto: { 'GET /api/projects': projects, 'GET /api/agent-dms': chats() }, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await page.waitForSelector('.project-placeholder');
+    assert.equal(await page.$('.project-placeholder .project-status'), null, 'unknown room counts show no status while loading');
+    await page.close();
+  }
+  {
+    const statusList = rooms().prj_a.map(item => item.id === 'rm_api' ? { ...item, purpose: 'task', finished_unseen: true, attention_open: 0 } : item.id === 'rm_notes' ? { ...item, purpose: 'task', gate: 'paused' } : item.id === 'rm_mute' ? { ...item, purpose: 'task', working: true } : item);
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': statusList, 'PUT /api/me/preferences': { preferences: {} } }) });
+    await settle(page);
+    for (const variant of ['a', 'b', 'c', 'd']) {
+      await page.click(`.project-status-switch button[aria-label="Project status style ${variant.toUpperCase()}"]`);
+      const found = await page.evaluate(() => {
+        const row = document.querySelector('[data-room-id=rm_ah]');
+        const pill = row.querySelector('.project-status');
+        return { variant: pill?.className, tooltip: pill?.title, described: document.getElementById(pill?.getAttribute('aria-describedby'))?.textContent, folded: row.classList.contains('collapsed') };
+      });
+      assert.ok(found.variant.includes(`project-status-variant-${variant}`), `${variant}: variant rendered`);
+      assert.equal(found.tooltip, '1 need you, 1 waiting, 1 working', `${variant}: tooltip has every state`);
+      assert.equal(found.described, found.tooltip, `${variant}: screen reader text matches tooltip`);
+      assert.equal(await page.$('[data-room-id=rm_bh] .project-status'), null, `${variant}: zero counts hide the status`);
+      for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+        const colours = await page.evaluate(theme => {
+          document.documentElement.dataset.theme = theme;
+          const style = getComputedStyle(document.querySelector('[data-room-id=rm_ah] .project-status'));
+          return [style.color, style.backgroundColor];
+        }, theme);
+        assert.notEqual(colours[0], colours[1], `${variant} in ${theme}: status remains legible`);
+      }
+      if (variant === 'b') {
+        const compact = await page.evaluate(() => {
+          const info = document.querySelector('[data-room-id=rm_ah] .room-item-info');
+          info.style.flex = '0 0 110px'; info.style.width = '110px';
+          const parts = getComputedStyle(info.querySelector('.project-status-b-part')).display;
+          const total = getComputedStyle(info.querySelector('.project-status-b-total')).display;
+          info.style.flex = ''; info.style.width = '';
+          return [parts, total];
+        });
+        assert.equal(compact[0], 'none', 'B hides the individual states in a narrow row');
+        assert.notEqual(compact[1], 'none', 'B retains the total in a narrow row');
+      }
+      await page.click('[data-room-id=rm_ah] .project-status');
+      await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
+      assert.equal(await page.$eval('[data-room-id=rm_ah]', row => row.classList.contains('collapsed')), false, `${variant}: click expands`);
+      await page.click('[data-room-id=rm_ah] .room-collapse');
+      await page.waitForFunction(() => document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
+    }
+    assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.ui.sidebar_status_variant.usr_me')), 'd', 'switch stores a choice for this person');
+    await page.waitForFunction(() => window.__requests.some(request => request.method === 'PUT' && request.body?.preferences?.sidebar_status_variant === 'd'));
+    const overflow = await page.evaluate(async () => {
+      const { html, render } = await import('/js/ui.js');
+      const { ProjectStatus } = await import('/js/pages/sidebar/project-status.js');
+      const host = document.createElement('div'); document.body.append(host);
+      render(html`<${ProjectStatus} counts=${{ needs: 5, waiting: 5, working: 2 }} variant="c" id="overflow-status" projectName="Alpha" folded=${true} onExpand=${() => {}} />`, host);
+      const result = [host.querySelectorAll('.project-status-c svg').length, host.querySelector('.project-status-overflow')?.textContent];
+      render(html`<${ProjectStatus} counts=${{ needs: 0, waiting: 0, working: 123 }} variant="d" id="large-status" projectName="Alpha" folded=${true} onExpand=${() => {}} />`, host);
+      result.push(host.querySelector('.project-status-d span')?.textContent, Number(host.querySelector('.project-status-d svg')?.getAttribute('width')) > 21);
+      host.remove(); return result;
+    });
+    assert.deepEqual(overflow, [8, '+4', '123', true], 'C caps its marks and D grows its ring to keep the full total');
+    await page.setViewport({ width: 390, height: 844 });
+    assert.ok(await page.$('[data-room-id=rm_ah] .project-status-variant-d'), 'phone keeps the project status');
+    const quietList = statusList.map(item => ({ ...item, finished_unseen: false, attention_open: 0, gate: 'open', working: false }));
+    await page.evaluate(list => { window.__auto['GET /api/projects/prj_a/rooms'] = list; }, quietList);
+    await page.evaluate(() => { window.__quiet = Promise.all([window.__sidebar.refreshProject('prj_a'), window.__sidebar.refreshProject('prj_a'), window.__sidebar.refreshProject('prj_a')]); });
+    await page.evaluate(() => window.__quiet);
+    assert.ok(await page.$('[data-room-id=rm_ah] .project-status'), 'a burst leaves the previous status until the trailing flush');
+    const beforeFlush = await page.evaluate(() => window.__sidebar.store.version.peek());
+    await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah] .project-status'));
+    assert.equal(await page.evaluate(() => window.__sidebar.store.version.peek()), beforeFlush + 1, 'the status burst causes one trailing redraw');
+    await page.close();
+  }
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');

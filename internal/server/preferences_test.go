@@ -197,15 +197,15 @@ func TestSidebarPreviewIsAPerAccountPreference(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	cookie, csrf := registerSecondUser(t, f, "second")
-	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_preview": "1"}}, true)
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_preview": "1", "sidebar_status_variant": "c"}}, true)
 	if resp.StatusCode != 200 {
 		t.Fatalf("store: %d", resp.StatusCode)
 	}
-	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["sidebar_preview"] != "1" {
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["sidebar_preview"] != "1" || got["sidebar_status_variant"] != "c" {
 		t.Fatalf("stored, read back %v", got)
 	}
 	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
-	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["sidebar_preview"] != "" {
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["sidebar_preview"] != "" || got["sidebar_status_variant"] != "" {
 		t.Fatalf("the choice leaked to another person: %v", got)
 	}
 }

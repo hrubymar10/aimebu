@@ -2,7 +2,7 @@ import { batch, signal } from '../../ui.js';
 import { request, currentUser } from '../../api.js';
 import { savePreference } from '../../preferences.js';
 import { noticeDialog } from '../../dialogs.js';
-import { AGENT_CHAT_PROJECT, DEFAULT_SORT, ReadMarker, SORTS, moveProject, orderProjects, placeProject } from './model.js';
+import { AGENT_CHAT_PROJECT, DEFAULT_SORT, ReadMarker, SORTS, memoProjectStatusCounts, moveProject, orderProjects, placeProject } from './model.js';
 
 const collapsedKey = 'aimebu2.rooms.collapsed';
 // The roots this browser has already shown with children. A root is folded the first time it is seen (a project starts collapsed), after which
@@ -13,6 +13,9 @@ const seenKey = 'aimebu2.rooms.seen';
 const sortKey = () => `aimebu2.ui.sidebar_sort.${currentUser}`, orderKey = () => `aimebu2.ui.sidebar_project_order.${currentUser}`;
 // Whether every room row shows its last message ('1'), or only the room that is open does (the default).
 const previewKey = () => `aimebu2.ui.sidebar_preview.${currentUser}`;
+const statusVariantKey = () => `aimebu2.ui.sidebar_status_variant.${currentUser}`;
+const statusVariants = ['a', 'b', 'c', 'd'];
+const loadStatusVariant = () => { try { const value = localStorage.getItem(statusVariantKey()); return statusVariants.includes(value) ? value : 'a'; } catch { return 'a'; } };
 export const loadPreviewAll = () => { try { return localStorage.getItem(previewKey()) === '1'; } catch { return false; } };
 function loadSort() { try { const value = localStorage.getItem(sortKey()); return SORTS.some(([key]) => key === value) ? value : DEFAULT_SORT; } catch { return DEFAULT_SORT; } }
 function loadManual() { try { const list = JSON.parse(localStorage.getItem(orderKey()) || '[]'); return Array.isArray(list) ? list.filter(id => typeof id === 'string') : []; } catch { return []; } }
@@ -27,9 +30,11 @@ export class SidebarStore {
   constructor({ onSelect }) {
     this.onSelect = onSelect;
     this.projects = new Map(); this.rooms = new Map(); this.refreshTimers = new Map();
+    this.projectStatusCounts = memoProjectStatusCounts();
+    this.projectStatus = new Map(); this.statusTimers = new Map();
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
-    this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
+    this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal(''); this.statusVariant = signal(loadStatusVariant());
     // The open room the person marked unread: it is not marked read again, and it shows its count, until they leave it or mark it read.
     this.held = signal('');
     this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen(); this.revealedFor = '';
@@ -80,6 +85,8 @@ export class SidebarStore {
     clearTimeout(this.muteTimer);
     for (const timer of this.refreshTimers.values()) clearTimeout(timer);
     this.refreshTimers.clear();
+    for (const timer of this.statusTimers.values()) clearTimeout(timer);
+    this.statusTimers.clear(); this.projectStatus.clear();
     for (const timer of this.archiveTimers.values()) clearTimeout(timer);
     for (const controller of this.archiveRequests.values()) controller.abort();
     for (const controller of this.roomRequests) controller.abort();
@@ -87,7 +94,7 @@ export class SidebarStore {
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
     this.holdFolds = true; this.pending.clear(); this.expected = []; this.revealedFor = '';
-    batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
+    batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.statusVariant.value = 'a'; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
   // Every call and read of the list goes through here: a destroyed list sends nothing, and a reset aborts what is out.
@@ -123,6 +130,24 @@ export class SidebarStore {
     return room;
   }
 
+  statusNow(id) {
+    const next = this.projectStatusCounts(id, this.rooms.values());
+    const previous = this.projectStatus.get(id);
+    this.projectStatus.set(id, next);
+    return previous !== next;
+  }
+
+  // Message and inbox events still refresh unread rows immediately. Their
+  // project summary waits for one quiet second, even when many lists arrive.
+  scheduleStatus(id) {
+    clearTimeout(this.statusTimers.get(id));
+    const generation = this.generation;
+    this.statusTimers.set(id, setTimeout(() => {
+      this.statusTimers.delete(id);
+      if (this.owns(generation) && this.projects.has(id) && this.statusNow(id)) this.touch();
+    }, 1000));
+  }
+
   isAgentChatProject(id) { return !!id && (id === AGENT_CHAT_PROJECT || id === this.agentChatProject); }
 
   // The chats between agents the person has joined, and the ones they could join. A room that is no longer listed (left, or taken away) leaves.
@@ -142,7 +167,7 @@ export class SidebarStore {
     const generation = this.generation;
     let projects, chats = null, chatsTicket = 0;
     // The order first: the streamed list is drawn in it from the start.
-    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); });
+    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); this.statusVariant.value = loadStatusVariant(); });
     const streaming = this.sort.peek() !== 'activity';
     try {
       // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
@@ -165,7 +190,7 @@ export class SidebarStore {
         // A project taken away while its list was out does not come back with it.
         if (!this.listSeqs.has(project.id)) return;
         this.projects.set(project.id, project);
-        if (this.listCurrent(project.id, tickets[index])) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); }
+        if (this.listCurrent(project.id, tickets[index])) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); this.statusNow(project.id); }
         if (streaming) this.touchSoon(generation);
       }));
       chats = await chatsRequest;
@@ -195,7 +220,7 @@ export class SidebarStore {
     try { list = await this.roomRequest(`/api/projects/${project.id}/rooms`); } catch (error) { if (!this.owns(generation)) return []; throw error; }
     if (!this.owns(generation)) return [];
     this.projects.set(project.id, project);
-    if (this.listCurrent(project.id, ticket)) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); }
+    if (this.listCurrent(project.id, ticket)) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); this.statusNow(project.id); }
     this.touch();
     return list;
   }
@@ -210,7 +235,7 @@ export class SidebarStore {
 
   // `mark: false` reads the list without marking the open room read: the refresh that follows the person's own read position moving (another tab
   // or device marked a room read or unread) must not undo a mark unread made there by reading the room here at once.
-  async refreshProject(id, { mark = true } = {}) {
+  async refreshProject(id, { mark = true, statusNow = false } = {}) {
     if (this.isAgentChatProject(id)) return this.refreshAgentChats({ mark });
     const generation = this.generation, ticket = this.listTicket(id);
     let list;
@@ -218,28 +243,30 @@ export class SidebarStore {
     if (!this.listCurrent(id, ticket)) return;
     this.dropUnlisted(id, list);
     for (const room of list) { const kept = this.keep(room); if (mark && room.id === this.active.peek() && !this.holdRead?.(room.id)) this.markSeen(kept); }
+    if (statusNow) { clearTimeout(this.statusTimers.get(id)); this.statusTimers.delete(id); this.statusNow(id); }
+    else this.scheduleStatus(id);
     this.touch();
   }
 
-  // Refreshes a project's rooms once, a moment from now, however many times it is asked for in between: a turn raises several events in a row and each
-  // would otherwise refetch the whole list.
-  scheduleRefresh(id, delay = 250) {
-    if (this.refreshTimers.has(id)) return;
+  // A burst of turn events gives a project one trailing refresh after a quiet second.
+  scheduleRefresh(id, delay = 1000) {
+    clearTimeout(this.refreshTimers.get(id));
     const generation = this.generation;
     this.refreshTimers.set(id, setTimeout(() => {
       this.refreshTimers.delete(id);
-      if (this.owns(generation)) this.refreshProject(id).catch(() => {});
+      if (this.owns(generation)) this.refreshProject(id, { statusNow: true }).catch(() => {});
     }, delay));
   }
 
   // A room removed on the server is dropped here by name: a project refresh only adds and updates.
-  forgetRoom(id) { if (this.rooms.delete(id)) this.touch(); }
+  forgetRoom(id) { const room = this.rooms.get(id); if (this.rooms.delete(id)) { if (room) this.scheduleStatus(room.project_id); this.touch(); } }
 
   // A project that was deleted: it and every one of its rooms leave the list.
   forgetProject(id) {
     this.listSeqs.delete(id); // a read of its rooms still in flight is then dropped when it lands
     for (const [roomID, room] of [...this.rooms]) if (room.project_id === id) this.rooms.delete(roomID);
     this.projects.delete(id);
+    clearTimeout(this.statusTimers.get(id)); this.statusTimers.delete(id); this.projectStatus.delete(id);
     this.folds.delete(`archived-project:${id}`);
     this.dropArchive(id);
     this.touch();
@@ -346,6 +373,12 @@ export class SidebarStore {
   }
 
   setManual(order) { this.manual.value = order; try { localStorage.setItem(orderKey(), JSON.stringify(order)); } catch { /* private mode */ } this.persist('sidebar_project_order', JSON.stringify(order)); }
+  setStatusVariant(variant) {
+    if (!statusVariants.includes(variant)) return;
+    this.statusVariant.value = variant;
+    try { localStorage.setItem(statusVariantKey(), variant); } catch { /* private mode */ }
+    this.persist('sidebar_status_variant', variant);
+  }
   moveProject(id, delta) { this.setManual(moveProject([...this.projects.values()], this.manual.peek(), id, delta)); }
   dropProject(id, targetID, after) { this.setManual(placeProject([...this.projects.values()], this.manual.peek(), id, targetID, after)); }
 
@@ -471,7 +504,7 @@ export class SidebarStore {
     try {
       const child = await this.roomRequest(`/api/projects/${parent.project_id}/rooms`, { method: 'POST', body: { title: answer.title, parent_id: parent.id, worktree: { enabled: answer.worktree, base_ref: answer.worktree ? answer.base_ref : '' } } });
       if (!this.owns(generation)) return;
-      this.rooms.set(child.id, child); this.touch(); this.onSelect(child);
+      this.rooms.set(child.id, child); this.scheduleStatus(child.project_id); this.touch(); this.onSelect(child);
       if (child.worktree?.state === 'failed') void noticeDialog(`Room created, but its worktree needs attention: ${child.worktree.reason}`, { title: 'Worktree needs attention' });
     } catch (error) { if (this.owns(generation)) void noticeDialog(error.message, { title: 'Could not create the room' }); }
   }

@@ -35,6 +35,7 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 | Composer | `.pending-attachments` / `.pending-image` | `.attachment-pending-list` / `.attachment-pending-item` (`.attachment-pending-thumb`, `-meta`, `-name`, `-status`, `.attachment-remove-btn`) | composer |
 | Composer | `.composer-note` | `.system-room-notice` | composer |
 | Rooms | `.room-row` / `.room-name` / `.room-preview` / `.unread-count` | `.room-item` / `.room-item-name` / `.room-item-preview` / `.room-item-unread` (the kind glyph is `.room-item-icon` in `.room-item-icon-group`, the name, count, attention and unread sit in `.room-item-top` inside `.room-item-info`, the preview is inside the row) | sidebar |
+| Rooms | no previous class | `.project-status-wrap` / `.project-status` and `.project-status-a` through `-d` beside the unread count; `.project-status-switch` below the filter | project task status |
 | Rooms | `.room-pin`, `.room-hide`, the pin and hide buttons | not drawn (rows no longer render them) | sidebar |
 | Composer | `#composer.drag-attachment` | `.send-bar.drag-attachment` | composer |
 | Settings | `<dialog id=settings-dialog>` grid with `header`, `nav`, sections | `.settings-modal` > `.settings-pane` > `.settings-nav` + `.settings-body` (`.settings-body-header`, sections); still a `<dialog>`, reset in `v2-only.css` | settings |
