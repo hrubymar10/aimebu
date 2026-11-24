@@ -51,19 +51,25 @@ type MentionSpan struct {
 func liveProseSpans(body string) (string, []int) {
 	var live strings.Builder
 	var pos []int
+	// i is an index into the current line; lineStart turns it into an offset
+	// in body.
+	lineStart := 0
 	byteAt := func(i int) {
-		live.WriteByte(body[i])
-		pos = append(pos, i)
+		live.WriteByte(body[lineStart+i])
+		pos = append(pos, lineStart+i)
 	}
 	blank := func(i int) {
 		live.WriteByte(' ')
-		pos = append(pos, i)
+		pos = append(pos, lineStart+i)
 	}
 	inFence, fence := false, ""
 	lines := strings.Split(body, "\n")
 	previousBlank := true
 	indented := false
-	for _, line := range lines {
+	for n, line := range lines {
+		if n > 0 {
+			lineStart += len(lines[n-1]) + 1
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			marker := trimmed[:3]
