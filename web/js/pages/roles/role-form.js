@@ -9,7 +9,7 @@ const Toggle = ({ label, desc, id, name, form, set }) => html`
     <input name=${name} type="checkbox" checked=${form[name]} onChange=${event => set(name, event.currentTarget.checked)} />
   <//>`;
 
-export function RoleForm({ hidden, roles, role, form, options, busy, resolved, onField, onDefaults, onSave, onCancel, onReset, onDelete }) {
+export function RoleForm({ hidden, roles, role, form, options, busy, resolved, owner, onField, onDefaults, onSave, onCancel, onReset, onDelete }) {
   const set = onField;
   const text = name => ({ name, value: form[name], onInput: event => set(name, event.currentTarget.value) });
   return html`<form id="role-editor" hidden=${hidden} aria-labelledby="role-editor-title" onSubmit=${event => { event.preventDefault(); onSave(); }}
@@ -36,6 +36,13 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
       <${SettingsRow} label="Instructions" desc="Prompt text given to every agent that holds this role, on top of the shared room protocol (and after the instructions of the role it extends, if any)." id="role-body" className="settings-row-stack">
         <textarea class="settings-text-input settings-textarea" ...${text('body')} rows="8"></textarea>
       <//>
+      <${SettingsRow} label="Extension" desc=${owner ? 'Text added after the instructions without replacing them, so updates to the default instructions keep flowing. Projects can add more of their own.' : 'Text added after the instructions without replacing them. Only the owner can change it.'} id="role-extension" className="settings-row-stack">
+        <textarea class="settings-text-input settings-textarea" ...${text('body_extension')} rows="4" readOnly=${!owner} placeholder=${owner ? '' : 'Only the owner edits the extension.'}></textarea>
+      <//>
+      <div class="settings-row settings-row-stack" id="role-effective-row" hidden=${!role}>
+        <div class="settings-row-info"><span class="settings-label" id="role-effective-label">Final prompt</span><span class="settings-desc" id="role-effective-desc">What an agent with this role is told, the extension included, as last saved.</span></div>
+        <div class="settings-control"><details><summary aria-describedby="role-effective-desc">Show final prompt</summary><textarea class="settings-text-input settings-textarea" id="role-effective" aria-labelledby="role-effective-label" aria-describedby="role-effective-desc" rows="8" readOnly value=${role?.effective_body ?? ''}></textarea></details></div>
+      </div>
       <${SettingsRow} label="Extends" desc="Adds to another role: agents get that role's instructions first, then these. Leave on None for a complete role. A project role may extend the global role with the same key." id="role-extends">
         <select class="settings-select" name="extends" value=${form.extends} onChange=${event => set('extends', event.currentTarget.value)}>
           ${extendsOptions(roles, role).map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}

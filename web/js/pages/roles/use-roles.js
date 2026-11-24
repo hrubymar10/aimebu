@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, signal, batch } from '../../ui.js';
-import { request } from '../../api.js';
+import { request, rights } from '../../api.js';
 import { confirmDialog } from '../../dialogs.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
@@ -101,7 +101,7 @@ export function useRoles() {
   };
 
   const save = () => {
-    const data = roleData(state.form.peek(), selectedRole());
+    const data = roleData(state.form.peek(), selectedRole(), !!rights.owner);
     return write(() => request(data.id ? `/api/roles/${data.id}` : '/api/roles', { method: data.id ? 'PUT' : 'POST', body: data }), async saved => {
       // A saved role closes its form; focus goes back to the role's card, where its Edit button is.
       await load();

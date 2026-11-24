@@ -6,6 +6,7 @@ import { ScopeControl } from '../../components/scope-control.js';
 import { UsageSummary } from '../../components/usage-summary.js';
 import { UsageLimit } from './usage-limit.js';
 import { RoleDefaults } from './role-defaults.js';
+import { RolePrompts } from './role-prompts.js';
 import { TeamFlowSettings } from './team-flow-settings.js';
 
 function Toggle({ id, label, desc, risk, flag, onChange }) {
@@ -39,6 +40,7 @@ export function ProjectPage({ store }) {
       <h3 id="project-scope-control-title">Agents in this project</h3><div class="settings-card"><${ScopeControl} store=${store.scope} /></div></section>
     <section id="project-usage-limit" class="usage-limit settings-subsection" aria-labelledby="project-usage-limit-title"><${UsageLimit} store=${store.limit} /></section>
     <${RoleDefaults} store=${store} />
+    <${RolePrompts} store=${store} />
     <${TeamFlowSettings} flow=${store.flow} project=${store.project.value} canEdit=${!!store.project.value && ['owner', 'operator'].includes(store.project.value.role)} />
     <div id="project-reviewers" class="settings-subsection"><h3>Reviewer agents</h3><div class="settings-group" role="group" aria-label="Reviewer agents"><div class="settings-row"><div class="settings-row-info"><label class="settings-label" for="project-reviewer-agents">Reviewer agents</label><span class="settings-desc">Allow new reviewer agents in this project. Existing reviewers keep running. The instance default is ${store.reviewerAgents.value.global ? 'on' : 'off'}.</span></div><div class="settings-control"><select id="project-reviewer-agents" value=${store.reviewerAgents.value.value} disabled=${store.reviewerAgents.value.disabled || !['owner','operator'].includes(store.project.value?.role)} onChange=${event => store.saveReviewerAgents(event.currentTarget.value)}><option value="inherit">Inherit</option><option value="on">On</option><option value="off">Off</option></select></div></div></div></div>
     <section id="project-usage" class="usage-summary settings-subsection" aria-label="Project usage"><${UsageSummary} store=${store.usage} title="Project usage" /></section>

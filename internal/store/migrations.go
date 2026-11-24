@@ -2105,7 +2105,20 @@ ALTER TABLE turn ADD COLUMN handoff_outcome_required INTEGER NOT NULL DEFAULT 0 
 -- The message of a person that approved an agent-initiated spawn's exact harness and model choice outside the role's default pool
 -- (model_not_approved otherwise). NULL is every agent spawned by a person, from a pool choice, or before this.
 ALTER TABLE agent ADD COLUMN approved_by TEXT;
-`}, {134, roleSpawnApprovalMigration()}, {135, roleResearcherMigration()}}
+`}, {134, roleSpawnApprovalMigration()}, {135, roleResearcherMigration()}, {136, `
+-- Role prompt extensions: text an agent receives after the role's instructions without replacing them, so an update to a built-in
+-- default keeps flowing while the instance or a project adds its own rules. The global scope (project_id NULL) sits on the role
+-- definition; a project's extension is its own row. An empty extension is not stored. The role's body column is untouched, so the
+-- role-body migrations keep treating only the base as edited or unedited.
+CREATE TABLE IF NOT EXISTS role_body_extension (
+  role_id TEXT NOT NULL REFERENCES role(id),
+  project_id TEXT REFERENCES project(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  rev INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS role_body_extension_scope ON role_body_extension(COALESCE(project_id,''),role_id);
+`}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

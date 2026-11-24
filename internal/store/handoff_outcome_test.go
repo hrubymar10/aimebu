@@ -338,7 +338,8 @@ func TestHandoffOutcomeRequirementOfAContinuation(t *testing.T) {
 }
 
 // Migration 132 gives every turn row the safe default (no outcome required), on a fresh database and on one upgraded from 131 with turns in
-// it, and the column takes only 0 and 1.
+// it, and the column takes only 0 and 1. Replaying from 132 also replays the migrations after it, so the version rows from 132 on are
+// deleted and the final version is whatever the binary ships.
 func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
@@ -360,7 +361,7 @@ func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 		t.Fatal("an upgraded turn requires an outcome")
 	}
 	var version int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 135 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != LatestSchemaVersion() {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

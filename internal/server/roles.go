@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -44,6 +45,8 @@ func definitionError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "role_extended", "other roles extend this role; change or delete them first")
 	case errors.Is(err, store.ErrRoleExtends):
 		apiError(w, 400, "invalid_extends", "extends must name another role and may not make a cycle or chain deeper than 5")
+	case errors.Is(err, store.ErrRoleBodyExtension):
+		apiError(w, 400, "invalid_extension", fmt.Sprintf("the extension is longer than %d bytes", store.MaxRoleBodyExtensionLen))
 	case errors.Is(err, store.ErrInvalidSpawnDefaults):
 		apiError(w, 400, "invalid_spawn_defaults", err.Error())
 	case errors.Is(err, store.ErrInvalidTransition):
@@ -143,6 +146,40 @@ func (s *Server) roleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	saved, err := s.Store.ResetRole(r.Context(), userID(r), r.PathValue("id"), input.Rev)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, saved)
+}
+
+// rolePrompts lists every live role as one project's role-prompt settings show it: the base, both saved extensions, and the
+// delivered text. Only the project's owner or operators.
+func (s *Server) rolePrompts(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Store.RolePromptSettings(r.Context(), userID(r), r.PathValue("project"))
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, items)
+}
+
+// rolePrompt saves or clears one project's extension of one role (its role_key in the path). An empty body clears it.
+func (s *Server) rolePrompt(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Body string `json:"body"`
+		Rev  int64  `json:"rev"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	project, roleKey := r.PathValue("project"), r.PathValue("role")
+	roleID, err := s.Store.RoleIDByKey(r.Context(), roleKey)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	saved, err := s.Store.SetRoleBodyExtension(r.Context(), userID(r), project, roleID, body.Body, body.Rev)
 	if err != nil {
 		definitionError(w, err)
 		return

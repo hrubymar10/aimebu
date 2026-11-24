@@ -34,9 +34,9 @@ func (e *StopPendingError) Unwrap() error { return ErrProjectBusy }
 // the schema and fails when a table that names a project is in none of these lists, so a table added later cannot be forgotten.
 var (
 	// projectOptionalTables have a project_id that may be empty, where empty means "everyone's" or "global": an event with no project is
-	// the instance owner's, and a role, a prompt override or an invite with none applies everywhere. Walking the foreign keys would set
-	// the column to NULL and turn the project's rows into global ones, so they are deleted first.
-	projectOptionalTables = []string{"event", "prompt_override", "role", "user_invite"}
+	// the instance owner's, and a role, a prompt override, a role prompt extension or an invite with none applies everywhere. Walking the
+	// foreign keys would set the column to NULL and turn the project's rows into global ones, so they are deleted first.
+	projectOptionalTables = []string{"event", "prompt_override", "role", "role_body_extension", "user_invite"}
 	// projectLooseTables name the project in a project_id column with no foreign key to it.
 	projectLooseTables = []string{"cleanup_log"}
 	// projectScopeTables are scoped by scope_kind and scope_id, which name a project or one of its rooms, with no foreign key.

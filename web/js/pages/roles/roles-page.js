@@ -1,4 +1,5 @@
 import { html, Fragment, useLayoutEffect } from '../../ui.js';
+import { rights } from '../../api.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { formState, roleOptionLabel } from './model.js';
 import { useRoles } from './use-roles.js';
@@ -43,7 +44,7 @@ export function RolesPage({ openToken, onDirty = () => {} }) {
         ${list.map(item => html`<${RoleCard} key=${item.id} role=${item} roles=${list} selected=${selected === item.id}
           open=${editorOpen && selected === item.id} onEdit=${() => roles.edit(item.id)} onClose=${roles.cancel} />`)}
       </div>
-      <${RoleForm} hidden=${!editorOpen} roles=${list} role=${role} form=${form} options=${state.options.value} busy=${state.busy.value} resolved=${role?.resolved_body ?? ''}
+      <${RoleForm} hidden=${!editorOpen} roles=${list} role=${role} form=${form} options=${state.options.value} busy=${state.busy.value} resolved=${role?.resolved_body ?? ''} owner=${rights.owner}
         onField=${roles.setField} onDefaults=${roles.setDefaults} onSave=${roles.save} onCancel=${roles.cancel} onReset=${roles.reset} onDelete=${roles.remove} />
       <p id="roles-error" class="error" role="alert">${state.error.value}</p>
     <//>

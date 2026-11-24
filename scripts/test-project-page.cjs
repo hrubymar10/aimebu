@@ -26,6 +26,10 @@ const server = http.createServer((req, res) => {
 const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_cap: 50, daily_cost_cap: null, inherited_cost_cap: 5, inherited_turn_cap: null, day_start: '2026-02-03T00:00:00Z', tz: 'UTC', daily_turns: 2, daily_cost: 0.5, cost_coverage: 'known', effective_state: 'active' };
 const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
 const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
+const rolePrompts = [
+  { role_id: 'role_worker_default', role_key: 'worker', label: 'Worker', emoji: '', builtin: true, resolved_body: 'worker instructions', flow_override: false, global_body_extension: 'global rules', project_extension: { body: 'project rules', rev: 2, updated_at: '2026-11-24T10:00:00Z' }, delivered_body: 'worker instructions\n\nglobal rules\n\nproject rules' },
+  { role_id: 'role_dispatcher_default', role_key: 'dispatcher', label: 'Dispatcher', emoji: '', builtin: true, resolved_body: 'dispatcher instructions', flow_override: true, delivered_body: 'the flow replaces the base, no extensions yet' },
+];
 const flows = [
   { key: 'leader-workers', label: 'Leader and workers', description: 'Leader coordinates workers.', core_roles: ['leader'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'general', label: 'General', roles: ['worker'] }], edges: [{ from: 'home', to: 'general' }] } },
   { key: 'leader-dispatcher', label: 'Leader and dispatcher', description: 'Dispatcher coordinates workers.', core_roles: ['leader', 'dispatcher'], spawn_rules: [{ actor_role: 'leader', allowed_roles: ['dispatcher'] }, { actor_role: 'dispatcher', allowed_roles: ['worker', 'reviewer'] }], diagram: { rooms: [{ key: 'home', label: 'Home', roles: ['leader'] }, { key: 'routing', label: 'Routing', roles: ['leader', 'dispatcher'] }], edges: [{ from: 'home', to: 'routing' }] } },
@@ -38,6 +42,7 @@ const base = () => ({
   'GET /api/projects/p1/usage-limit': limit,
   'GET /api/projects/p1/usage?range=today': usage,
   'GET /api/projects/p1/role-spawn-defaults': roles,
+  'GET /api/projects/p1/role-prompts': rolePrompts,
   'GET /api/projects/p1/settings': { reviewer_agents: 'inherit', reviewer_agents_global_enabled: true, reviewer_agents_enabled: true },
   'GET /api/machines?project_id=p1': { machines: [{ id: 'm1', name: 'Box', approved: true, connected: true, project_allowed: true }] },
   'GET /api/spawn-catalog?machine_id=m1': { tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l1', label: 'Claude', available: true, models: [{ id: 'm1', label: 'Opus', default: true }, { id: 'm2', label: 'Sonnet' }] }] },
@@ -136,7 +141,7 @@ async function main() {
       const page = await mount();
       await ready(page);
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#project-settings-body').children].map(node => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}`)),
-        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section#project-role-defaults', 'section#project-team-flow', 'div#project-reviewers', 'section#project-usage', 'div#project-home-room', 'div#project-recovery', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
+        ['form#project-details', 'section#project-scope-control', 'section#project-usage-limit', 'section#project-role-defaults', 'section#project-role-prompts', 'section#project-team-flow', 'div#project-reviewers', 'section#project-usage', 'div#project-home-room', 'div#project-recovery', 'div#project-session-import', 'div#project-lifecycle', 'p#project-settings-error']);
       assert.deepEqual(await page.evaluate(() => ({ name: [document.querySelector('#project-details-name').value, document.querySelector('#project-details-name').disabled], folder: [document.querySelector('#project-details-folder').value, document.querySelector('#project-details-folder').disabled],
         save: document.querySelector('#project-details-save').disabled, status: document.querySelector('#project-details-status').textContent,
         flags: ['#project-auto-resume', '#project-worktrees', '#project-home-lead-only'].map(id => [document.querySelector(id).checked, document.querySelector(id).disabled]),
@@ -1026,6 +1031,44 @@ async function main() {
       await page.$eval('#project-role-defaults-save', el => el.click());
       await page.waitForFunction(() => window.__requests.filter(request => request.method === 'PUT' && request.path.includes('/role-spawn-defaults/')).length === 5);
       assert.deepEqual((await calls(page, 'PUT')).map(([path]) => path.split('/').at(-1)), ['worker', 'leader', 'worker', 'leader', 'leader'], 'a retry after a partial save sends only the role that failed');
+      await page.close();
+    }
+    // Role prompt extensions: the project's textarea under the role's own text, the preview the server composed, and a refused save says why.
+    {
+      const type = (selector, value) => page.$eval(selector, (el, value) => { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+      const renewed = [{ ...rolePrompts[0], project_extension: { body: 'Project rules, renewed.', rev: 3, updated_at: 'x' }, delivered_body: 'worker instructions\n\nglobal rules\n\nProject rules, renewed.' }, rolePrompts[1]];
+      const page = await mount({ auto: { ...base(), 'PUT /api/projects/p1/role-prompts/worker': { body: 'Project rules, renewed.', rev: 3, updated_at: 'x' } } });
+      await ready(page);
+      await page.waitForFunction(() => document.querySelectorAll('.project-role-prompt').length === 2);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.project-role-prompt h4')].map(node => node.textContent)), ['Worker', 'Dispatcher']);
+      assert.deepEqual(await page.evaluate(() => ['#project-role-extension-worker', '#project-role-extension-dispatcher'].map(selector => document.querySelector(selector).value)), ['project rules', ''], 'each card holds the saved project extension');
+      await page.waitForFunction(() => document.querySelector('.project-role-prompt .settings-desc')?.textContent.includes('global extension'));
+      assert.equal(await page.$eval('#project-role-prompts details textarea', el => el.readOnly && el.value === 'worker instructions\n\nglobal rules\n\nproject rules'), true, 'the preview is the delivered text, read only');
+      assert.equal(await page.$eval('#project-role-extension-worker-save', el => el.disabled), true, 'an unchanged card cannot be saved');
+      await page.evaluate(() => { delete window.__auto['GET /api/projects/p1/role-prompts']; });
+      await type('#project-role-extension-worker', 'Project rules, renewed.');
+      assert.equal(await page.$eval('#project-role-extension-worker-save', el => el.disabled), false);
+      await page.$eval('#project-role-extension-worker-save', el => el.click());
+      const read = await waitRequest(page, 'GET', '/api/projects/p1/role-prompts');
+      await answer(page, read, 200, renewed);
+      await page.waitForFunction(() => document.querySelector('#project-role-prompts .settings-desc[role=status]').textContent === 'Saved.');
+      assert.deepEqual((await calls(page, 'PUT')).at(-1), ['/api/projects/p1/role-prompts/worker', { body: 'Project rules, renewed.', rev: 2 }]);
+      assert.equal(await page.$eval('#project-role-extension-worker', el => el.value), 'Project rules, renewed.', 'the read after the save fills the box from the server');
+      // A refused save says why and keeps the draft.
+      const refused = rule(409, { message: 'Changed elsewhere' });
+      await page.evaluate(refused => { window.__auto['PUT /api/projects/p1/role-prompts/worker'] = refused; }, refused);
+      await type('#project-role-extension-worker', 'Conflicting edit.');
+      await page.$eval('#project-role-extension-worker-save', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#project-role-prompts .settings-desc[role=status]').textContent === 'Changed elsewhere');
+      assert.equal(await page.$eval('#project-role-extension-worker', el => el.value), 'Conflicting edit.');
+      await page.close();
+    }
+    // A viewer gets no extension editor and sends no read.
+    {
+      const page = await mount({ role: 'viewer' });
+      await ready(page);
+      await page.waitForFunction(() => !!document.querySelector('#project-role-prompts'));
+      assert.equal(await page.evaluate(() => [document.querySelectorAll('.project-role-prompt').length, window.__requests.some(request => request.path.includes('/role-prompts'))].join('|')), '0|false', 'a viewer reads no role prompts');
       await page.close();
     }
     // A pending save from another project cannot change this project's rows or status; custom roles use their stored labels.

@@ -1,7 +1,7 @@
 // Import-free: scripts/test-roles-model.cjs runs this module in a vm.
 
 export const CAPS = ['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer'];
-const TEXT = ['role_key', 'label', 'emoji', 'body', 'extends'];
+const TEXT = ['role_key', 'label', 'emoji', 'body', 'extends', 'body_extension'];
 
 export const roleOptionLabel = role => `${role.label} (${role.role_key})`;
 
@@ -16,12 +16,14 @@ export function formFromRole(role) {
 // What the form holds, to tell whether closing it would throw an edit away.
 export const formState = form => JSON.stringify([...TEXT.map(key => form[key]), form.cardinality, ...CAPS.map(key => form[key]), form.default_agents, form.pick_mode]);
 
-// The body an update or create sends.
-export function roleData(form, selected) {
+// The body an update or create sends. The extension rides along only for the owner (an admin's write must keep what is saved,
+// and the field is the owner's alone); a nil keeps it.
+export function roleData(form, selected, owner = false) {
   const data = { role_key: form.role_key.trim(), label: form.label.trim(), emoji: form.emoji.trim(), body: form.body, extends: form.extends, cardinality: form.cardinality };
   for (const key of CAPS) data[key] = form[key];
   data.default_agents = form.default_agents.map(item => ({ ...item }));
   data.pick_mode = form.pick_mode;
+  if (owner) data.body_extension = form.body_extension;
   if (selected) { data.id = selected.id; data.rev = selected.rev; }
   return data;
 }

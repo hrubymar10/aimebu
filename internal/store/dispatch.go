@@ -50,55 +50,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if model, err = tx.settleAgentModel(agentID, launcherID, model); err != nil {
 			return err
 		}
-		// The instructions are the role's resolved body: a role that extends another carries the parent's text first.
-		if roleBody, err = tx.effectiveRoleBody(roleID); err != nil {
-			return err
-		}
-		var flowKey, roleKey string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT p.team_flow_key,r.role_key FROM project p JOIN role r ON r.id=? WHERE p.id=?`, roleID, projectID).Scan(&flowKey, &roleKey); err != nil {
-			return err
-		}
-		if flow, ok := teamFlowTemplate(flowKey); ok {
-			if override, ok := flow.RoleTextOverrides[roleKey]; ok {
-				roleBody = override
-			}
-		}
-		if flowKey == "leader-dispatcher" && roleKey == "leader" {
-			var routingID, routingTitle string
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,title FROM room WHERE project_id=? AND team_flow_room_key='routing' AND lifecycle='open' ORDER BY created_at LIMIT 1`, projectID).Scan(&routingID, &routingTitle)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if err == nil {
-				roleBody += fmt.Sprintf("\n\nHand specifications over in %s (%s).", routingTitle, routingID)
-			}
-		}
-		staffingRole, err := tx.roleLineageContains(roleKey, "leader", "dispatcher")
-		if err != nil {
-			return err
-		}
-		if staffingRole {
-			if enabled, err := tx.projectReviewerEnabled(projectID); err != nil {
-				return err
-			} else if !enabled {
-				roleBody = withoutReviewerStaffing(roleBody)
-			}
-		}
-		if flowKey == "leader-dispatcher" && (roleKey == "worker" || roleKey == "reviewer" || strings.HasSuffix(roleKey, "-reviewer")) {
-			roleBody += "\n\nIn a task room, report to the agent who briefed you (normally the dispatcher) and @mention them; a handoff reaches the dispatcher. Do not @mention the leader there; the leader is not a member of task rooms in this flow."
-		}
-		if roleBody, err = tx.withInlinePlan(roleID, roleBody); err != nil {
-			return err
-		}
+		// The instructions are the delivered role body: the flow's override or the role's resolved body, the role's extensions,
+		// then the flow- and settings-driven additions.
 		var lead bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT cap_is_lead FROM role WHERE id=?`, roleID).Scan(&lead); err != nil {
+		if roleBody, lead, err = tx.deliveredRoleBody(roleID, projectID); err != nil {
 			return err
-		}
-		if lead {
-			roleBody += "\n\nWhen spawning a role, strongly prefer its configured default agent. Call spawn_agent with role_key and omit tool, variant, and model to select the next available default. If you need a different harness or model, provide a concrete reason. If no default is available, choose a listed harness and model yourself and tell the room why."
-			if !strings.Contains(roleBody, "Maintain the project handbook") {
-				roleBody += "\n\nMaintain the project handbook with handbook_get and handbook_update at decisions and handoffs. At close-out, update Current state and Open backlog and append a concise Timeline entry. Keep canonical details in repository docs. If the handbook exceeds about 1000 lines, compress its oldest Timeline entries."
-			}
 		}
 		overrides, err := tx.promptOverrides(projectID)
 		if err != nil {

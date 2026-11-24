@@ -15,7 +15,7 @@ const reviewer = { id: 'r1', rev: 3, role_key: 'reviewer', label: 'Reviewer', em
 const sec = { id: 'r2', rev: 1, role_key: 'sec', label: 'Security', emoji: '🛡️', body: '', resolved_body: 'Review it. Look at secrets.', extends: 'reviewer', cardinality: 'singleton', cap_is_lead: true, cap_can_spawn: true, cap_singleton_writer: true };
 
 // A new role starts blank, with many holders and the in-turn pick order; a stored one fills every field and copies its defaults.
-assert.deepEqual(plain(m.formFromRole(null)), { cardinality: 'multi', default_agents: [], pick_mode: 'in_turn', role_key: '', label: '', emoji: '', body: '', extends: '', cap_is_lead: false, cap_can_spawn: false, cap_singleton_writer: false });
+assert.deepEqual(plain(m.formFromRole(null)), { cardinality: 'multi', default_agents: [], pick_mode: 'in_turn', role_key: '', label: '', emoji: '', body: '', extends: '', body_extension: '', cap_is_lead: false, cap_can_spawn: false, cap_singleton_writer: false });
 const form = m.formFromRole(reviewer);
 assert.deepEqual(plain([form.role_key, form.label, form.cardinality, form.pick_mode, form.default_agents]), ['reviewer', 'Reviewer', 'multi', 'randomly', [{ launcher_id: 'l1', model: 'a' }]]);
 assert.notEqual(form.default_agents[0], reviewer.default_agents[0], 'the form owns its copy of the defaults');
@@ -23,11 +23,14 @@ assert.notEqual(form.default_agents[0], reviewer.default_agents[0], 'the form ow
 // An edit changes the state string; a copy of the same values does not.
 const base = m.formState(form);
 assert.equal(m.formState(m.formFromRole(reviewer)), base);
-for (const change of [{ label: 'Other' }, { cap_is_lead: true }, { cardinality: 'singleton' }, { pick_mode: 'in_turn' }, { default_agents: [] }]) assert.notEqual(m.formState({ ...form, ...change }), base, JSON.stringify(change));
+for (const change of [{ label: 'Other' }, { cap_is_lead: true }, { cardinality: 'singleton' }, { pick_mode: 'in_turn' }, { default_agents: [] }, { body_extension: 'extra rules' }]) assert.notEqual(m.formState({ ...form, ...change }), base, JSON.stringify(change));
 
-// A save sends trimmed text, the capabilities and defaults, and the id and revision of a stored role only.
+// A save sends trimmed text, the capabilities and defaults, and the id and revision of a stored role only. The extension rides
+// along only for the owner.
 assert.deepEqual(plain(m.roleData({ ...form, role_key: ' reviewer ', label: ' R ', emoji: ' x ' }, reviewer)), { role_key: 'reviewer', label: 'R', emoji: 'x', body: 'Review it.', extends: '', cardinality: 'multi', cap_is_lead: false, cap_can_spawn: false, cap_singleton_writer: false, default_agents: [{ launcher_id: 'l1', model: 'a' }], pick_mode: 'randomly', id: 'r1', rev: 3 });
 assert.equal('id' in plain(m.roleData(m.formFromRole(null), undefined)), false);
+assert.equal('body_extension' in plain(m.roleData({ ...form, body_extension: 'extra rules' }, reviewer, false)), false, 'a non-owner sends no extension field');
+assert.equal(plain(m.roleData({ ...form, body_extension: 'extra rules' }, reviewer, true)).body_extension, 'extra rules', 'the owner sends the extension');
 
 // What a role may extend: every other role by key, sorted; a parent that is gone is kept and named.
 assert.deepEqual(plain(m.extendsOptions([sec, reviewer], sec)), [['', 'None'], ['reviewer', '🔎 Reviewer (reviewer)']]);

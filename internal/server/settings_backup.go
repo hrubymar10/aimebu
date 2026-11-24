@@ -28,10 +28,13 @@ const (
 )
 
 type backupRole struct {
-	Key           string                     `json:"role_key"`
-	Label         string                     `json:"label"`
-	Emoji         string                     `json:"emoji"`
-	Body          string                     `json:"body"`
+	Key   string `json:"role_key"`
+	Label string `json:"label"`
+	Emoji string `json:"emoji"`
+	Body  string `json:"body"`
+	// BodyExtension is the role's global prompt extension, present only when one is saved; an older backup without the field
+	// (a nil pointer) leaves what the instance has saved.
+	BodyExtension *string                    `json:"body_extension,omitempty"`
 	Cardinality   string                     `json:"cardinality"`
 	Lead          bool                       `json:"cap_is_lead"`
 	CanSpawn      bool                       `json:"cap_can_spawn"`
@@ -123,7 +126,7 @@ func (s *Server) exportSettingsBackup(ctx context.Context, user string) (setting
 		return b, err
 	}
 	for _, role := range roles {
-		b.Roles = append(b.Roles, backupRole{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, Cardinality: role.Cardinality,
+		b.Roles = append(b.Roles, backupRole{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, BodyExtension: role.BodyExtension, Cardinality: role.Cardinality,
 			Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer,
 			DefaultAgents: append([]store.SpawnDefaultChoice{}, role.DefaultAgents...), PickMode: role.PickMode})
 	}
@@ -174,6 +177,14 @@ func hashOf(value any) string {
 	data, _ := json.Marshal(value)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:8])
+}
+
+// sameExtension compares the saved global extension with the one a backup lists: both absent, or the same text.
+func sameExtension(saved, listed *string) bool {
+	if saved == nil || listed == nil {
+		return saved == listed
+	}
+	return *saved == *listed
 }
 
 // planSettingsBackup compares b with the current state and builds both the preview and the steps that apply it.
@@ -393,11 +404,16 @@ func (s *Server) planSettingsBackup(ctx context.Context, user string, b settings
 				continue
 			}
 			seen[role.Key] = true
+			if role.BodyExtension != nil && len(*role.BodyExtension) > store.MaxRoleBodyExtensionLen {
+				sections["roles"].Invalid = append(sections["roles"].Invalid, backupIssue{Key: role.Key + ".body_extension", Reason: "the extension is out of range"})
+				continue
+			}
 			existing, ok := byKey[role.Key]
 			same := ok && existing.Label == role.Label && existing.Emoji == role.Emoji && existing.Body == role.Body && existing.Cardinality == role.Cardinality &&
 				existing.Lead == role.Lead && existing.CanSpawn == role.CanSpawn && existing.Writer == role.Writer &&
 				(role.DefaultAgents == nil || slices.Equal(existing.DefaultAgents, role.DefaultAgents)) &&
-				(role.PickMode == "" || existing.PickMode == role.PickMode)
+				(role.PickMode == "" || existing.PickMode == role.PickMode) &&
+				sameExtension(existing.BodyExtension, role.BodyExtension)
 			switch {
 			case !ok:
 				sections["roles"].New++
@@ -434,7 +450,7 @@ func (s *Server) planSettingsBackup(ctx context.Context, user string, b settings
 				var failed []backupFailure
 				applied := 0
 				for _, role := range steps {
-					definition := store.RoleDefinition{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, Cardinality: role.Cardinality,
+					definition := store.RoleDefinition{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, BodyExtension: role.BodyExtension, Cardinality: role.Cardinality,
 						Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer,
 						DefaultAgents: role.DefaultAgents, PickMode: role.PickMode}
 					if existing, ok := byKey[role.Key]; ok {

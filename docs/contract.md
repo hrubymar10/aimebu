@@ -475,6 +475,22 @@ Roles, agents
 - **project_role_spawn_default**(project_id, role_id, items_json,
   pick_mode[in_turn|randomly]) — a row replaces the role's global list and mode
   for one project; no row inherits both.
+- **role_body_extension**(role_id, project_id?, body, rev, updated_at) — a
+  role's prompt extension: text added after the delivered instructions without
+  replacing them, so an update to a built-in default keeps flowing while the
+  instance or a project adds its own rules. Unique per (scope, role_id); the
+  global scope (`project_id` NULL) is the instance owner's alone, a project's
+  belongs to its owner or operators; at most 16384 bytes, and an empty extension
+  is not stored (saving one clears the row). The delivered instructions are the
+  base — the team flow's role-text override where one exists, else the role's
+  resolved body — then the role's global extension, then the project's, each
+  skipped when empty and joined by one blank line; the extension of the role an
+  agent holds is the one that appends, so a parent's does not flow to roles that
+  extend it. An extension never counts as an edit: the role-body migrations keep
+  treating only `role.body` as edited or unedited. Resetting a built-in role
+  leaves its extension; deleting a role removes its extensions. Roles have no
+  change event, so an extension change shows in the row's revision and in the
+  next delivery.
 - **role_spawn_cursor**(project_id, role_id, next_position) — the next in-turn
   position, advanced in the successful spawn transaction after skipped
   unavailable choices. A random pick does not change the cursor. A competing

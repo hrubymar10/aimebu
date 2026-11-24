@@ -43,6 +43,12 @@ type RoleDefinition struct {
 	// with the role receives (see role_extends.go).
 	Extends      string `json:"extends"`
 	ResolvedBody string `json:"resolved_body,omitempty"`
+	// BodyExtension is the role's global prompt extension. On the list it is set only when one is saved; on a write a nil
+	// pointer keeps what is saved and a set pointer replaces or clears it (an owner-only field, see role_body_extension.go).
+	BodyExtension *string `json:"body_extension,omitempty"`
+	// EffectiveBody, set only when listing, is the delivered text at the global scope: the resolved body with the global
+	// extension joined, skipping empty parts. A project's flow override and extension add to what its agents receive.
+	EffectiveBody string `json:"effective_body"`
 }
 
 func (s *Store) ListRoles(ctx context.Context) ([]RoleDefinition, error) {
@@ -53,8 +59,21 @@ func (s *Store) ListRoles(ctx context.Context) ([]RoleDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
+	extensions, err := globalRoleBodyExtensions(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
 	for i := range roles {
 		roles[i].ResolvedBody = resolveRoleBody(roles[i], roles)
+		if ext, ok := extensions[roles[i].ID]; ok {
+			copy := ext.Body
+			roles[i].BodyExtension = &copy
+		}
+		var globalExt string
+		if roles[i].BodyExtension != nil {
+			globalExt = *roles[i].BodyExtension
+		}
+		roles[i].EffectiveBody = joinBodyParts(roles[i].ResolvedBody, globalExt)
 	}
 	return roles, nil
 }
@@ -104,6 +123,9 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 				}
 				if extended {
 					return ErrRoleExtended
+				}
+				if _, err := tx.Exec(`DELETE FROM role_body_extension WHERE role_id=?`, old.ID); err != nil {
+					return err
 				}
 				_, err = tx.Exec(`UPDATE role SET deleted_at=?,key='deleted:'||id,rev=rev+1 WHERE id=?`, timestamp(), old.ID)
 				return err
@@ -217,6 +239,20 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 			}
 		}
 		result = r
+		// The extension rides the same guarded write: replacing or clearing it needs the instance owner, and a caller that
+		// leaves the field out keeps what is saved.
+		if r.BodyExtension != nil {
+			level, err := tx.privilege(actorID)
+			if err != nil {
+				return err
+			}
+			if level < privOwner {
+				return ErrForbidden
+			}
+			if _, err := tx.saveRoleBodyExtension(r.ID, "", *r.BodyExtension, 0, true); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return result, err

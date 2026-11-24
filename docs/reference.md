@@ -685,12 +685,21 @@ the models of each harness in Settings → Agents → Harnesses & models; exactl
 which is preselected; a manually removed model falls back to it, while an agent keeps a detected model that disappears from the harness); unavailable
 tools show the reason and cannot be selected. Settings → Agents → Roles edits the
 global role names, emoji, instructions, cardinality, capabilities, and ordered
-default harness/model choices. Each role picks defaults in turn (with a durable
+default harness/model choices. Each role also has an **Extension** field (the
+instance owner's alone): text added after the instructions without replacing
+them, so an update to a built-in default keeps flowing, and a **Show final
+prompt** preview of what an agent of the role is told, extension included, as
+last saved. Each role picks defaults in turn (with a durable
 cursor per project and role) or randomly. Project settings can inherit or
 override each role's list and mode; an empty list leaves the choice manual.
 Unavailable machines, unmapped project folders, launchers, and models are skipped. The Spawn dialog
 prefills the next available choice and remains editable. Roles are global
 only, with no per-project roles.
+Project settings → Agents also has **Role prompt extensions** (owner or
+operator): an extension textarea per role, added after the role's instructions
+without replacing them, and the same **Show final prompt** preview, composed by
+the server exactly as dispatch delivers it — a team flow's role text override
+replaces the base, and the global and project extensions still append.
 Each role is a card; Edit opens it in the editor below, and Cancel, Esc or the
 card's close button shut the editor without saving (asking first when it holds
 changes).

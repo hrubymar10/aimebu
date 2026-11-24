@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => {
 });
 
 const role = (key, extra = {}) => ({ id: `role_${key}`, rev: 1, role_key: key, label: key[0].toUpperCase() + key.slice(1), emoji: '', body: `${key} instructions`, extends: '', cardinality: 'multi', builtin: false, default_agents: [], pick_mode: 'in_turn', ...extra });
-const ROLES = [role('leader', { builtin: true, cardinality: 'singleton', cap_is_lead: true, emoji: '👑' }), role('reviewer', { builtin: true }), role('sec', { extends: 'reviewer', body: 'Additional focus.', resolved_body: 'reviewer instructions\n\nAdditional focus.', builtin: true }), role('worker', { builtin: true, rev: 4, default_agents: [{ launcher_id: 'l1', model: 'a' }] }), role('analyst')];
+const ROLES = [role('leader', { builtin: true, cardinality: 'singleton', cap_is_lead: true, emoji: '👑' }), role('reviewer', { builtin: true }), role('sec', { extends: 'reviewer', body: 'Additional focus.', resolved_body: 'reviewer instructions\n\nAdditional focus.', builtin: true }), role('worker', { builtin: true, rev: 4, default_agents: [{ launcher_id: 'l1', model: 'a' }], body_extension: 'instance rules', effective_body: 'worker instructions\n\ninstance rules' }), role('analyst')];
 const READ = 'GET /api/roles';
 const AUTO = {
   [READ]: ROLES, 'GET /api/machines': { machines: [{ id: 'm1', name: 'Host' }] },
@@ -147,6 +147,28 @@ async function main() {
       assert.deepEqual(await shown(page).then(({ open, label, error }) => ({ open, label, error })), { open: true, label: 'Changed', error: 'This role changed elsewhere' });
       assert.equal(await page.$eval('#role-editor [type=submit]', el => el.disabled), false);
       assert.equal(await page.evaluate(() => window.__events.length), 0, 'a refused save tells no one');
+      await page.close();
+    }
+    // The role's extension and the final-prompt preview: a non-owner reads, the owner edits and sends the field with the save.
+    {
+      const page = await mount();
+      await click(page, '#roles-cards [data-role-key=worker] .role-card-edit');
+      assert.equal(await page.$eval('#role-extension', el => el.readOnly && el.value === 'instance rules'), true, 'a non-owner reads the extension');
+      assert.equal(await page.$eval('#role-effective', el => !el.closest('details').open && el.value === 'worker instructions\n\ninstance rules'), true, 'the preview hides until asked and shows the saved text');
+      await page.close();
+    }
+    {
+      const page = await mount();
+      await page.evaluate(async () => { (await import('/js/api.js')).rights.owner = true; });
+      await click(page, '#roles-cards [data-role-key=worker] .role-card-edit');
+      assert.equal(await page.$eval('#role-extension', el => !el.readOnly), true, 'the owner edits the extension');
+      await type(page, '#role-extension', 'Instance rules, renewed.');
+      await page.evaluate(() => { delete window.__auto['GET /api/roles']; document.querySelector('#role-editor').requestSubmit(); });
+      const put = await pending(page, 'PUT', '/api/roles/role_worker');
+      assert.equal(await page.evaluate(index => window.__requests[index].body.body_extension, put), 'Instance rules, renewed.', 'the owner\'s save sends the extension');
+      await answer(page, put, 200, { id: 'role_worker' });
+      const read = await pending(page, 'GET', '/api/roles');
+      await answer(page, read, 200, ROLES);
       await page.close();
     }
     // Closing with edits asks first; Keep leaves the form, Discard closes it and gives focus back to the card; Escape only closes the editor.

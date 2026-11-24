@@ -530,3 +530,75 @@ func TestSettingsBackupDigestCoversTheValuesBeingReplaced(t *testing.T) {
 		t.Fatalf("an edit of the value being replaced is still a stale preview: %d", resp.StatusCode)
 	}
 }
+
+func TestSettingsBackupRoundTripsRoleBodyExtension(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	roles := f.listedRoles(t)
+	worker := roles["worker"]
+	extension := "instance rules"
+	worker.BodyExtension = &extension
+	if resp := f.request(http.MethodPut, "/api/roles/"+worker.ID, worker, true); resp.StatusCode != http.StatusOK {
+		t.Fatalf("save the extension: %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	backup := exportBackup(t, f)
+	var saved map[string]any
+	for _, value := range backup["roles"].([]any) {
+		item := value.(map[string]any)
+		if item["role_key"] == "worker" {
+			saved = item
+			break
+		}
+	}
+	if saved == nil || saved["body_extension"] != extension {
+		t.Fatalf("backup omitted the extension: %+v", saved)
+	}
+	// The owner clears the extension; the backup restores it.
+	empty := ""
+	listed := f.listedRoles(t)["worker"]
+	listed.BodyExtension = &empty
+	if resp := f.request(http.MethodPut, "/api/roles/"+listed.ID, listed, true); resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear the extension: %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	if got := f.listedRoles(t)["worker"].BodyExtension; got != nil {
+		t.Fatalf("the extension survived the clear: %v", *got)
+	}
+	status, preview := previewBackup(t, f, backup)
+	if status != http.StatusOK || sectionOf(preview, "roles").Overwrite != 1 {
+		t.Fatalf("preview: %d %+v", status, preview)
+	}
+	resp := f.request("POST", "/api/settings-backup/apply", map[string]any{"backup": backup, "digest": preview.Digest}, true)
+	var result backupResult
+	decodeBackupBody(t, resp, &result)
+	if resp.StatusCode != http.StatusOK || !result.Complete {
+		t.Fatalf("apply: %d %+v", resp.StatusCode, result)
+	}
+	if got := f.listedRoles(t)["worker"].BodyExtension; got == nil || *got != extension {
+		t.Fatalf("the apply did not restore the extension: %v", got)
+	}
+	// An older backup without the field leaves the saved extension alone.
+	for _, value := range backup["roles"].([]any) {
+		item := value.(map[string]any)
+		delete(item, "body_extension")
+		if item["role_key"] == "worker" {
+			item["label"] = "Workers renamed"
+		}
+	}
+	status, preview = previewBackup(t, f, backup)
+	if status != http.StatusOK || sectionOf(preview, "roles").Overwrite != 1 {
+		t.Fatalf("old backup preview: %d %+v", status, preview)
+	}
+	resp = f.request("POST", "/api/settings-backup/apply", map[string]any{"backup": backup, "digest": preview.Digest}, true)
+	decodeBackupBody(t, resp, &result)
+	if resp.StatusCode != http.StatusOK || !result.Complete {
+		t.Fatalf("old backup apply: %d %+v", resp.StatusCode, result)
+	}
+	renamed := f.listedRoles(t)["worker"]
+	if renamed.Label != "Workers renamed" || renamed.BodyExtension == nil || *renamed.BodyExtension != extension {
+		t.Fatalf("an old backup disturbed the extension: %+v", renamed.BodyExtension)
+	}
+}
