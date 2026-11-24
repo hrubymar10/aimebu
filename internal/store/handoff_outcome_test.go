@@ -348,7 +348,7 @@ func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE turn SET handoff_outcome_required=2 WHERE id=?`, f.turn.ID); err == nil {
 		t.Fatal("the column took 2")
 	}
-	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `DELETE FROM schema_version WHERE version=132`} {
+	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `ALTER TABLE agent DROP COLUMN approved_by`, `DELETE FROM schema_version WHERE version>=132`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +360,7 @@ func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 		t.Fatal("an upgraded turn requires an outcome")
 	}
 	var version int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 132 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 133 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

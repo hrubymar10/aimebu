@@ -152,7 +152,22 @@ Projects, rooms, people
   existing membership, quiet or not, is left as it is. No agent can close the home room or a flow's
   `general`, `routing` or `advice` room (409 `home_room` / `flow_room`). A
   `spawn_agent` with tool and model but no variant is refused with "add variant
-  (e.g. docker)". In flows A and B the leader belongs
+  (e.g. docker)". An agent-initiated spawn (`POST /api/agent/agents`, the
+  `spawn_agent` tool) may not pick a harness outside the role's configured
+  `default_agents` pool: a request that sets `tool`, `variant` or `model` to a
+  choice no pool entry matches — every field the request sets must match one
+  entry, an empty field means the pool decides that part — is refused with 409
+  `model_not_approved` unless it carries `approved_by`: the number (`#N`) or id
+  of a message a person wrote in a room of the same project that approved that
+  exact choice. An agent's message, an unknown message, or a message of another
+  project is refused with the reason named. The validated message id is
+  recorded on the agent (`agent.approved_by`, migration 133), shown on its
+  card, and carried by the `agent_spawn_requested` event. A choice that is in
+  the pool is always allowed, with or without `approved_by`; a role with no
+  configured pool has nothing to be outside of and keeps the existing
+  unavailable-default rule (an explicit choice then needs `reason`). A
+  person's own spawn (the room route) is never gated and records no approval.
+  In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
   `spawn_agent` takes an optional `join_parent: true`, which also joins the new
@@ -477,7 +492,7 @@ Roles, agents
   adds one sentence to a lead's delivered instructions asking it to attach the
   full plan as `appendix_pages` with a visual plan.
 - **agent**(id, slug, project_id, role_id, recovery_block bool, tool, variant,
-  launcher_id?, model, provider,
+  launcher_id?, model, provider, approved_by? (person's approving message, migration 133),
   machine_id, checkout_id, home_room_id?, key_hash, revoked_at?,
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
@@ -493,7 +508,11 @@ Roles, agents
   Claude agent and cleared when a switch moves it to another checkout
   (a removed agent — `DELETE /api/agents/{id}` — is revoked; its `slug`, unique within
   the project, is rewritten to a tombstone so the name is free, and `removed_slug`
-  keeps the name its messages are shown under)
+  keeps the name its messages are shown under).
+  `approved_by` (migration 133) is the message of a person that approved this
+  agent's exact harness and model choice outside its role's default pool, set
+  only on an agent-initiated spawn that carried it (a person's own spawn and a
+  pool choice record none)
 - **session**(id, agent_id, generation, native_session_id?,
   native_session_started_at?, start_mode[native_resume|fresh_with_history],
   started_at, ended_at?)

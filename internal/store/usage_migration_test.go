@@ -23,6 +23,7 @@ func rewindUsageTotalMigration(t *testing.T, s *Store) {
 		`ALTER TABLE provider_limit DROP COLUMN login`,
 		`ALTER TABLE message DROP COLUMN outcome`,
 		`ALTER TABLE turn DROP COLUMN handoff_outcome_required`,
+		`ALTER TABLE agent DROP COLUMN approved_by`,
 		`DELETE FROM schema_version WHERE version>=124`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {

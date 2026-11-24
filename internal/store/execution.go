@@ -24,6 +24,10 @@ type Agent struct {
 	CheckoutID string
 	KeyHash    string
 	CreatedBy  string
+	// ApprovedBy is the message of a person that approved this agent's exact
+	// harness and model choice outside its role's default pool (an
+	// agent-initiated spawn); empty for every other spawn.
+	ApprovedBy string
 }
 
 func (s *Store) CreateAgent(ctx context.Context, agent Agent) (Agent, error) {
@@ -52,11 +56,11 @@ func (tx *Tx) CreateAgent(agent Agent) (Agent, error) {
 	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO agent
 		(id, slug, project_id, role_id, tool, variant, launcher_id, model, provider,
-		 machine_id, checkout_id, key_hash, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.Slug,
+		 machine_id, checkout_id, key_hash, created_by, created_at, approved_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.Slug,
 		agent.ProjectID, agent.RoleID, agent.Tool, agent.Variant, nullableString(agent.LauncherID), agent.Model,
 		agent.Provider, agent.MachineID, agent.CheckoutID, agent.KeyHash,
-		agent.CreatedBy, timestamp())
+		agent.CreatedBy, timestamp(), nullableString(agent.ApprovedBy))
 	if err != nil {
 		return Agent{}, err
 	}

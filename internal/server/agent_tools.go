@@ -272,6 +272,9 @@ type agentSpawnRequest struct {
 	BaseRef   string `json:"base_ref"`
 	// JoinParent is spawn_agent's join_parent: the store allows it to a lead or the flow's dispatcher only (store.SpawnInput.JoinParent).
 	JoinParent bool `json:"join_parent"`
+	// ApprovedBy names the message of a person that approved this exact harness and model choice outside the role's default pool;
+	// without it such a choice is refused (409 model_not_approved).
+	ApprovedBy string `json:"approved_by"`
 }
 
 // agentStopRequest is the body of POST /api/agent/agents/{id}/stop, the stop_agent tool.
@@ -298,8 +301,30 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusForbidden, "forbidden", "room belongs to another project")
 		return
 	}
+	// The model-approval gate: a harness choice outside the role's default pool needs a person's message as approved_by. A person's own
+	// spawn (the other route into spawnAgentRequest) is never gated and records no approval.
+	approvedBy := ""
+	if req.Tool != "" || req.Variant != "" || req.Model != "" || req.ApprovedBy != "" {
+		inPool, err := s.spawnChoiceInPool(r.Context(), room.ProjectID, req.RoleKey, req)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if !inPool && req.ApprovedBy == "" {
+			apiError(w, http.StatusConflict, "model_not_approved", "the harness or model is not in the role's default pool; spawn from the pool, or ask a person to approve this exact choice and cite their message as approved_by")
+			return
+		}
+		if req.ApprovedBy != "" {
+			id, err := s.validatedApprovalMessage(r.Context(), room.ProjectID, req.ApprovedBy)
+			if err != nil {
+				apiError(w, http.StatusConflict, "model_not_approved", err.Error())
+				return
+			}
+			approvedBy = id
+		}
+	}
 	s.spawnAgentRequest(w, r, room, spawnRequest{RoleKey: req.RoleKey, Tool: req.Tool,
-		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason, JoinParent: req.JoinParent}, "agent", caller.ID)
+		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason, JoinParent: req.JoinParent, ApprovedBy: approvedBy}, "agent", caller.ID)
 }
 
 func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {

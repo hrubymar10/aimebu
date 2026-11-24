@@ -2101,6 +2101,10 @@ ALTER TABLE message ADD COLUMN outcome TEXT CHECK (outcome IS NULL OR outcome IN
 -- connection that delivers it, which after a supervisor swap may be a newer one replaying an answer the older one journaled. 0 is every
 -- turn dispatched before this.
 ALTER TABLE turn ADD COLUMN handoff_outcome_required INTEGER NOT NULL DEFAULT 0 CHECK (handoff_outcome_required IN (0,1));
+`}, {133, `
+-- The message of a person that approved an agent-initiated spawn's exact harness and model choice outside the role's default pool
+-- (model_not_approved otherwise). NULL is every agent spawned by a person, from a pool choice, or before this.
+ALTER TABLE agent ADD COLUMN approved_by TEXT;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

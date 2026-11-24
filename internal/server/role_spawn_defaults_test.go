@@ -404,16 +404,29 @@ func TestLeadSpawnDeviationRequiresReason(t *testing.T) {
 	}
 	_, key := f.createToolAgent(t, "role_leader_default")
 	manual := map[string]string{"room_id": f.room.ID, "role_key": "reviewer", "tool": "fake", "variant": "test", "model": "test"}
+	// A choice outside the role's pool is refused with model_not_approved
+	// first: a reason alone no longer gets an agent past the pool.
 	resp := f.toolPost(t, "/api/agent/agents", key, "deviation-no-reason", manual)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("missing reason: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("outside the pool: %d", resp.StatusCode)
 	}
 	manual["reason"] = "A small isolated review is enough"
+	resp = f.toolPost(t, "/api/agent/agents", key, "deviation-reason-only", manual)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("reason alone outside the pool: %d", resp.StatusCode)
+	}
+	// A person's message approving the exact choice lets the spawn through.
+	approval, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_owner", Body: "fake is fine for this review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual["approved_by"] = approval.ID
 	resp = f.toolPost(t, "/api/agent/agents", key, "deviation-with-reason", manual)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("explained deviation: %d", resp.StatusCode)
+		t.Fatalf("approved deviation: %d", resp.StatusCode)
 	}
 	messages, err := f.db.ListMessagesLatest(t.Context(), f.room.ID, 20)
 	if err != nil {

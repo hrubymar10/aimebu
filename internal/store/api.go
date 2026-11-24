@@ -328,6 +328,18 @@ func (s *Store) MessageByID(ctx context.Context, id string) (Message, error) {
 	return m, err
 }
 
+// MessageAuthorProject says who wrote a message and in which project's room it
+// sits. The spawn route judges an approved_by reference with it: the message
+// must be one a person wrote in a room of the spawning project. sql.ErrNoRows
+// when no message carries the id.
+func (s *Store) MessageAuthorProject(ctx context.Context, id string) (authorKind, projectID string, err error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return "", "", err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT m.author_kind,COALESCE(r.project_id,'') FROM message m JOIN room r ON r.id=m.room_id WHERE m.id=?`, id).Scan(&authorKind, &projectID)
+	return authorKind, projectID, err
+}
+
 func (tx *Tx) SetReaction(messageID, kind, memberID, emoji string, active bool) error {
 	var projectID, roomID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,r.id FROM message m JOIN room r ON r.id=m.room_id WHERE m.id=?`, messageID).Scan(&projectID, &roomID); err != nil {

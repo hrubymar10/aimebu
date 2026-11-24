@@ -448,12 +448,12 @@ func (tx *Tx) agentCardByID(id string) (AgentCard, error) {
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,a.model,a.provider,
 		a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,m.room_id,
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),'')
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.approved_by,'')
 		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id
 			AND m.member_kind='agent' AND m.left_at IS NULL WHERE a.id=? ORDER BY m.joined_at LIMIT 1`, id).
 		Scan(&card.ID, &card.Slug, &card.ProjectID, &card.RoleKey, &card.RoleEmoji, &card.RoleDeleted, &card.RoleUpdated, &card.Tool, &card.Variant,
 			&card.Model, &card.Provider, &card.MachineID, &card.Desired, &card.DesiredRev,
-			&card.Observed, &card.Generation, &card.RecoveryBlock, &card.RoomID, &card.BoundaryPending)
+			&card.Observed, &card.Generation, &card.RecoveryBlock, &card.RoomID, &card.BoundaryPending, &card.ApprovedBy)
 	if err == nil {
 		var item AgentSwitch
 		switchErr := tx.tx.QueryRowContext(tx.ctx, `SELECT state,tool,variant,model,COALESCE(machine_id,''),error FROM agent_switch WHERE agent_id=?`, id).

@@ -28,7 +28,7 @@ func rewindWorkerRecoveryMigration(t *testing.T, s *Store) {
 // deleting version rows.
 func dropColumnsSince130(t *testing.T, s *Store) {
 	t.Helper()
-	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN login`, `ALTER TABLE provider_limit DROP COLUMN login`, `ALTER TABLE message DROP COLUMN outcome`, `ALTER TABLE turn DROP COLUMN handoff_outcome_required`} {
+	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN login`, `ALTER TABLE provider_limit DROP COLUMN login`, `ALTER TABLE message DROP COLUMN outcome`, `ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `ALTER TABLE agent DROP COLUMN approved_by`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}

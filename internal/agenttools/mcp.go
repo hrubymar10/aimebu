@@ -123,7 +123,7 @@ var catalog = []tool{
 		"attachment_id": map[string]string{"type": "string"},
 		"save":          map[string]string{"type": "boolean", "description": "Also save an image or small text to a file; other files are always saved"},
 	}, "required": []string{"attachment_id"}}},
-	{"spawn_agent", "Active lead only. Spawn one non-lead agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"spawn_agent", "Active lead only. Spawn one non-lead agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. A choice outside the role's default pool also needs approved_by: the number or id of the person's message that approved this exact choice. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "role_key": map[string]string{"type": "string"},
 		"tool": map[string]string{"type": "string"}, "variant": map[string]string{"type": "string"},
 		"model": map[string]string{"type": "string"}, "provider": map[string]string{"type": "string"},
@@ -132,6 +132,7 @@ var catalog = []tool{
 		"worktree":    map[string]string{"type": "boolean", "description": "Create or use this task room's Git worktree"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base ref for a newly created worktree"},
 		"join_parent": map[string]string{"type": "boolean", "description": "Also join the new agent, quietly, to the room's parent room (for example general) so it can post there; the team flow's join rules apply and a refusal fails the spawn (409 join_parent_refused). Lead or dispatcher only"},
+		"approved_by": map[string]string{"type": "string", "description": "The number or id of the person's message that approved this exact choice of tool, variant or model outside the role's default pool; without it such a choice is refused (409 model_not_approved)"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this spawn request"},
 	}, "required": []string{"room_id", "request_key", "role_key"}}},
 	{"stop_agent", "Active lead, or the flow's coordinator (the dispatcher). Stop a non-lead agent in your project that you manage (one the flow lets you manage, one you spawned, or one in a room you created), or yourself, using the current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
@@ -518,7 +519,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		if role == "" {
 			return toolResult("role_key required", true)
 		}
-		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "reason": getString("reason"), "worktree": getBool("worktree"), "base_ref": getString("base_ref"), "join_parent": getBool("join_parent")}
+		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "reason": getString("reason"), "worktree": getBool("worktree"), "base_ref": getString("base_ref"), "join_parent": getBool("join_parent"), "approved_by": getString("approved_by")}
 	case "stop_agent":
 		agentID := getString("agent_id")
 		if !agentIDPattern.MatchString(agentID) {

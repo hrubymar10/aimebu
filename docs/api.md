@@ -274,7 +274,7 @@ and reconnects the event stream from its last seen `seq`.
 | PUT/DELETE | `/api/agent/memory/{id}` | agent key; scope query as above; PUT `{body,rev}` or DELETE `?rev=…` | revised or removed record; stale revision returns `current` |
 | GET | `/api/agent/recall` | agent key; `query`, optional `limit` (1–10) | ranked matching project facts, joined task notes, and joined room messages |
 | GET | `/api/agent/macros` | agent key | read-only shared composer macro map (managed agent `list_macros`) |
-| POST | `/api/agent/agents` | agent key; `{room_id,role_key,tool?,variant?,model?,provider?,machine_id?,reason?,worktree?,base_ref?}` and `Idempotency-Key` | lead-only individual agent spawn; omitted harness/model uses the next available role default, while an explicit deviation from an available default needs `reason` (`400 reason_required`) and appears in the room notice; a singleton role already held in the project answers `409 role_occupied`, and the agent or spawn rate limit `429 spawn_limit`. The response includes `default_used` and `default_selection` when applicable |
+| POST | `/api/agent/agents` | agent key; `{room_id,role_key,tool?,variant?,model?,provider?,machine_id?,reason?,worktree?,base_ref?,approved_by?}` and `Idempotency-Key` | lead-only individual agent spawn; omitted harness/model uses the next available role default, while an explicit deviation from an available default needs `reason` (`400 reason_required`) and appears in the room notice; a harness choice (any of `tool`, `variant`, `model`) outside the role's configured `default_agents` pool is refused with 409 `model_not_approved` unless `approved_by` names the message of a person in this project that approved that exact choice (its number `#N` or id; an agent's message, an unknown message, or a message of another project is refused with the reason named, and a role with no configured pool has nothing to be outside of and keeps the `reason` rule); an in-pool choice is always allowed, with or without `approved_by`; the validated message id is recorded on the agent and returned on its card as `approved_by`; a person's own spawn (the room route) is never gated; a singleton role already held in the project answers `409 role_occupied`, and the agent or spawn rate limit `429 spawn_limit`. The response includes `default_used` and `default_selection` when applicable |
 | POST | `/api/agent/agents/{id}/stop` | agent key; `{rev}` and `Idempotency-Key` | lead-only stop in the caller's project; system room notice and agent actor audit |
 
 When a spawn specifies `machine_id`, role defaults on other machines are not
@@ -775,7 +775,10 @@ A folder-boundary approval uses the same decision endpoint with
 `choice:"approve"|"deny"`. Only the project owner may decide it. The item
 includes `boundary_pending`, `boundary_machine`, `boundary_path`, and
 `boundary_requester`; agent cards carry `resumed_from_legacy_id` when the agent continues an imported v1 agent (the web shows that agent's presence on the v1 messages still under the v1 author), and `boundary_pending` until the request
-is resolved and `boundary_grants` lists prior machine/path approvals. The
+is resolved and `boundary_grants` lists prior machine/path approvals. Agent
+cards also carry `approved_by` when the agent was started by another agent on
+a harness or model outside its role's pool that a person's message approved
+(the `agent_spawn_requested` event carries it too). The
 project machine picker reports `project_allowed`. The approval question says
 that approval admits the machine for the whole project. Owners can see a
 boundary approval opened from a private DM without joining that DM. Remapping

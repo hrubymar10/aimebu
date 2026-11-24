@@ -34,6 +34,7 @@ func TestMigration110BackfillsOnlyKnownMessageGeneration(t *testing.T) {
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
 		`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`,
 		`ALTER TABLE settings_project DROP COLUMN reviewer_agents`,
+		`ALTER TABLE agent DROP COLUMN approved_by`,
 		`DELETE FROM schema_version WHERE version>=110`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -88,6 +89,7 @@ func TestMigration110LeavesMessagesBeforeModelSettlementUnknown(t *testing.T) {
 		`ALTER TABLE message DROP COLUMN switch_handoff_json`,
 		`ALTER TABLE team_flow_migration DROP COLUMN drain_errors`,
 		`ALTER TABLE settings_project DROP COLUMN reviewer_agents`,
+		`ALTER TABLE agent DROP COLUMN approved_by`,
 		`DELETE FROM schema_version WHERE version>=110`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {

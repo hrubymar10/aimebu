@@ -192,6 +192,7 @@ func TestReplyMigrationDerivesConversations(t *testing.T) {
 		{`ALTER TABLE boundary_pending DROP COLUMN start_fresh`},
 		{`ALTER TABLE harness_model DROP COLUMN available`},
 		{`ALTER TABLE harness_model DROP COLUMN source`},
+		{`ALTER TABLE agent DROP COLUMN approved_by`},
 		{`DELETE FROM schema_version WHERE version>=98`},
 	} {
 		if _, err := s.db.Exec(statement[0].(string), statement[1:]...); err != nil {

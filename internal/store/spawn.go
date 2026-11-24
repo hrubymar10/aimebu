@@ -51,6 +51,9 @@ type AgentCard struct {
 	// WokenBy is why the turn in progress started, when that was an agent's reply to this one ("reply"); the card tags it so a person can
 	// see an exchange between agents as it happens. Empty when idle or for any other reason.
 	WokenBy string `json:"woken_by,omitempty"`
+	// ApprovedBy is the message of a person that approved this agent's exact harness and model choice outside its role's default pool;
+	// empty for every other spawn.
+	ApprovedBy string `json:"approved_by,omitempty"`
 	// FinishedUnseen is set on a room's agent list for the asking person while this agent is not in a turn and has written a message for them
 	// (see messageForPersonSQL) after their read cursor in the room. It clears when that person's cursor reaches the message.
 	FinishedUnseen bool `json:"finished_unseen,omitempty"`
@@ -118,6 +121,9 @@ type SpawnInput struct {
 	// JoinParent also joins the new agent, quietly (auto), to its room's parent room, so it can post there. Only an agent lead or the flow's
 	// dispatcher may ask (a person with spawn rights may too); the flow's join rules decide the join, and a refusal fails the spawn.
 	JoinParent bool
+	// ApprovedBy is the message of a person that approved this exact harness and model choice outside the role's default pool. Only an
+	// agent-initiated spawn carries one (the route validates it); a person's own spawn needs no approval and records none.
+	ApprovedBy string
 }
 
 // ErrJoinParentRefused is a spawn with JoinParent whose parent join cannot happen: the room has no parent, the parent is the home room or is
@@ -322,7 +328,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if provider == "" {
 		provider = in.Tool
 	}
-	agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: projectID, RoleID: roleID, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, CheckoutID: checkoutID, KeyHash: in.KeyHash, CreatedBy: in.ActorID})
+	agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: projectID, RoleID: roleID, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, CheckoutID: checkoutID, KeyHash: in.KeyHash, CreatedBy: in.ActorID, ApprovedBy: in.ApprovedBy})
 	if err != nil {
 		return AgentCard{}, err
 	}
@@ -432,7 +438,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if _, err = tx.InsertMessage(Message{RoomID: in.RoomID, AuthorKind: "system", AuthorID: "system", Body: notice}); err != nil {
 		return AgentCard{}, err
 	}
-	card := AgentCard{ID: agent.ID, Slug: slug, RoomID: in.RoomID, ProjectID: projectID, RoleKey: in.RoleKey, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, Desired: "active", Observed: "idle"}
+	card := AgentCard{ID: agent.ID, Slug: slug, RoomID: in.RoomID, ProjectID: projectID, RoleKey: in.RoleKey, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, Desired: "active", Observed: "idle", ApprovedBy: in.ApprovedBy}
 	if !allowed {
 		if _, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=?`, agent.ID); err != nil {
 			return AgentCard{}, err
@@ -443,10 +449,20 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 			return AgentCard{}, err
 		}
 	} else if _, err = tx.AppendEvent(Event{Kind: "agent_spawn_requested", ProjectID: projectID, RoomID: in.RoomID, AgentID: agent.ID,
-		PayloadJSON: payloadJSON(map[string]string{"agent_id": agent.ID, "actor_kind": actorKind, "actor_id": in.ActorID})}); err != nil {
+		PayloadJSON: spawnRequestedPayload(actorKind, in.ActorID, agent.ID, in.ApprovedBy)}); err != nil {
 		return AgentCard{}, err
 	}
 	return card, nil
+}
+
+// spawnRequestedPayload is the agent_spawn_requested event's payload; the
+// approving message is on it when the spawn carried a person's approval.
+func spawnRequestedPayload(actorKind, actorID, agentID, approvedBy string) string {
+	payload := map[string]string{"agent_id": agentID, "actor_kind": actorKind, "actor_id": actorID}
+	if approvedBy != "" {
+		payload["approved_by"] = approvedBy
+	}
+	return payloadJSON(payload)
 }
 
 func (tx *Tx) authorizeSpawnActor(projectID, actorKind, actorID string, spawning bool) error {
@@ -576,7 +592,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,
 		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id AND `+agentOwnActivitySQL+`),''),COALESCE(machine.last_seen,''),
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,'')
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,''),COALESCE(a.approved_by,'')
 		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL
 		LEFT JOIN machine ON machine.id=a.machine_id WHERE m.room_id=? ORDER BY a.created_at,a.id`, roomID)
 	if err != nil {
@@ -587,7 +603,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 	for rows.Next() {
 		var c AgentCard
 		c.RoomID = roomID
-		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID); err != nil {
+		if err := rows.Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.LastActivityAt, &c.MachineLastSeen, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID, &c.ApprovedBy); err != nil {
 			return nil, err
 		}
 		cards = append(cards, c)
@@ -625,8 +641,8 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block, m.room_id,
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),
-		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,'')
-		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL WHERE a.id=? ORDER BY m.joined_at LIMIT 1`, id).Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.RoomID, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID)
+		COALESCE((SELECT b.inbox_id FROM boundary_pending b WHERE b.agent_id=a.id AND b.state='open'),''),COALESCE(a.resumed_from_legacy_id,''),COALESCE(a.approved_by,'')
+		FROM agent a JOIN role r ON r.id=a.role_id JOIN room_member m ON m.member_id=a.id AND m.member_kind='agent' AND m.left_at IS NULL WHERE a.id=? ORDER BY m.joined_at LIMIT 1`, id).Scan(&c.ID, &c.Slug, &c.ProjectID, &c.RoleKey, &c.RoleEmoji, &c.RoleDeleted, &c.RoleUpdated, &c.Tool, &c.Variant, &c.LauncherID, &c.Model, &c.Provider, &c.MachineID, &c.Desired, &c.DesiredRev, &c.Observed, &c.Generation, &c.RecoveryBlock, &c.RoomID, &c.LastExitEvidence, &c.BoundaryPending, &c.ResumedFromLegacyID, &c.ApprovedBy)
 	if err == nil {
 		c.Switch, err = s.agentSwitch(ctx, id)
 		if err == nil {

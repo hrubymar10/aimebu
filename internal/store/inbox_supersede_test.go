@@ -177,6 +177,9 @@ func TestSupersessionMigrationClosesOnlyQualifyingAsks(t *testing.T) {
 		t.Fatal(err)
 	}
 	rewindWorkerRecoveryMigration(t, s)
+	if _, err := s.db.Exec(`ALTER TABLE agent DROP COLUMN approved_by`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=117`); err != nil {
 		t.Fatal(err)
 	}

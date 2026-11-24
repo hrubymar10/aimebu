@@ -39,6 +39,9 @@ type spawnRequest struct {
 	BaseRef    string `json:"base_ref,omitempty"`
 	// JoinParent also joins the new agent, quietly, to its room's parent room (lead or dispatcher only; see store.SpawnInput.JoinParent).
 	JoinParent bool `json:"join_parent,omitempty"`
+	// ApprovedBy is the validated message of a person that approved this exact harness and model choice outside the role's default pool;
+	// set only on an agent-initiated spawn (the agent route validates it, a person's route never sets it) and recorded on the agent.
+	ApprovedBy string `json:"approved_by,omitempty"`
 	// Name is the agent's name; empty lets the server pick a free one from its pool. A v1 agent that is resumed keeps its own name.
 	Name string `json:"name,omitempty"`
 	// ResumeLegacy starts the agent from an imported v1 agent: the same name, and its harness session continued when the harness can.
@@ -1191,6 +1194,9 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	spawn := func(where string, own *store.AgentWorktree) (string, bool, error) {
 		return s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, JoinParent: req.JoinParent, KeyHash: hex.EncodeToString(keyHashBytes[:])}
+			if actorKind == "agent" {
+				input.ApprovedBy = req.ApprovedBy
+			}
 			input.Slug = slug
 			input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
 			if session != nil {
