@@ -1,10 +1,11 @@
 import { html, h, render, useState, useLayoutEffect, useRef } from './ui.js';
-import { copyText } from './markdown.js';
 import { openEmojiPicker } from './emoji-picker.js';
+import { openContextMenu } from './components/context-menu.js';
+import { messageMenu } from './pages/chat/message-menu.js';
 
-// What a message offers: one compact toolbar of icon buttons (react, reply, reply in a thread, copy the text, copy the link),
-// chosen over two other looks in the A/B/C trial. Every control is a framed .btn-icon with a tooltip and an accessible name;
-// hovering or focusing the message reveals them (always visible on touch screens).
+// What a message offers: one compact toolbar of icon buttons (react, reply, reply in a thread, and a last ⋮ with the less
+// common actions), chosen over two other looks in the A/B/C trial. Every control is a framed .btn-icon with a tooltip and an
+// accessible name; hovering or focusing the message reveals them (always visible on touch screens).
 export const QUICK_REACTIONS = ['👍', '🆗', '✅', '👀', '🙏', '🎉'];
 
 const ICONS = {
@@ -12,8 +13,9 @@ const ICONS = {
   find: [['path', { d: 'M21 12a9 9 0 1 1-9-9' }], ['path', { d: 'M8 14s1.5 2 4 2 4-2 4-2' }], ['path', { d: 'M9 9h.01M15 9h.01' }], ['path', { d: 'M19 2v6M16 5h6' }]],
   reply: [['path', { d: 'M9 14L4 9l5-5' }], ['path', { d: 'M20 20v-7a4 4 0 0 0-4-4H4' }]],
   thread: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
-  copy: [['rect', { x: 9, y: 9, width: 13, height: 13, rx: 2 }], ['path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }]],
   link: [['path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71' }], ['path', { d: 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }]],
+  // The room header's "more" glyph (web/icons/more.svg) turned upright: the toolbar's last button, the message's shared menu.
+  more: [['circle', { cx: 12, cy: 5, r: 1 }], ['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 12, cy: 19, r: 1 }]],
 };
 
 // The toolbar's glyphs, also drawn by a message's context menu (pages/chat/message-menu.js).
@@ -32,15 +34,19 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && op
 // The full picker, for a reaction that is not one of the quick ones. `anchor` is the visible control it opens from.
 function findReaction(chat, message, anchor) { closePopup(); openEmojiPicker({ anchor, onPick: glyph => chat.toggleReaction(message.id, glyph) }); }
 
-// Copies and reports the outcome on the button's tooltip, which is all a framed icon button has room for.
-function CopyButton({ name, label, className, text }) {
-  const [note, setNote] = useState(''), timer = useRef(0);
-  useLayoutEffect(() => () => clearTimeout(timer.current), []);
-  const copy = async () => {
-    try { await copyText(text); setNote('Copied'); } catch { setNote('Copy failed'); }
-    clearTimeout(timer.current); timer.current = setTimeout(() => setNote(''), 1500);
+// The toolbar's last button: it opens the message's shared menu (pages/chat/message-menu.js), the one a right-click opens, so
+// there is one list of items. It sits anchored below the button (the shared placement rules keep it on the screen), Escape and a
+// pick give the focus back to the button, and while it is open the toolbar keeps its aria-expanded (the bar stays visible with it).
+function MoreButton({ chat, message, thread }) {
+  const [open, setOpen] = useState(false), button = useRef(null);
+  const show = () => {
+    if (open) { closeContextMenu(false); return; }
+    closePopup();
+    const box = button.current.getBoundingClientRect(), { label, items } = messageMenu(chat, message, { thread, anchor: button.current });
+    setOpen(true);
+    openContextMenu({ point: { x: box.right, y: box.bottom }, label, items, returnFocus: button.current, onClose: () => setOpen(false) });
   };
-  return html`<${IconButton} name=${name} label=${label} className=${className} title=${note || label} onClick=${copy} />`;
+  return html`<${IconButton} name="more" label="More actions" className="message-more" aria-haspopup="menu" aria-expanded=${String(open)} buttonRef=${button} onClick=${show} />`;
 }
 
 // Touch: a tap on a message selects it and shows its actions (the .actions-open class, see theme-v1.css); a tap on another message, on
@@ -81,8 +87,7 @@ function Toolbar({ chat, message, label, thread }) {
     <${IconButton} name="find" label="Find another reaction" className="message-find" aria-haspopup="dialog" aria-expanded="false" onClick=${event => findReaction(chat, message, event.currentTarget)} />
     ${!thread && html`<${IconButton} name="reply" label=${`Reply to #${message.no}`} className="message-reply" onClick=${() => chat.setReply(message)} />
     <${IconButton} name="thread" label=${label ?? chat.threadLabel(message.id)} className="thread-action" onClick=${() => chat.openConversation(message)} />`}
-    <${CopyButton} name="copy" label="Copy message text" className="message-copy" text=${message.body} />
-    <${CopyButton} name="link" label=${`Copy link to #${message.no}`} className="message-copy message-link" text=${`#${message.no}`} />
+    <${MoreButton} chat=${chat} message=${message} thread=${thread} />
     <div class="message-reaction-row" role="group" aria-label="Add reaction" hidden=${!open} ref=${popup}>${QUICK_REACTIONS.map(emoji => html`<button type="button" class="row-btn quick-reaction" title=${`React ${emoji}`} data-emoji=${emoji} onClick=${() => react(emoji)}>${emoji}</button>`)}</div>`;
 }
 

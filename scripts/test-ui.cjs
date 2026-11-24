@@ -1302,7 +1302,7 @@ async function main() {
     assert.equal(identityHeader.plain.bell, false);
     assert.deepEqual(identityHeader.liveAfter, ['dot-offline', 'lost']);
     assert.equal(identityHeader.numberText, '#905');
-    // A message's actions: one compact toolbar (react, reply, thread, copy text, copy link).
+    // A message's actions: one compact toolbar (react, find another reaction, reply, thread, ⋮ More actions).
     const messageActions = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
       const out = {};
@@ -1324,8 +1324,12 @@ async function main() {
         result.rowOpen = !bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'true';
         bar.querySelector('.quick-reaction').click(); await drawn(); result.reacted = chat.reacted; result.rowClosed = bar.querySelector('.message-reaction-row').hidden;
         react.click(); await drawn(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await drawn(); result.escapeCloses = bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'false';
-        // Copy text and link are toolbar buttons.
-        { for (const button of bar.querySelectorAll('.message-copy')) { button.click(); await new Promise(resolve => setTimeout(resolve, 30)); } }
+        // Copy text and link are items of the ⋮ menu now: open it and pick them, one opening each.
+        for (const label of ['Copy message text', 'Copy link to #801']) {
+          bar.querySelector('.message-more').click(); await new Promise(resolve => setTimeout(resolve, 30));
+          [...document.querySelectorAll('.context-menu [role=menuitem]')].find(item => item.textContent.trim().startsWith(label))?.click();
+          await new Promise(resolve => setTimeout(resolve, 30));
+        }
         // Arrow keys move along the toolbar.
         buttons[0].focus(); buttons[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); result.arrowRight = document.activeElement === buttons[1];
         buttons[0].focus(); buttons[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); result.arrowWrapLastLabel = document.activeElement.getAttribute('aria-label'); result.arrowWrap = document.activeElement === buttons.at(-1);
@@ -1337,7 +1341,7 @@ async function main() {
       }
       return out;
     });
-    assert.deepEqual(messageActions.c.labels, ['Add reaction', 'Find another reaction', 'Reply to #801', 'Reply in thread', 'Copy message text', 'Copy link to #801'], 'one icon toolbar');
+    assert.deepEqual(messageActions.c.labels, ['Add reaction', 'Find another reaction', 'Reply to #801', 'Reply in thread', 'More actions'], 'one icon toolbar, with the less common actions behind ⋮');
     for (const variant of ['c']) {
       const result = messageActions[variant];
       assert.equal(result.role, 'toolbar'); assert.equal(result.title, true, `${variant}: every action is a framed icon button with a tooltip`);
@@ -1347,7 +1351,7 @@ async function main() {
       assert.deepEqual(result.reacted, [['a1', '👍']]);
       assert.deepEqual([result.oldTextButtons, result.debugText, result.debugInHeader, result.threadChipHidden], [0, '', true, true], `${variant}: no text Debug or inline emoji strip; the bug icon is in the header line`);
       assert.equal(result.arrowRight, true);
-      assert.deepEqual([result.arrowWrapLastLabel, result.endLabel, result.homeLabel, result.arrowWrap], ['Copy link to #801', 'Copy link to #801', 'Add reaction', true], 'with the emoji row closed, the arrow keys, End and Home move over the six toolbar buttons only');
+      assert.deepEqual([result.arrowWrapLastLabel, result.endLabel, result.homeLabel, result.arrowWrap], ['More actions', 'More actions', 'Add reaction', true], 'with the emoji row closed, the arrow keys, End and Home move over the five toolbar buttons only');
     }
     assert.deepEqual(messageActions.c.writes, ['**raw** body', '#801']);
     const prependedThreadOrder = await first.evaluate(async () => {
@@ -1966,7 +1970,7 @@ async function main() {
       return { atTopRight: Math.abs(bar.right - (bubble.right - 6)) < 2 && bar.top < bubble.top && bar.bottom > bubble.top,
         clearOfText: bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom,
         buttons: root.querySelectorAll('.message-actions > .message-action').length };
-    }), { atTopRight: true, clearOfText: true, buttons: 6 }, 'an own message has its actions at the top-right corner of the message without covering the text');
+    }), { atTopRight: true, clearOfText: true, buttons: 5 }, 'an own message has its actions at the top-right corner of the message without covering the text');
     // v1 parity of the message frame: the bubble sits right under the sender line, at v1's gap, for the viewer's own message too (the hover toolbar
     // reserves no space), and the sender's name is plain text until it is hovered or focused.
     assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.chat-msg:first-child .chat-msg-header').getBoundingClientRect(), bubble = document.querySelector('.chat-msg:first-child .chat-msg-bubble').getBoundingClientRect(), author = document.querySelector('.chat-msg:first-child .chat-msg-from-name'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.chat-msg:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, own: true, underline: 'none' }, 'the bubble is 2px under the sender line (v1\'s gap) for the viewer\'s own message too, and the sender name has no permanent underline');

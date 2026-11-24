@@ -84,7 +84,7 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 - v2-only features keep their own rules: threads, the emoji picker, inbox, machines, harnesses, health, import, spawn, schedules, users and
   login, project settings, onboarding.
 
-Left under v2's names for now (their areas move later): the toolbar (`.message-actions*`, owned by the perf branch), `.reaction-pill(s)`,
+Left under v2's names for now (their areas move later): the toolbar (`.message-actions*`, owned by the perf branch), `.message-more` (the toolbar's last button, which opens the message's context menu; it needs no rule of its own — `.message-action` dresses it), `.reaction-pill(s)`,
 `.thread-chip`, `.message-receipts` (read receipts come back to v1's `.chat-msg-receipts` in a later step), `.message-images`, `.message-role`.
 
 ## Markdown: what v2 adds, and where it differs from v1 (accepted)

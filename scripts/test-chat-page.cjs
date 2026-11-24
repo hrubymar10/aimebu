@@ -522,8 +522,8 @@ async function main() {
       return { sameRow: Math.abs(title.top + title.height / 2 - (head.top + head.height / 2)) <= 2, closeAtRightEdge: close.left >= title.right && thread.right - close.right >= 0 && thread.right - close.right <= 16, iconsBeforeThread: last <= thread.left + 1 }; }),
       { sameRow: true, closeAtRightEdge: true, iconsBeforeThread: true }, 'the thread header is in the room header row, with the close button after the title');
     await hover(page, '#thread-messages .thread-entry[data-message-id=rm_a_t1] .chat-msg-bubble'); await settle(page); await new Promise(resolve => setTimeout(resolve, 500));
-    assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), hasReply: x.labels.some(l => /^reply to/i.test(l)), noThread: !x.labels.some(l => /thread/i.test(l)) })),
-      { shown: '1', hasReact: true, hasCopy: true, hasReply: false, noThread: true }, 'a reply in the thread has the message toolbar (react, copy; no reply or thread button, a send answers the last message)');
+    assert.deepEqual(await page.evaluate(() => { const bar = document.querySelector('#thread-messages [data-message-id=rm_a_t1] .message-actions'); return { shown: getComputedStyle(bar).opacity, labels: [...bar.querySelectorAll('button')].filter(b => !b.closest('[hidden]') && !b.classList.contains('message-actions-wake')).map(b => b.getAttribute('aria-label') || b.title) }; }).then(x => ({ shown: x.shown, hasReact: x.labels.some(l => /react/i.test(l)), hasCopy: x.labels.some(l => /copy/i.test(l)), hasMore: x.labels.some(l => /more/i.test(l)), hasReply: x.labels.some(l => /^reply to/i.test(l)), noThread: !x.labels.some(l => /thread/i.test(l)) })),
+      { shown: '1', hasReact: true, hasCopy: false, hasMore: true, hasReply: false, noThread: true }, 'a reply in the thread has the message toolbar (react, ⋮ with the copies behind it; no reply or thread button, a send answers the last message)');
     // A plain send from the panel answers the conversation's last message (no chip, no thread_root sent).
     // What a send answers: the conversation's last message that is not the viewer's own.
     const lastEntry = await page.evaluate(async () => { const { currentUser } = await import('/js/api.js'); return window.__chat.store.threadEntries.findLast(message => !(message.author_kind === 'user' && message.author_id === currentUser)).id; });
@@ -2004,7 +2004,7 @@ async function main() {
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages .message-actions')).width), '1px', 'and an unmade toolbar is not drawn, only its hidden "Message actions" button is left');
     await hover(page, '#messages [data-message-id=rm_a_m120] .chat-msg-bubble');
     assert.deepEqual(await built(), ['rm_a_m120'], 'a hovered row makes its toolbar');
-    assert.equal(await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m120] .message-actions > button').length), 6, 'with its six buttons');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m120] .message-actions > button').length), 5, 'with its five buttons (the copies live behind ⋮)');
     for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await hover(page, `#messages [data-message-id=${id}] .chat-msg-bubble`);
     const live = await built();
     assert.equal(live.length <= 3 && live.includes('rm_a_m124') && !live.includes('rm_a_m120'), true, `only the last three rows reached keep a toolbar: ${live}`);
@@ -2920,6 +2920,34 @@ async function main() {
     await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_s_m2]'), box = row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 20, clientY: box.top + 5, button: 2 })); });
     assert.deepEqual((await menu()).items, ['Mark unread from here', 'Copy message text', 'Copy link to #2', 'Open debug inspector']);
     await page.keyboard.press('Escape');
+    // The toolbar's last button (⋮ More actions) opens the same menu a right-click opens: one component, one list of items, anchored to the
+    // button. Mark unread from here works from it; Escape gives the focus back to the button; the arrows move and Enter picks.
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page); await calls(page);
+    await hover(page, '[data-message-id=rm_a_m3] .chat-msg-bubble');
+    await page.click('[data-message-id=rm_a_m3] .message-action[aria-haspopup="menu"]');
+    const fromBar = await menu();
+    assert.equal(fromBar.label, 'Actions for message #3', 'the toolbar ⋮ opens the message menu');
+    await page.click('[data-message-id=rm_a_m3] .chat-msg-body', { button: 'right' });
+    assert.deepEqual((await menu()).items, fromBar.items, 'a right-click and the ⋮ open the same list');
+    await page.keyboard.press('Escape');
+    await hover(page, '[data-message-id=rm_a_m5] .chat-msg-bubble');
+    await page.click('[data-message-id=rm_a_m5] .message-action[aria-haspopup="menu"]');
+    await pick('Mark unread from here');
+    assert.deepEqual(await calls(page), [['unread', 'rm_a', 5]], 'Mark unread from here works from the ⋮ menu');
+    await hover(page, '[data-message-id=rm_a_m4] .chat-msg-bubble');
+    await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m4] .message-action[aria-haspopup="menu"]').focus());
+    await page.keyboard.press('Enter');
+    assert.equal((await menu()).label, 'Actions for message #4', 'the focused ⋮ opens the menu on Enter');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    assert.equal((await menu()).focused, 'Reply to #4', 'the arrows move between the items');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.__chat.reply?.id), 'rm_a_m4', 'Enter picks the focused item');
+    await hover(page, '[data-message-id=rm_a_m4] .chat-msg-bubble');
+    await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m4] .message-action[aria-haspopup="menu"]').focus());
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
+    assert.deepEqual([await menu(), await page.evaluate(() => document.activeElement.getAttribute('aria-label'))], [null, 'More actions'], 'Escape closes the menu and the focus is back on the ⋮ button');
+    await openRoom(page, 'rm_s'); await opened(page); await settle(page); await calls(page);
     // A link in a message keeps the browser's own menu.
     await page.evaluate(() => { const body = document.querySelector('[data-message-id=rm_s_m3] .chat-msg-body'); const link = document.createElement('a'); link.href = 'https://example.invalid/'; link.textContent = 'link'; body.append(link); });
     const native = await page.evaluate(() => { const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }); document.querySelector('[data-message-id=rm_s_m3] .chat-msg-body a').dispatchEvent(event); return event.defaultPrevented; });
@@ -2960,6 +2988,13 @@ async function main() {
       assert.deepEqual(after, { ...after, open: true, visible: true, position: 'absolute', topRight: true, height: before.height }, `${id}: a tap opens the bar at the top-right corner, over the message, without changing its height`);
       await page.keyboard.press('Escape'); await settle(page);
     }
+    // The ⋮ of the selected message opens the shared menu on a phone too, kept inside the screen.
+    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_own] .message-action[aria-haspopup="menu"]').click());
+    await page.waitForFunction(() => document.querySelector('.context-menu[role=menu]'));
+    const menuBox = await page.evaluate(() => { const box = document.querySelector('.context-menu[role=menu]').getBoundingClientRect(); return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: innerWidth, height: innerHeight, items: [...document.querySelectorAll('.context-menu [role=menuitem]')].length }; });
+    assert.equal(menuBox.items > 0, true, 'the ⋮ opens the menu on a phone');
+    assert.equal(menuBox.left >= 0 && menuBox.top >= 0 && menuBox.right <= menuBox.width && menuBox.bottom <= menuBox.height, true, `the ⋮ menu stays inside a phone viewport: ${JSON.stringify(menuBox)}`);
+    await page.keyboard.press('Escape');
     await page.close();
   }
 
