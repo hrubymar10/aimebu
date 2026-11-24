@@ -252,7 +252,9 @@ func TestSnapshotMarksARejectedSeriesWithinTheSpan(t *testing.T) {
 	if got := out.Providers[1].Profiles[0].Windows[0].RejectedAt; got != 0 {
 		t.Fatalf("a profile without an episode is not marked: %d", got)
 	}
-	r.SetRejectionTimes(func() map[string]time.Time { return map[string]time.Time{"codex\x00local": now.Add(-historySpan - time.Hour)} })
+	r.SetRejectionTimes(func() map[string]time.Time {
+		return map[string]time.Time{"codex\x00local": now.Add(-historySpan - time.Hour)}
+	})
 	if got := r.Snapshot().Providers[0].Profiles[0].Windows[0].RejectedAt; got != 0 {
 		t.Fatalf("an episode older than the history span is not marked: %d", got)
 	}
