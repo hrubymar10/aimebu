@@ -129,7 +129,9 @@ Projects, rooms, people
   singleton spawn-capable role without lead capability. A flow's spawn
   rules grant its task-room and agent-management authority. In the dispatcher
   flow the leader spawns only the dispatcher and researchers, and the
-  dispatcher spawns workers, reviewers and researchers; the division of labour
+  dispatcher spawns workers, reviewers and researchers; the leader may also
+  create rooms with purpose research (`create_room`), and other purposes stay
+  with the dispatcher; the division of labour
   the role bodies state: the leader spawns its own researchers for research and
   planning questions (role_key only, from the role's pool) and reads their
   reports, while the dispatcher spawns the workers a specification calls for; a

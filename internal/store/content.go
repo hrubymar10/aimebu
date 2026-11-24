@@ -303,19 +303,19 @@ func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
 		return err
 	}
 	for _, id := range leads {
-		var roleKey, kind, key, title string
+		var roleKey, kind, key, title, purpose string
 		var lead bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.id=? WHERE a.id=?`, roomID, id).Scan(&roleKey, &kind, &key, &title, &lead); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT ro.role_key,r.kind,r.team_flow_room_key,r.title,r.purpose,ro.cap_is_lead FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.id=? WHERE a.id=?`, roomID, id).Scan(&roleKey, &kind, &key, &title, &purpose, &lead); err != nil {
 			return err
 		}
-		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title), key)
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title, purpose), key)
 		if err != nil {
 			return err
 		}
 		if !autoJoin {
 			continue
 		}
-		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), roleKey)
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title, purpose), roleKey)
 		if err != nil {
 			return err
 		}
@@ -354,19 +354,19 @@ func (tx *Tx) joinLeadToProjectRooms(agentID string) error {
 		return err
 	}
 	for _, id := range rooms {
-		var projectID, roleKey, kind, key, title string
+		var projectID, roleKey, kind, key, title, purpose string
 		var lead bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,ro.role_key,r.kind,r.team_flow_room_key,r.title,ro.cap_is_lead FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, agentID, id).Scan(&projectID, &roleKey, &kind, &key, &title, &lead); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,ro.role_key,r.kind,r.team_flow_room_key,r.title,r.purpose,ro.cap_is_lead FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, agentID, id).Scan(&projectID, &roleKey, &kind, &key, &title, &purpose, &lead); err != nil {
 			return err
 		}
-		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title), key)
+		autoJoin, err := tx.flowAutoJoin(projectID, roleKey, lead, flowRoomKind(kind, key, title, purpose), key)
 		if err != nil {
 			return err
 		}
 		if !autoJoin {
 			continue
 		}
-		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), roleKey)
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title, purpose), roleKey)
 		if err != nil {
 			return err
 		}
@@ -405,14 +405,14 @@ func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
 			return err
 		}
 		if roomKind != "dm" && flowKey != "" && flowKey != "custom" {
-			var agentProjectID, key, title, role string
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,r.team_flow_room_key,r.title,ro.role_key FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, memberID, roomID).Scan(&agentProjectID, &key, &title, &role); err != nil {
+			var agentProjectID, key, title, role, purpose string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,r.team_flow_room_key,r.title,ro.role_key,r.purpose FROM room r JOIN agent a ON a.id=? JOIN role ro ON ro.id=a.role_id WHERE r.id=?`, memberID, roomID).Scan(&agentProjectID, &key, &title, &role, &purpose); err != nil {
 				return err
 			}
 			if projectID != agentProjectID {
 				return ErrForbidden
 			}
-			allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(roomKind, key, title), role)
+			allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(roomKind, key, title, purpose), role)
 			if err != nil {
 				return err
 			}

@@ -109,8 +109,10 @@ export class SpawnStore {
   // leaves the role catalog as it is; the server still checks the final spawn.
   filterRoles() {
     const target = this.spawnRoom();
-    const roomKind = this.startRoom.peek() === NEW_ROOM ? 'task' : target?.team_flow_room_key || target?.kind;
-    const rule = this.flowTemplate?.join_rules?.find(item => item.room_kind === roomKind);
+    const roomKind = this.startRoom.peek() === NEW_ROOM ? 'task' : target?.team_flow_room_key || (target?.kind === 'task' && target?.purpose === 'research' ? 'research' : target?.kind);
+    const rules = this.flowTemplate?.join_rules;
+    // A research room follows the task rule in a flow with no research rule of its own.
+    const rule = rules?.find(item => item.room_kind === roomKind) || (roomKind === 'research' ? rules?.find(item => item.room_kind === 'task') : undefined);
     const eligible = rule ? this.allRoles.filter(role => rule.allowed_roles.includes(role.role_key)) : this.allRoles;
     const byKey = new Map(this.allRoles.map(role => [role.role_key, role]));
     const reviewerRole = role => { const seen = new Set(); while (role && !seen.has(role.role_key)) { if (role.role_key === 'reviewer') return true; seen.add(role.role_key); role = byKey.get(role.extends); } return false; };

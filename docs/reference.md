@@ -463,7 +463,10 @@ singleton dispatcher. The leader writes specs there; the dispatcher manages
 task rooms, workers, and reviewers. Research and planning questions the leader
 may hand to a researcher directly: the leader spawns its own researchers (from
 the role's pool) and reads their reports, while the dispatcher spawns the
-workers a specification calls for. A task-room message can reference a
+workers a specification calls for. For that the leader may also create rooms
+with purpose `research` (`create_room`, under home or `general`) and is a
+member of them; every other purpose stays with the dispatcher (409
+`team_flow_rule` for the leader). A task-room message can reference a
 routing brief by `#N`; the worker-room chat shows the one granted message
 inline, without exposing the routing conversation.
 In A and B, `general` is the project-wide room for announcements and

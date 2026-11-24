@@ -21,8 +21,24 @@ func TestAdvisorFlowTemplateAndSetup(t *testing.T) {
 	if body := flow.RoleTextOverrides["advisor"]; !strings.Contains(body, roleSafety) || !strings.Contains(body, roleCommunication) {
 		t.Fatal("advisor override omitted shared safety or communication instructions")
 	}
-	if flowRoomKind("task", "advice", "advice") != "advice" {
+	if flowRoomKind("task", "advice", "advice", "task") != "advice" {
 		t.Fatal("advice room classification")
+	}
+	// Only the leader-dispatcher flow has a research rule; the others treat a
+	// research room as a task room.
+	if flowRoomKind("task", "", "x", "research") != "research" || flowRoomKind("task", "general", "x", "research") != "general" {
+		t.Fatal("research room classification")
+	}
+	for _, template := range templates {
+		rule, ok := flowJoinRule(template, "research")
+		taskRule, taskOK := flowJoinRule(template, "task")
+		if template.Key == "leader-dispatcher" {
+			if !ok || !flowAllows(rule.AllowedRoles, "leader") || flowAllows(taskRule.AllowedRoles, "leader") {
+				t.Fatalf("leader-dispatcher research rule: %+v", rule)
+			}
+		} else if ok != taskOK || !equalStrings(rule.AllowedRoles, taskRule.AllowedRoles) {
+			t.Fatalf("%s: research room does not follow its task rule: %+v vs %+v", template.Key, rule, taskRule)
+		}
 	}
 	f := newMembersFixture(t)
 	ctx := context.Background()
@@ -215,4 +231,16 @@ func TestAdvisorMigrationPreservesCustomRole(t *testing.T) {
 	if err := db.QueryRow(`SELECT body FROM role WHERE id='role_advisor_default'`).Scan(&body); err != nil || body != advisorRoleBody {
 		t.Fatalf("built-in advisor: %s %v", body, err)
 	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -112,7 +112,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.Diagram.Edges = []FlowEdge{{"home", "routing"}, {"routing", "general"}}
 	// A researcher (read-only, on demand) may be spawned by the leader and by the dispatcher, into general (where the leader can read its report)
 	// or a task room.
-	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"leader", "dispatcher", "worker", "reviewer", "researcher"}}, {"task", []string{"dispatcher", "worker", "reviewer", "researcher"}}}
+	routed.JoinRules = []FlowJoinRule{{"home", []string{"leader"}}, {"routing", []string{"leader", "dispatcher"}}, {"general", []string{"leader", "dispatcher", "worker", "reviewer", "researcher"}}, {"research", []string{"leader", "dispatcher", "researcher"}}, {"task", []string{"dispatcher", "worker", "reviewer", "researcher"}}}
 	routed.SpawnRules = []FlowSpawnRule{{"leader", []string{"dispatcher", "researcher"}}, {"dispatcher", []string{"worker", "reviewer", "researcher"}}}
 	routed.AutoJoinRoles = []string{"leader", "dispatcher"}
 	routed.CoreRoles = []string{"leader", "dispatcher"}
@@ -286,7 +286,7 @@ func (tx *Tx) flowActorMayTargetAgent(projectID, actorID, targetID, targetRole s
 	return err
 }
 
-func flowRoomKind(kind, key, title string) string {
+func flowRoomKind(kind, key, title, purpose string) string {
 	if kind == "home" {
 		return "home"
 	}
@@ -299,7 +299,24 @@ func flowRoomKind(kind, key, title string) string {
 	if key == "general" || title == GeneralRoomTitle {
 		return "general"
 	}
+	if purpose == RoomPurposeResearch {
+		return "research"
+	}
 	return "task"
+}
+
+// flowJoinRule is the template's join rule for a room kind. A research room
+// follows the task rule in a flow that has no research rule of its own.
+func flowJoinRule(t TeamFlowTemplate, roomKind string) (FlowJoinRule, bool) {
+	for _, rule := range t.JoinRules {
+		if rule.RoomKind == roomKind {
+			return rule, true
+		}
+	}
+	if roomKind == "research" {
+		return flowJoinRule(t, "task")
+	}
+	return FlowJoinRule{}, false
 }
 
 func (tx *Tx) flowJoinAllowed(projectID, roomKind, role string) (bool, error) {
@@ -311,10 +328,8 @@ func (tx *Tx) flowJoinAllowed(projectID, roomKind, role string) (bool, error) {
 	if !ok || key == "custom" || key == "" {
 		return true, nil
 	}
-	for _, rule := range t.JoinRules {
-		if rule.RoomKind == roomKind {
-			return flowAllows(rule.AllowedRoles, role), nil
-		}
+	if rule, ok := flowJoinRule(t, roomKind); ok {
+		return flowAllows(rule.AllowedRoles, role), nil
 	}
 	return false, nil
 }
@@ -435,7 +450,7 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 		}
 		selectedRooms[spec.Key] = id
 	}
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,a.slug,ro.role_key,ro.label,r.id,r.kind,r.team_flow_room_key,r.title FROM agent a
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT a.id,a.slug,ro.role_key,ro.label,r.id,r.kind,r.team_flow_room_key,r.title,r.purpose FROM agent a
 		JOIN role ro ON ro.id=a.role_id JOIN room_member m ON m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL
 		JOIN room r ON r.id=m.room_id WHERE a.project_id=? AND r.lifecycle='open' AND r.kind<>'dm' AND a.revoked_at IS NULL ORDER BY a.slug,r.title,r.id`, projectID)
 	if err != nil {
@@ -443,11 +458,11 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, slug, role, roleLabel, roomID, kind, key, title string
-		if err := rows.Scan(&id, &slug, &role, &roleLabel, &roomID, &kind, &key, &title); err != nil {
+		var id, slug, role, roleLabel, roomID, kind, key, title, purpose string
+		if err := rows.Scan(&id, &slug, &role, &roleLabel, &roomID, &kind, &key, &title, &purpose); err != nil {
 			return out, err
 		}
-		selector := flowRoomKind(kind, key, title)
+		selector := flowRoomKind(kind, key, title, purpose)
 		if kind != "home" {
 			for _, spec := range t.Rooms {
 				if spec.Key != "home" && roomID == selectedRooms[spec.Key] {
@@ -457,11 +472,8 @@ func flowConflicts(ctx context.Context, db rowQuerier, projectID string, t TeamF
 			}
 		}
 		allowed := false
-		for _, rule := range t.JoinRules {
-			if rule.RoomKind == selector {
-				allowed = flowAllows(rule.AllowedRoles, role)
-				break
-			}
+		if rule, ok := flowJoinRule(t, selector); ok {
+			allowed = flowAllows(rule.AllowedRoles, role)
 		}
 		if !allowed {
 			out = append(out, FlowConflict{AgentID: id, Slug: slug, RoleKey: role, RoleLabel: roleLabel, RoomID: roomID, RoomTitle: title, Reason: "role " + role + " is not allowed in " + title, SuggestedAction: "Remove from this room when applying"})

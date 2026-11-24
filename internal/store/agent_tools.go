@@ -180,23 +180,20 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 		if err := tx.flowActorMayTarget(projectID, actorID, roleKey); err != nil {
 			return AgentCard{}, err
 		}
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.kind,r.team_flow_room_key,r.title FROM room_member m JOIN room r ON r.id=m.room_id WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.kind<>'dm'`, agentID)
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.kind,r.team_flow_room_key,r.title,r.purpose FROM room_member m JOIN room r ON r.id=m.room_id WHERE m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL AND r.kind<>'dm'`, agentID)
 		if err != nil {
 			return AgentCard{}, err
 		}
 		for rows.Next() {
-			var kind, key, title string
-			if err := rows.Scan(&kind, &key, &title); err != nil {
+			var kind, key, title, purpose string
+			if err := rows.Scan(&kind, &key, &title, &purpose); err != nil {
 				rows.Close()
 				return AgentCard{}, err
 			}
-			selector := flowRoomKind(kind, key, title)
+			selector := flowRoomKind(kind, key, title, purpose)
 			allowed := false
-			for _, rule := range flow.JoinRules {
-				if rule.RoomKind == selector && flowAllows(rule.AllowedRoles, roleKey) {
-					allowed = true
-					break
-				}
+			if rule, ok := flowJoinRule(flow, selector); ok {
+				allowed = flowAllows(rule.AllowedRoles, roleKey)
 			}
 			if !allowed {
 				rows.Close()

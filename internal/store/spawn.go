@@ -227,11 +227,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 				return AgentCard{}, err
 			}
 		}
-		var kind, key, title string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,team_flow_room_key,title FROM room WHERE id=?`, in.RoomID).Scan(&kind, &key, &title); err != nil {
+		var kind, key, title, purpose string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,team_flow_room_key,title,purpose FROM room WHERE id=?`, in.RoomID).Scan(&kind, &key, &title, &purpose); err != nil {
 			return AgentCard{}, err
 		}
-		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title), in.RoleKey)
+		allowed, err := tx.flowJoinAllowed(projectID, flowRoomKind(kind, key, title, purpose), in.RoleKey)
 		if err != nil {
 			return AgentCard{}, err
 		}

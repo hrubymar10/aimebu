@@ -922,7 +922,7 @@ disabled or is not in the agent's project is 403 alike, so a login cannot be pro
 409 `project_archived`; 429 `human_dm_cap` (20 messages from one agent into one chat
 per hour) and 429 `human_dm_fanout_cap` (10 new chats per agent per hour). Agent to
 agent stays `dm_agent`.
-`create_room` takes an optional `purpose` (`task`, the default, `research` or `general`; see `purpose` above; 400 `invalid_request` for another value), records the agent in `created_by` and joins eligible lead roles atomically (a project's leader is in every open room in Custom and Leader and workers; in Leader and dispatcher, the leader is confined to home and routing, while the dispatcher starts in routing and joins task rooms it creates or explicitly joins; general has no agent by default; private chats are not included), and
+`create_room` takes an optional `purpose` (`task`, the default, `research` or `general`; see `purpose` above; 400 `invalid_request` for another value), records the agent in `created_by` and joins eligible lead roles atomically (a project's leader is in every open room in Custom and Leader and workers; in Leader and dispatcher, the leader is confined to home and routing, except that it may create rooms with `purpose: research` (under home or general) and is then a member of them, while any other purpose it asks for is refused with 409 `team_flow_rule`, and the dispatcher starts in routing and joins task rooms it creates or explicitly joins; general has no agent by default; private chats are not included), and
 posts one system notice in the parent room. Its response carries the room's
 real `member_count`, which includes the creating agent. `close_room` accepts a
 task room the agent belongs to or created, and uses the same
