@@ -20,31 +20,36 @@ var ErrSpawnLimit = errors.New("spawn_limit")
 type AgentCard struct {
 	DefaultUsed      bool                `json:"default_used,omitempty"`
 	DefaultSelection *SpawnDefaultChoice `json:"default_selection,omitempty"`
-	WorktreeWarning  string              `json:"worktree_warning,omitempty"`
-	ID               string              `json:"id"`
-	Slug             string              `json:"slug"`
-	RoomID           string              `json:"room_id"`
-	ProjectID        string              `json:"project_id"`
-	RoleKey          string              `json:"role_key"`
-	RoleEmoji        string              `json:"role_emoji,omitempty"`
-	RoleDeleted      bool                `json:"role_deleted,omitempty"`
-	RoleUpdated      bool                `json:"role_updated,omitempty"`
-	Tool             string              `json:"tool"`
-	Variant          string              `json:"variant"`
-	LauncherID       string              `json:"launcher_id,omitempty"`
-	Model            string              `json:"model"`
-	Provider         string              `json:"provider"`
-	MachineID        string              `json:"machine_id"`
-	Desired          string              `json:"desired"`
-	DesiredRev       int64               `json:"desired_rev"`
-	Observed         string              `json:"observed"`
-	Generation       int                 `json:"generation"`
-	RecoveryBlock    bool                `json:"recovery_block"`
-	LastExitEvidence string              `json:"last_exit_evidence,omitempty"`
-	LastActivityAt   string              `json:"last_activity_at,omitempty"`
-	MachineLastSeen  string              `json:"machine_last_seen,omitempty"`
-	Switch           *AgentSwitch        `json:"switch,omitempty"`
-	BoundaryPending  string              `json:"boundary_pending,omitempty"`
+	// Skipped lists the role-default pool entries this spawn passed over and why, when it was picked from the pool. Only a provider login
+	// the usage snapshot already knows is rejected is recorded (reason "login_rejected"); the other availability skips stay unsaid.
+	Skipped []SpawnSkip `json:"skipped,omitempty"`
+	// AllUnhealthy says every configured pool entry was skipped and the pool fell back to the first skipped entry in rotation order.
+	AllUnhealthy     bool         `json:"all_unhealthy,omitempty"`
+	WorktreeWarning  string       `json:"worktree_warning,omitempty"`
+	ID               string       `json:"id"`
+	Slug             string       `json:"slug"`
+	RoomID           string       `json:"room_id"`
+	ProjectID        string       `json:"project_id"`
+	RoleKey          string       `json:"role_key"`
+	RoleEmoji        string       `json:"role_emoji,omitempty"`
+	RoleDeleted      bool         `json:"role_deleted,omitempty"`
+	RoleUpdated      bool         `json:"role_updated,omitempty"`
+	Tool             string       `json:"tool"`
+	Variant          string       `json:"variant"`
+	LauncherID       string       `json:"launcher_id,omitempty"`
+	Model            string       `json:"model"`
+	Provider         string       `json:"provider"`
+	MachineID        string       `json:"machine_id"`
+	Desired          string       `json:"desired"`
+	DesiredRev       int64        `json:"desired_rev"`
+	Observed         string       `json:"observed"`
+	Generation       int          `json:"generation"`
+	RecoveryBlock    bool         `json:"recovery_block"`
+	LastExitEvidence string       `json:"last_exit_evidence,omitempty"`
+	LastActivityAt   string       `json:"last_activity_at,omitempty"`
+	MachineLastSeen  string       `json:"machine_last_seen,omitempty"`
+	Switch           *AgentSwitch `json:"switch,omitempty"`
+	BoundaryPending  string       `json:"boundary_pending,omitempty"`
 	// ResumedFromLegacyID is the v1 agent this one continues; its imported messages that stay under the v1 author belong to this agent too.
 	ResumedFromLegacyID string          `json:"resumed_from_legacy_id,omitempty"`
 	BoundaryGrants      []BoundaryGrant `json:"boundary_grants,omitempty"`

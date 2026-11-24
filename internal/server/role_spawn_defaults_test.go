@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,7 +13,241 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/usages"
 )
+
+// setUsageProfile gives the server a usage reader whose cache reads one status for one provider's active local profile; the reader never
+// reaches the network. The cache keeps the fixed provider order, so both local providers are always written.
+func setUsageProfile(t *testing.T, f *fixture, provider, status string) {
+	t.Helper()
+	profile := func(name string) usages.Profile {
+		read := "ok"
+		if name == provider {
+			read = status
+		}
+		return usages.Profile{ProfileName: "local", Active: true, Status: read}
+	}
+	snapshot := usages.Response{Providers: []usages.Provider{
+		{ProviderName: "codex", Profiles: []usages.Profile{profile("codex")}},
+		{ProviderName: "claude-code", Profiles: []usages.Profile{profile("claude-code")}},
+	}}
+	dir := t.TempDir()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cache.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := usages.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.useUsages(reader)
+}
+
+// roleDefaultPoolFixture seeds a worker role whose pool names the given tools' native launchers in order, with a machine that runs both.
+func roleDefaultPoolFixture(t *testing.T, tools ...string) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	f.seed()
+	items := ""
+	for _, tool := range tools {
+		launcher := f.harness(t, tool, "native")
+		if items != "" {
+			items += ","
+		}
+		items += `{"launcher_id":"` + launcher.ID + `","model":"` + roleDefaultModel(tool) + `"}`
+		if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+			_, err := tx.Exec(`UPDATE machine_launcher SET enabled=1 WHERE id=?`, launcher.ID)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE role SET spawn_defaults_json=? WHERE role_key='worker'`, `[`+items+`]`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 8), done: make(chan struct{}), bound: map[string]int{},
+		capabilities: []protocol.CapabilityReport{{Tool: "codex", Environment: adapter.Environment{Variant: "native"}},
+			{Tool: "claude", Environment: adapter.Environment{Variant: "native"}}}}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	return f
+}
+
+func roleDefaultModel(tool string) string {
+	if tool == "codex" {
+		return "gpt-6-sol"
+	}
+	return "haiku"
+}
+
+// spawnRoleDefault spawns a worker with no harness or model named, the pool's own path.
+func spawnRoleDefault(t *testing.T, f *fixture, key string) (int, store.AgentCard) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+f.room.ID+"/agents", strings.NewReader(`{"role_key":"worker"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", key)
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var card store.AgentCard
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, card
+}
+
+func TestSpawnDefaultSkipsRejectedLoginAndReportsIt(t *testing.T) {
+	f := roleDefaultPoolFixture(t, "claude", "codex")
+
+	setUsageProfile(t, f, "claude-code", "auth_missing")
+	status, card := spawnRoleDefault(t, f, "skip-auth-missing")
+	if status != http.StatusCreated || !card.DefaultUsed || card.Model != "gpt-6-sol" || card.Tool != "codex" {
+		t.Fatalf("rejected entry must be skipped: %d %+v", status, card)
+	}
+	if len(card.Skipped) != 1 || card.Skipped[0].Tool != "claude" || card.Skipped[0].Model != "haiku" ||
+		card.Skipped[0].Provider != "claude-code" || card.Skipped[0].Reason != "login_rejected" || card.AllUnhealthy {
+		t.Fatalf("skip not reported: %+v", card.Skipped)
+	}
+	defaults, err := f.db.RoleSpawnDefaults(t.Context(), f.project.ID, "worker")
+	if err != nil || defaults.NextPosition != 2 {
+		t.Fatalf("cursor after skip: %+v %v", defaults, err)
+	}
+	assertRoomNotice(t, f, "spawned per role default: codex/native/gpt-6-sol (skipped claude/native/haiku: login rejected)")
+
+	f2 := roleDefaultPoolFixture(t, "codex", "claude")
+	setUsageProfile(t, f2, "codex", "token_expired")
+	status, card = spawnRoleDefault(t, f2, "skip-token-expired")
+	if status != http.StatusCreated || !card.DefaultUsed || card.Tool != "claude" || card.Model != "haiku" {
+		t.Fatalf("expired token must be skipped: %d %+v", status, card)
+	}
+	if len(card.Skipped) != 1 || card.Skipped[0].Tool != "codex" || card.Skipped[0].Provider != "codex" ||
+		card.Skipped[0].Reason != "login_rejected" {
+		t.Fatalf("expired-token skip not reported: %+v", card.Skipped)
+	}
+	assertRoomNotice(t, f2, "spawned per role default: claude/native/haiku (skipped codex/native/gpt-6-sol: login rejected)")
+}
+
+func assertRoomNotice(t *testing.T, f *fixture, want string) {
+	t.Helper()
+	messages, err := f.db.ListMessagesLatest(t.Context(), f.room.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if strings.Contains(message.Body, want) {
+			return
+		}
+	}
+	t.Fatalf("room notice %q missing: %+v", want, messages)
+}
+
+func TestSpawnDefaultKeepsHealthyProvider(t *testing.T) {
+	f := roleDefaultPoolFixture(t, "claude", "codex")
+	setUsageProfile(t, f, "claude-code", "ok")
+	status, card := spawnRoleDefault(t, f, "healthy-provider")
+	if status != http.StatusCreated || !card.DefaultUsed || card.Tool != "claude" || card.Model != "haiku" {
+		t.Fatalf("healthy provider must be picked first: %d %+v", status, card)
+	}
+	if len(card.Skipped) != 0 || card.AllUnhealthy {
+		t.Fatalf("healthy spawn must not report skips: %+v", card.Skipped)
+	}
+	messages, err := f.db.ListMessagesLatest(t.Context(), f.room.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if strings.Contains(message.Body, "skipped") {
+			t.Fatalf("healthy spawn must not name skips: %+v", messages)
+		}
+	}
+}
+
+func TestSpawnDefaultUnknownUsageStateIsNotSkipped(t *testing.T) {
+	for _, status := range []string{"fetch_error", "timeout", "stale_cache", "not_configured", "scope_missing", "refreshing", ""} {
+		f := roleDefaultPoolFixture(t, "claude", "codex")
+		setUsageProfile(t, f, "claude-code", status)
+		spawnStatus, card := spawnRoleDefault(t, f, "unknown-"+status)
+		if spawnStatus != http.StatusCreated || !card.DefaultUsed || card.Tool != "claude" || card.Model != "haiku" {
+			t.Fatalf("status %q must not skip the entry: %d %+v", status, spawnStatus, card)
+		}
+		if len(card.Skipped) != 0 || card.AllUnhealthy {
+			t.Fatalf("status %q must not report skips: %+v", status, card.Skipped)
+		}
+	}
+	f := roleDefaultPoolFixture(t, "claude", "codex")
+	spawnStatus, card := spawnRoleDefault(t, f, "no-usage-reader")
+	if spawnStatus != http.StatusCreated || !card.DefaultUsed || card.Tool != "claude" || len(card.Skipped) != 0 {
+		t.Fatalf("no usage reader must not skip anything: %d %+v", spawnStatus, card)
+	}
+}
+
+func TestSpawnDefaultAllEntriesUnhealthyFallsBackAndSaysSo(t *testing.T) {
+	f := roleDefaultPoolFixture(t, "claude", "codex")
+	dir := t.TempDir()
+	snapshot := usages.Response{Providers: []usages.Provider{
+		{ProviderName: "claude-code", Profiles: []usages.Profile{{ProfileName: "local", Active: true, Status: "auth_missing"}}},
+		{ProviderName: "codex", Profiles: []usages.Profile{{ProfileName: "local", Active: true, Status: "token_expired"}}},
+	}}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cache.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := usages.New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.useUsages(reader)
+	status, card := spawnRoleDefault(t, f, "all-unhealthy")
+	if status != http.StatusCreated || !card.DefaultUsed || card.Tool != "claude" || card.Model != "haiku" {
+		t.Fatalf("all unhealthy must fall back to the first entry: %d %+v", status, card)
+	}
+	if !card.AllUnhealthy || len(card.Skipped) != 2 {
+		t.Fatalf("all-unhealthy fallback must say so: %+v skipped=%+v", card, card.Skipped)
+	}
+	defaults, err := f.db.RoleSpawnDefaults(t.Context(), f.project.ID, "worker")
+	if err != nil || defaults.NextPosition != 1 {
+		t.Fatalf("cursor after fallback: %+v %v", defaults, err)
+	}
+	assertRoomNotice(t, f, "spawned per role default: claude/native/haiku (every configured default entry is unhealthy: "+
+		"claude/native/haiku: login rejected; codex/native/gpt-6-sol: login rejected)")
+}
+
+func TestSpawnExplicitChoiceUnaffectedByRejectedLogin(t *testing.T) {
+	f := roleDefaultPoolFixture(t, "claude", "codex")
+	setUsageProfile(t, f, "claude-code", "auth_missing")
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+f.room.ID+"/agents",
+		strings.NewReader(`{"role_key":"worker","tool":"claude","variant":"native","model":"haiku"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", "explicit-rejected-login")
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var card store.AgentCard
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated || card.DefaultUsed || card.Tool != "claude" || card.Model != "haiku" || len(card.Skipped) != 0 || card.AllUnhealthy {
+		t.Fatalf("explicit spawn must be unchanged: %d %+v", resp.StatusCode, card)
+	}
+}
 
 func TestSpawnUsesRoleDefaultAndReplaysSameChoice(t *testing.T) {
 	f := newFixture(t)

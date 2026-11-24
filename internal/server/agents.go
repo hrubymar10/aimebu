@@ -1207,7 +1207,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 				}
 			}
 			if defaultUsed {
-				input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model
+				input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model + skippedSpawnNote(selection)
 			} else if defaultAvailable && actorKind == "agent" {
 				input.SpawnNote = "Different from the role default: " + req.Reason
 			} else if defaultUnavailable {
@@ -1242,6 +1242,8 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			created.DefaultUsed = defaultUsed
 			if defaultUsed {
 				created.DefaultSelection = &selection.Choice
+				created.Skipped = selection.Skipped
+				created.AllUnhealthy = selection.AllUnhealthy
 			}
 			if worktreeItem != nil && worktreeItem.DirtyBaseCount > 0 {
 				created.WorktreeWarning = fmt.Sprintf("the base has %d uncommitted changes, which are not in the worktree", worktreeItem.DirtyBaseCount)

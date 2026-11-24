@@ -16,6 +16,17 @@ type SpawnDefaultChoice struct {
 	Model      string `json:"model"`
 }
 
+// SpawnSkip says which pool entry a default spawn passed over and why. Only a provider login the usage snapshot already knows is rejected
+// is recorded (reason "login_rejected"); the other availability skips (an offline machine, an unlisted model) stay as they were.
+type SpawnSkip struct {
+	LauncherID string `json:"launcher_id"`
+	Tool       string `json:"tool,omitempty"`
+	Variant    string `json:"variant,omitempty"`
+	Model      string `json:"model"`
+	Provider   string `json:"provider,omitempty"`
+	Reason     string `json:"reason"`
+}
+
 type SpawnDefaultLauncher struct {
 	MachineID string
 	Tool      string

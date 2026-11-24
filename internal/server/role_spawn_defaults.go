@@ -7,15 +7,56 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"strings"
 
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 type roleSpawnSelection struct {
-	Choice   store.SpawnDefaultChoice `json:"choice"`
-	Request  spawnRequest             `json:"request"`
-	Steps    int64                    `json:"-"`
-	Defaults store.RoleSpawnDefaults  `json:"-"`
+	Choice       store.SpawnDefaultChoice `json:"choice"`
+	Request      spawnRequest             `json:"request"`
+	Steps        int64                    `json:"-"`
+	Defaults     store.RoleSpawnDefaults  `json:"-"`
+	Skipped      []store.SpawnSkip        `json:"-"`
+	AllUnhealthy bool                     `json:"-"`
+}
+
+// providerLoginRejected says the provider's active login is known rejected: the usage snapshot reads auth_missing (no usable login, or the
+// usage endpoint refused it with a 401) or token_expired for the active profile. A stale, errored or unknown reading is not a rejection:
+// the pool skips only a spawn it knows would die at once. Without a usage reader nothing is rejected.
+func (s *Server) providerLoginRejected(provider string) bool {
+	if s.Usages == nil || provider == "" {
+		return false
+	}
+	for _, item := range s.Usages.Snapshot().Providers {
+		if item.ProviderName != provider {
+			continue
+		}
+		for _, profile := range item.Profiles {
+			if !profile.Active {
+				continue
+			}
+			return profile.Status == "auth_missing" || profile.Status == "token_expired"
+		}
+		return false
+	}
+	return false
+}
+
+// skippedSpawnNote is the room notice's tail naming the pool entries a default spawn passed over:
+// " (skipped codex/native/gpt-6-sol: login rejected)"; when every entry was skipped it says so instead.
+func skippedSpawnNote(selection roleSpawnSelection) string {
+	if len(selection.Skipped) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(selection.Skipped))
+	for _, skip := range selection.Skipped {
+		parts = append(parts, skip.Tool+"/"+skip.Variant+"/"+skip.Model+": "+strings.ReplaceAll(skip.Reason, "_", " "))
+	}
+	if selection.AllUnhealthy {
+		return " (every configured default entry is unhealthy: " + strings.Join(parts, "; ") + ")"
+	}
+	return " (skipped " + strings.Join(parts, "; ") + ")"
 }
 
 // Only an omitted machine may inherit the machine of a matching default.
@@ -43,8 +84,10 @@ func (s *Server) inheritRoleDefaultMachine(ctx context.Context, req *spawnReques
 	return nil
 }
 
-// nextRoleSpawnDefault skips choices that cannot be started now. A successful
-// spawn advances the durable cursor in the same transaction as the agent.
+// nextRoleSpawnDefault skips choices that cannot be started now, and a choice whose provider's active login is known rejected, which it
+// reports (reason "login_rejected"): a worker spawned there would die at once and cost a recovery. When every entry the pool could start
+// was skipped that way it does not loop or fail: it falls back to the first skipped entry in rotation order and says so (AllUnhealthy).
+// A successful spawn advances the durable cursor in the same transaction as the agent.
 func (s *Server) nextRoleSpawnDefault(ctx context.Context, projectID, roleKey, requestedMachineID string) (roleSpawnSelection, bool, error) {
 	defaults, err := s.Store.RoleSpawnDefaults(ctx, projectID, roleKey)
 	if err != nil {
@@ -59,6 +102,8 @@ func (s *Server) nextRoleSpawnDefault(ctx context.Context, projectID, roleKey, r
 		start = 0
 	}
 	available := []roleSpawnSelection{}
+	var skipped []store.SpawnSkip
+	var fallback *roleSpawnSelection
 	for offset := 0; offset < n; offset++ {
 		choice := defaults.DefaultAgents[(start+offset)%n]
 		launcher, err := s.Store.SpawnDefaultLauncher(ctx, choice.LauncherID)
@@ -97,7 +142,18 @@ func (s *Server) nextRoleSpawnDefault(ctx context.Context, projectID, roleKey, r
 		item := roleSpawnSelection{Choice: choice, Defaults: defaults, Steps: int64(offset + 1), Request: spawnRequest{
 			MachineID: launcher.MachineID, Tool: launcher.Tool, Variant: variant, LauncherID: choice.LauncherID, Model: choice.Model,
 		}}
+		// A provider login the usage snapshot already knows is rejected would kill the agent at once: pick the next healthy entry in
+		// rotation order instead, and remember the first skipped one in case every entry turns out unhealthy.
+		if provider := usageProvider(launcher.Tool); s.providerLoginRejected(provider) {
+			skipped = append(skipped, store.SpawnSkip{LauncherID: choice.LauncherID, Tool: launcher.Tool,
+				Variant: variant, Model: choice.Model, Provider: provider, Reason: "login_rejected"})
+			if fallback == nil {
+				fallback = &item
+			}
+			continue
+		}
 		if defaults.PickMode != "randomly" {
+			item.Skipped = skipped
 			return item, true, nil
 		}
 		available = append(available, item)
@@ -107,7 +163,16 @@ func (s *Server) nextRoleSpawnDefault(ctx context.Context, projectID, roleKey, r
 		if err != nil {
 			return roleSpawnSelection{}, false, err
 		}
-		return available[int(pick.Int64())], true, nil
+		picked := available[int(pick.Int64())]
+		picked.Skipped = skipped
+		return picked, true, nil
+	}
+	if fallback != nil {
+		// Every entry the pool could start was login-rejected: fall back to today's pick (the first skipped entry in rotation order) and
+		// say that everything was unhealthy, instead of looping or refusing a spawn the old code would have made.
+		fallback.Skipped = skipped
+		fallback.AllUnhealthy = true
+		return *fallback, true, nil
 	}
 	return roleSpawnSelection{Defaults: defaults}, false, nil
 }

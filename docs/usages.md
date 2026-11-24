@@ -86,6 +86,15 @@ If Codex rejects the token, the fetcher re-reads `auth.json` once in case the
 CLI rotated it meanwhile. Error text is redacted of the access token, and the
 HTTP client drops credential headers on cross-origin redirects.
 
+The role-default spawn pool also reads this snapshot: when it picks the next
+default for a role, it skips an entry whose provider's active login is known
+rejected — the active profile reads `auth_missing` or `token_expired` — and
+picks the next healthy entry in rotation order, naming the skip in the spawn
+response and room notice (`skipped codex/native/gpt-6-sol: login rejected`).
+A stale, errored or unknown reading never skips, and when every entry is
+rejected the pool falls back to the first one and says so; an explicit
+harness/model choice is never affected (see [reference.md](reference.md)).
+
 Claude Code windows: `session` (5 h), `weekly`, `weekly_opus`, `weekly_sonnet`,
 one `weekly_scoped:<model>` window for each per-model weekly limit the
 account reports (parsed entry by entry, so a malformed sibling or an

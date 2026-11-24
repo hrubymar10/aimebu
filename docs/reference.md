@@ -692,7 +692,7 @@ prompt** preview of what an agent of the role is told, extension included, as
 last saved. Each role picks defaults in turn (with a durable
 cursor per project and role) or randomly. Project settings can inherit or
 override each role's list and mode; an empty list leaves the choice manual.
-Unavailable machines, unmapped project folders, launchers, and models are skipped. The Spawn dialog
+Unavailable machines, unmapped project folders, launchers, and models are skipped. So is an entry whose provider's active login is already known rejected in the usage snapshot (`auth_missing`, or an expired token): the pool picks the next healthy entry in rotation order and the spawn notice names the skip ("skipped codex/native/gpt-6-sol: login rejected"); a stale, errored or unknown reading never skips. When every entry is rejected the pool does not loop: it falls back to the first skipped entry and the notice says every configured default entry is unhealthy. The Spawn dialog
 prefills the next available choice and remains editable. Roles are global
 only, with no per-project roles.
 Project settings → Agents also has **Role prompt extensions** (owner or
@@ -1252,7 +1252,7 @@ choosing a different harness or model from an available
 default supplies a reason, recorded in the room. Using a default is recorded
 there too. An explicit choice is required when the role has no available
 default. One agent is started per call; the response identifies a default
-that was used. The optional `join_parent: true` (lead or dispatcher only) also joins the new agent, quietly, to its room's parent room such as `general`, subject to the flow's join rules (409 `join_parent_refused` otherwise).
+that was used, and names the pool entries skipped because their provider's active login is known rejected. The optional `join_parent: true` (lead or dispatcher only) also joins the new agent, quietly, to its room's parent room such as `general`, subject to the flow's join rules (409 `join_parent_refused` otherwise).
 `run_command` starts a long command outside the turn: it runs under the
 supervisor in the agent's own checkout (the same rights its Bash has there,
 with none of its keys), and when it ends the agent is woken with a note — exit
