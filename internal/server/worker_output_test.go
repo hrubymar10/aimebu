@@ -572,3 +572,33 @@ func TestNoticeOutputRechecksRoomAccessOnFirstDelivery(t *testing.T) {
 		t.Fatalf("the resent note changed after the lead left: %+v", out)
 	}
 }
+
+// In the leader-dispatcher flow the leader's own spawn rules name only the dispatcher and researchers, and the workers are spawned by the
+// dispatcher; the active lead reads such a worker all the same (A9-17), while a worker still may not and another lead is still refused.
+func TestAgentOutputToolLeadReadsWorkerSpawnedByDispatcher(t *testing.T) {
+	o := newOutputFixture(t)
+	workerLog(t, o)
+	lead, leadKey := o.createToolAgentNamed(t, "role_leader_default", "outputlead")
+	otherLead, _ := o.createToolAgentNamed(t, "role_leader_default", "otherlead")
+	dispatcher, _ := o.createToolAgentNamed(t, "role_dispatcher_default", "outputdispatcher")
+	_, workerKey := o.createToolAgentNamed(t, "role_out", "outputworker")
+	if _, err := o.exec(`UPDATE agent SET created_by=? WHERE id=?`, dispatcher.ID, o.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.exec(`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id=?`, o.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/agent/agents/" + o.agent.ID + "/output"
+	if status, out := readAgentOutput(t, o, leadKey, path); status != 200 || out.Turns == 0 {
+		t.Fatalf("lead reads the dispatcher's worker: %d %+v", status, out)
+	}
+	if status, _ := readAgentOutput(t, o, workerKey, path); status != 403 {
+		t.Fatalf("a worker reads another worker: %d", status)
+	}
+	if status, _ := readAgentOutput(t, o, leadKey, "/api/agent/agents/"+otherLead.ID+"/output"); status != 403 {
+		t.Fatalf("lead reads another lead: %d", status)
+	}
+	if status, _ := readAgentOutput(t, o, leadKey, "/api/agent/agents/"+lead.ID+"/output"); status != 403 {
+		t.Fatalf("lead reads itself: %d", status)
+	}
+}

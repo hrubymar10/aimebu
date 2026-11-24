@@ -18,9 +18,11 @@ import (
 // reader itself).
 func (s *Store) AuthorizeAgentOutputRead(ctx context.Context, readerID, targetID string) (machineID string, err error) {
 	err = s.Tx(ctx, func(tx *Tx) error {
-		var readerProject, targetProject, roleKey string
-		var targetLead bool
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, readerID).Scan(&readerProject); err != nil {
+		var readerProject, readerDesired, targetProject, roleKey string
+		var readerLead, targetLead bool
+		var readerRevoked bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.desired,a.revoked_at IS NOT NULL,r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, readerID).
+			Scan(&readerProject, &readerDesired, &readerRevoked, &readerLead); err != nil {
 			return err
 		}
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.machine_id,r.role_key,r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, targetID).
@@ -29,6 +31,14 @@ func (s *Store) AuthorizeAgentOutputRead(ctx context.Context, readerID, targetID
 		}
 		if targetProject != readerProject {
 			return sql.ErrNoRows
+		}
+		if readerLead && readerDesired == "active" && !readerRevoked {
+			// An active lead reads any non-lead agent of its project, whatever the flow's spawn rules say: in the leader-dispatcher flow
+			// the dispatcher spawns the workers, so the lead's own spawn rules (dispatcher, researcher) never name them.
+			if targetLead || targetID == readerID {
+				return ErrForbidden
+			}
+			return nil
 		}
 		if err := tx.authorizeSpawnActor(readerProject, "agent", readerID, false); err != nil {
 			return err
