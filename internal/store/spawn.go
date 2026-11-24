@@ -692,6 +692,82 @@ func (tx *Tx) SetAgentDesiredByAgent(id, actorID, desired string, rev int64) (Ag
 	return tx.setAgentDesired(id, "agent", actorID, desired, rev, true, false)
 }
 
+// dropStoppedAgentNotes drops the queued notes of an agent that has just been stopped: the dispatcher refuses a stopped agent, so no
+// new turn starts for them, and a deliberate stop ends them as "undelivered: agent stopped" instead of leaving them waiting for a
+// reactivation that may never come. The messages themselves are untouched and stay visible in their rooms; each room with dropped
+// notes gets one notes_dropped event. Notes already handed to an admitted turn whose delivery may be in flight keep their state (a
+// later process report still walks them through the note transitions), an agent a switch was moving (of any state: draining, starting
+// or failed — the switch, its retry or the reactivate that follows intends to run the agent again) keeps all of its notes, and so does
+// an agent a team-flow change is draining to start again; a revoked agent's removal path settles its own state.
+func (tx *Tx) dropStoppedAgentNotes(agentID, switchState string) error {
+	if switchState != "" {
+		return nil
+	}
+	var draining bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM team_flow_migration_agent ma JOIN team_flow_migration m ON m.id=ma.migration_id WHERE ma.agent_id=? AND m.state='draining')`, agentID).Scan(&draining); err != nil {
+		return err
+	}
+	if draining {
+		return nil
+	}
+	var revoked bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT revoked_at IS NOT NULL FROM agent WHERE id=?`, agentID).Scan(&revoked); err != nil {
+		return err
+	}
+	if revoked {
+		return nil
+	}
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.room_id,COALESCE(r.project_id,''),COUNT(*) FROM note n JOIN room r ON r.id=n.room_id
+		WHERE n.agent_id=? AND n.state='queued'
+		AND n.id NOT IN(SELECT tn.note_id FROM turn_note tn JOIN turn t ON t.id=tn.turn_id
+			WHERE t.agent_id=? AND t.exec='pending'
+			AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested'))
+		GROUP BY n.room_id`, agentID, agentID)
+	if err != nil {
+		return err
+	}
+	type queued struct {
+		roomID    string
+		projectID string
+		count     int
+	}
+	rooms := []queued{}
+	for rows.Next() {
+		var item queued
+		if err := rows.Scan(&item.roomID, &item.projectID, &item.count); err != nil {
+			rows.Close()
+			return err
+		}
+		rooms = append(rooms, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, item := range rooms {
+		result, err := tx.Exec(`UPDATE note SET state='dropped' WHERE agent_id=? AND room_id=? AND state='queued'
+			AND id NOT IN(SELECT tn.note_id FROM turn_note tn JOIN turn t ON t.id=tn.turn_id
+				WHERE t.agent_id=? AND t.exec='pending'
+				AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested'))`, agentID, item.roomID, agentID)
+		if err != nil {
+			return err
+		}
+		dropped, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if dropped == 0 {
+			continue
+		}
+		if _, err := tx.AppendEvent(Event{Kind: "notes_dropped", ProjectID: item.projectID, RoomID: item.roomID, AgentID: agentID,
+			PayloadJSON: payloadJSON(map[string]string{"reason": "agent stopped", "count": fmt.Sprint(dropped)})}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64, authorize, fresh bool) (AgentCard, error) {
 	var projectID, current, observed, checkoutID, tool, roleKey, roleCardinality string
 	var roleDeleted, leadRole bool
@@ -944,6 +1020,9 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 			if _, err := tx.AppendEvent(Event{Kind: "turn_dispatch_cancelled", ProjectID: projectID, AgentID: id, TurnID: x.id, PayloadJSON: payloadJSON(map[string]string{"reason": "stop_before_dispatch"})}); err != nil {
 				return AgentCard{}, err
 			}
+		}
+		if err := tx.dropStoppedAgentNotes(id, switchState); err != nil {
+			return AgentCard{}, err
 		}
 		var running, pendingUncertain int
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE agent_id=? AND exec='running'`, id).Scan(&running); err != nil {

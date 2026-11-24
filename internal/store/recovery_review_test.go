@@ -147,7 +147,9 @@ func TestStoppedAgentCannotResolveRecoveryByCreatingContinuation(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped',observed='stopped' WHERE id=?`, f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, true); err != nil {
+	// A genuine crash (no cancel intent) of a stopped agent's turn still raises the recovery, exactly as it would for an active one;
+	// a deliberate stop is what raises nothing (see TestStopDuringTurnCancelsWithoutRecovery).
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
 		t.Fatal(err)
 	}
 	items, err := s.InboxForUser(ctx, owner)
@@ -162,23 +164,28 @@ func TestStoppedAgentCannotResolveRecoveryByCreatingContinuation(t *testing.T) {
 	}
 }
 
-func TestStopOnReadonlyTurnCreatesOwnerItemWithoutDiagnostic(t *testing.T) {
+func TestStopOnReadonlyTurnCancelsWithoutItemOrDiagnostic(t *testing.T) {
 	t.Parallel()
 	s, f, owner := recoveryFixture(t, true)
 	ctx := context.Background()
 	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 0); return err }); err != nil {
 		t.Fatal(err)
 	}
+	// The stop itself is why the turn ends, so nothing is recovered and no read-only diagnostic is started.
 	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, true); err != nil {
 		t.Fatal(err)
 	}
 	items, err := s.InboxForUser(ctx, owner)
-	if err != nil || len(items) != 1 || items[0].TurnID != f.turn.ID {
+	if err != nil || len(items) != 0 {
 		t.Fatalf("stopped recovery items=%+v %v", items, err)
 	}
 	var diagnostics int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='diagnostic'`, f.turn.ID).Scan(&diagnostics); err != nil || diagnostics != 0 {
 		t.Fatalf("stopped diagnostics=%d %v", diagnostics, err)
+	}
+	var outcome, settle string
+	if err := s.db.QueryRow(`SELECT outcome,settle FROM turn WHERE id=?`, f.turn.ID).Scan(&outcome, &settle); err != nil || outcome != "cancelled" || settle != "settled" {
+		t.Fatalf("stopped readonly turn outcome=%q settle=%q %v", outcome, settle, err)
 	}
 }
 

@@ -427,6 +427,8 @@ excluded. An error `spawn_result` records a terminal failure for that
 generation, so pings do not resend it indefinitely. A `control` frame updates
 the desired revision. Stop
 cancels a running turn and confirms the stop only after its process exit;
+the server records such an exit as a cancelled turn and raises no recovery for
+it (a deliberate stop is not a failure);
 the supervisor attempts a force kill after 30 seconds when an adapter
 supports it. A disconnected supervisor receives current desired states in
 the next `hello_ack`. The server also resends an unconfirmed stop as a
@@ -555,6 +557,17 @@ launched, the supervisor reports a definite start failure. Recovery shows the
 start error and offers Retry or Abandon without a diagnostic or a warning that
 work may have run. A missing tools access error tells the owner to start the
 agent again before retrying.
+A turn the agent's own deliberate stop ends is not a failure: when a person,
+the lead or the dispatcher stops the agent (or closes its room, which stops its
+agents) and the stop kills the running turn (the supervisor reports the exit as
+the stop's cancel, such as exit code 143), the server records the turn as
+cancelled (`outcome` `cancelled`, settled), aborts its delivered notes, and
+raises no recovery item, no Inbox card and no lead note — the exit event carries
+`cancel_reason: agent stopped`. A turn that carries a turn interrupt request
+keeps today's path whatever the stop did (a request whose turn then ends another
+way changes nothing). A genuine crash, OOM or unrequested kill (no
+cancel intent, or a cancel while the agent is still desired active) takes the
+ordinary recovery path below exactly as before.
 Owner/operator and lead decisions
 use an item revision and idempotency key: Resume creates a linked turn with
 evidence and a continuation instruction, Retry creates one with raw notes,
@@ -586,7 +599,10 @@ continuation never started replaces it with another linked continuation and
 preserves the recovery evidence while the agent remains active. If the agent
 was stopped before hello, its notes are aborted and the stop is confirmed.
 Stopping an unsent diagnostic or correction runs its parent cleanup; stopping
-an unsent continuation aborts its notes.
+an unsent continuation aborts its notes. A stop of an agent whose turn the
+stop's cancel then ends raises no recovery item at all (see above); only a
+crash or an unrequested kill after the stop still raises one, which the
+periodic settling then resolves as `agent stopped` if the agent stays stopped.
 Live process goroutines send through the current machine socket after reconnect.
 The supervisor replays each unacknowledged process exit and unreceipted answer
 after `hello`, so a disconnect cannot strand those frames or rerun the tool.
@@ -650,6 +666,14 @@ stopped agents, recovery blocks, provider quota, active or unsettled turns,
 and the per-machine/tool `dispatch_switch_gate` pause prevent ordinary dispatch
 without discarding notes. A pending correction or verified read-only diagnostic
 turn can bypass the ordinary recovery block while still respecting gates.
+Stopping an agent is the exception: the stop itself drops its queued notes as
+"undelivered: agent stopped" (one `notes_dropped` event per room; the messages
+stay in their rooms' history), so a stopped agent never starts another turn for
+them. Notes an admitted turn whose delivery may still be in flight carries keep
+their state, an agent a switch was moving (draining, starting or failed: the
+switch, its retry or the reactivate that follows intends to run the agent again)
+keeps all of its notes, and so does an agent a team-flow change is draining to
+start again.
 
 Repeated failures before admission back off per agent, doubling from 200 ms
 up to 25.6 seconds. A correction or diagnostic that fails three such

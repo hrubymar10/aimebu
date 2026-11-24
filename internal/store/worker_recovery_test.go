@@ -249,3 +249,113 @@ func TestOtherLeadGetsNoSettledMetadata(t *testing.T) {
 		t.Fatalf("an unassigned lead on a settled item: %v", err)
 	}
 }
+
+func TestStopDuringTurnCancelsWithoutRecovery(t *testing.T) {
+	t.Parallel()
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	// The fixture's turn is admitted and acknowledged, so it is running with its notes in turn when the stop lands.
+	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 0); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 143, false, true); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("human inbox=%+v err=%v", items, err)
+	}
+	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 0 {
+		t.Fatalf("lead recoveries=%+v err=%v", recoveries, err)
+	}
+	var notes int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM note WHERE wake_reason='worker_recovery'`).Scan(&notes); err != nil || notes != 0 {
+		t.Fatalf("worker_recovery notes=%d err=%v", notes, err)
+	}
+	var outcome, settle string
+	if err := s.db.QueryRow(`SELECT outcome,settle FROM turn WHERE id=?`, f.turn.ID).Scan(&outcome, &settle); err != nil || outcome != "cancelled" || settle != "settled" {
+		t.Fatalf("stopped turn outcome=%q settle=%q err=%v", outcome, settle, err)
+	}
+	var noteState string
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, f.note.ID).Scan(&noteState); err != nil || noteState != "aborted" {
+		t.Fatalf("stopped turn note=%q err=%v", noteState, err)
+	}
+	var blocked bool
+	if err := s.db.QueryRow(`SELECT recovery_block FROM agent WHERE id=?`, f.agent.ID).Scan(&blocked); err != nil || blocked {
+		t.Fatalf("recovery_block=%v err=%v", blocked, err)
+	}
+	var cancelReason string
+	if err := s.db.QueryRow(`SELECT json_extract(payload_json,'$.cancel_reason') FROM event WHERE turn_id=? AND kind='turn_process_exit'`, f.turn.ID).Scan(&cancelReason); err != nil || cancelReason != "agent stopped" {
+		t.Fatalf("exit cancel_reason=%q err=%v", cancelReason, err)
+	}
+}
+
+func TestStopDropsQueuedNotesWithoutStartingTurn(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, false)
+	ctx := context.Background()
+	// The seeded turn ends by the deliberate stop itself: cancelled, nothing recovered.
+	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 0); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 143, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmAgentProcessExit(ctx, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The agent starts again and a new message queues a note for it, which waits while it is stopped once more.
+	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "active", 1); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: owner, Body: "one more thing"}); err != nil {
+		t.Fatal(err)
+	}
+	var queued string
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE agent_id=? AND message_id=(SELECT id FROM message WHERE body='one more thing')`, f.agent.ID).Scan(&queued); err != nil || queued != "queued" {
+		t.Fatalf("queued note=%q err=%v", queued, err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 2); return err }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE agent_id=? AND message_id=(SELECT id FROM message WHERE body='one more thing')`, f.agent.ID).Scan(&queued); err != nil || queued != "dropped" {
+		t.Fatalf("stopped agent's queued note=%q err=%v", queued, err)
+	}
+	var count int
+	if err := s.db.QueryRow(`SELECT json_extract(payload_json,'$.count') FROM event WHERE kind='notes_dropped' AND agent_id=? AND json_extract(payload_json,'$.reason')='agent stopped'`, f.agent.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("notes_dropped event count=%d err=%v", count, err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, f.agent.ID, "")
+	if err != nil || ready || delivery.TurnID != "" {
+		t.Fatalf("dispatch after stop=%+v ready=%t err=%v", delivery, ready, err)
+	}
+	var turns int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE agent_id=? AND id<>?`, f.agent.ID, f.turn.ID).Scan(&turns); err != nil || turns != 0 {
+		t.Fatalf("turns started after stop=%d err=%v", turns, err)
+	}
+}
+
+func TestCrashAfterStopStillRaisesRecovery(t *testing.T) {
+	t.Parallel()
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	if err := s.Tx(ctx, func(tx *Tx) error { _, err := tx.SetAgentDesired(f.agent.ID, owner, "stopped", 0); return err }); err != nil {
+		t.Fatal(err)
+	}
+	// A genuine crash (no cancel intent) keeps the ordinary recovery path exactly as before.
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
+		t.Fatal(err)
+	}
+	recoveries, err := s.ListLeadRecoveries(ctx, lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 1 {
+		t.Fatalf("lead recoveries=%+v err=%v", recoveries, err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) > 0 {
+		t.Fatalf("crash recovery reached the human inbox=%+v", items)
+	}
+}

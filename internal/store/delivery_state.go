@@ -418,9 +418,9 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		workTree = strings.ToValidUTF8(workTree[:200], "")
 	}
 	return s.Tx(ctx, func(tx *Tx) error {
-		var projectID, roomID, turnAgent, exec, settle, tool, mode string
+		var projectID, roomID, turnAgent, exec, settle, tool, mode, desired string
 		var turnGeneration int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,t.room_id,t.agent_id,t.generation,t.exec,t.settle,a.tool,t.mode FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, turnID).Scan(&projectID, &roomID, &turnAgent, &turnGeneration, &exec, &settle, &tool, &mode); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,t.room_id,t.agent_id,t.generation,t.exec,t.settle,a.tool,t.mode,a.desired FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, turnID).Scan(&projectID, &roomID, &turnAgent, &turnGeneration, &exec, &settle, &tool, &mode, &desired); err != nil {
 			return err
 		}
 		if turnAgent != agentID || turnGeneration != generation {
@@ -465,6 +465,16 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		// cannot continue falls back to the ordinary failure path below.
 		limitStall := info.LimitStall && !terminal && !cancel && mode == "normal"
 		interrupted := info.Interrupted && !limitStall && !terminal && !cancel && !providerLimited && mode == "normal"
+		// A cancel the supervisor reports for an agent whose desired state is already stopped is the deliberate stop working: a person,
+		// the lead or the dispatcher asked the agent to stop (or its room closed, which stops its agents), and the stop killed the turn.
+		// The turn is recorded as cancelled-by-stop and nothing is recovered: a genuine crash, OOM or unrequested kill (no cancel intent,
+		// or a cancel while the agent is still desired active) keeps the ordinary recovery path. A turn that carries a turn interrupt
+		// request keeps today's path whatever the stop did: a request whose turn then ends another way changes nothing (see turn_interrupt.go).
+		var interruptRequested bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE turn_id=? AND kind='turn_interrupt_requested')`, turnID).Scan(&interruptRequested); err != nil {
+			return err
+		}
+		stoppedByStop := cancel && desired == "stopped" && !interruptRequested
 		limitContinued := false
 		if limitStall {
 			continued, err := tx.createLimitContinuation(turnID, errorEvent, workTree)
@@ -546,6 +556,19 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			if _, err := tx.Exec(`UPDATE turn SET outcome='unknown' WHERE id=?`, turnID); err != nil {
 				return err
 			}
+		} else if stoppedByStop {
+			if err := TurnOutcomeTransitions.Transition("none", "cancelled"); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE turn SET outcome='cancelled',settle='settled' WHERE id=? AND settle='pending'`, turnID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE note SET state='aborted' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('dispatched','in_turn','unknown')`, turnID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE agent SET recovery_block=0 WHERE id=?`, agentID); err != nil {
+				return err
+			}
 		} else if !terminal {
 			if err := TurnOutcomeTransitions.Transition("none", "unknown"); err != nil {
 				return err
@@ -563,6 +586,9 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		payload := map[string]string{"exit_code": fmt.Sprint(exitCode)}
 		if requeued {
 			payload["interrupt"] = TurnInterruptRequeue
+		}
+		if stoppedByStop {
+			payload["cancel_reason"] = "agent stopped"
 		}
 		if !terminal && !providerLimited && !threadMissing {
 			payload["evidence"] = fmt.Sprintf("Process exited with code %d.", exitCode)
@@ -602,6 +628,8 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 		}
 		if limitContinued || requeued {
 			// The continuation turn carries the notes (or they are queued again) and the recovery path is not taken: there is no card to resolve.
+		} else if stoppedByStop {
+			// The deliberate stop cancelled the turn: no recovery item, no Inbox card, no lead note.
 		} else if !terminal && !providerLimited && !threadMissing {
 			if err := tx.ensureRecoveryPath(turnID); err != nil {
 				return err

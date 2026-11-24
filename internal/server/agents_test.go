@@ -681,11 +681,12 @@ func TestStopPendingBeforeDispatchSettlesAndReleasesWriter(t *testing.T) {
 		t.Fatalf("stop card=%+v", card)
 	}
 	state, err := f.db.DeliveryState(context.Background(), turn.ID)
-	if err != nil || state.Exec != "killed" || state.Settle != "settled" || state.NoteState != "queued" {
+	if err != nil || state.Exec != "killed" || state.Settle != "settled" || state.NoteState != "dropped" {
 		t.Fatalf("turn=%+v %v", state, err)
 	}
+	// A deliberate stop drops the agent's queued notes as undelivered: they wait for no reactivation that may never come.
 	queued, err := f.db.NoteForAgentMessage(context.Background(), agent.ID, note.MessageID)
-	if err != nil || queued.State != "queued" {
+	if err != nil || queued.State != "dropped" {
 		t.Fatalf("note=%+v %v", queued, err)
 	}
 	assertWriterReleased(t, f, agent.CheckoutID)
