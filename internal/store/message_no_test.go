@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestMessageByNoAndReferenceResolution(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
 	ctx := context.Background()
-	_, room, first := fixture(t, s)
+	project, room, first := fixture(t, s)
 	found, err := s.MessageByNo(ctx, first.No)
 	if err != nil || found.ID != first.ID || found.RoomID != room.ID || found.Seq != first.Seq {
 		t.Fatalf("MessageByNo = %+v %v", found, err)
@@ -87,12 +88,27 @@ func TestMessageByNoAndReferenceResolution(t *testing.T) {
 			t.Fatalf("ResolveMessageRef(%q) = %q %v, want it unchanged", ref, id, err)
 		}
 	}
-	// An agent's answer may name the message it replies to by number; the reference becomes the id.
-	messages := []answer.Message{{ReplyTo: "#1"}, {ReplyTo: first.ID}, {ReplyTo: "#42"}}
+	// An agent's answer may name the message it replies to by number; the reference becomes the id when the room the message goes to carries
+	// that number, and a number another room carries stays as written for the validation to report.
+	other, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "other", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMessage, err := s.InsertMessage(ctx, Message{RoomID: other.ID, AuthorKind: "system", AuthorID: "system", Body: "elsewhere"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []answer.Message{
+		{Room: room.ID, ReplyTo: "#1"},
+		{Room: room.ID, ReplyTo: first.ID},
+		{Room: room.ID, ReplyTo: "#42"},
+		{Room: room.ID, ReplyTo: fmt.Sprintf("%d", otherMessage.No)},
+		{Room: "", ReplyTo: "#1"},
+	}
 	if err := s.Tx(ctx, func(tx *Tx) error { return tx.resolveMessageRefs(messages) }); err != nil {
 		t.Fatal(err)
 	}
-	if messages[0].ReplyTo != first.ID || messages[1].ReplyTo != first.ID || messages[2].ReplyTo != "#42" {
+	if messages[0].ReplyTo != first.ID || messages[1].ReplyTo != first.ID || messages[2].ReplyTo != "#42" || messages[3].ReplyTo != fmt.Sprintf("%d", otherMessage.No) || messages[4].ReplyTo != "#1" {
 		t.Fatalf("resolved references: %+v", messages)
 	}
 }

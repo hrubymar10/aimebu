@@ -157,7 +157,7 @@ func (tx *Tx) deliveryFailedInbox(parent answerTurn, toLead bool) error {
 	}
 	if leadID != "" {
 		// A worker's undeliverable answer is the lead's to settle first; people see it only once the lead's interval passes (SweepWorkerRecoveries).
-		_, err := tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, answerHeldReason)
+		_, err := tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, answerHeldReason, saved.Error)
 		return err
 	}
 	if _, err := tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: parent.roomID, AgentID: parent.agentID, TurnID: parent.id,
@@ -372,7 +372,7 @@ func (tx *Tx) brokenSessionRecovery(parent answerTurn) error {
 		VALUES (?,?,?,?,?,'agent',?,'recovery',?,?)`, id, projectID, parent.roomID, parent.id, parent.agentID, parent.agentID, string(options), timestamp()); err != nil {
 		return err
 	}
-	_, err = tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, brokenSessionReason)
+	_, err = tx.handRecoveryToLead(id, projectID, parent.roomID, parent.agentID, parent.id, brokenSessionReason, "")
 	return err
 }
 

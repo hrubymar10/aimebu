@@ -474,7 +474,8 @@ func TestCommittedAnswerResolvesPriorDeliveryFailure(t *testing.T) {
 func TestInvalidBatchRequestsOneCorrectionThenCommits(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, true)
-	bad := fmt.Sprintf(`{"messages":[{"room":%q,"body":"valid"},{"room":%q,"body":"bad","reply_to":"msg_missing"}]}`, f.room.ID, f.room.ID)
+	// An unknown room is a store-level shape error, so the whole batch is held (and recorded) and the no-action harness is asked to correct it.
+	bad := fmt.Sprintf(`{"messages":[{"room":%q,"body":"valid"},{"room":"room_unknown","body":"bad"}]}`, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, bad)
 	if err != nil || receipt.Result != "correction_requested" {
 		t.Fatalf("first answer=%+v %v", receipt, err)
@@ -560,7 +561,9 @@ func TestNeverStartedCorrectionSettlesParentAndRaisesBlockedFailure(t *testing.T
 	}
 }
 
-func TestStructuredAnswerHoldsUnavailableClosedAndCrossRoom(t *testing.T) {
+// A cross-room reply_to no longer holds the answer (it is dropped with a warning, see TestAnswerReplyToInAnotherRoomIsDroppedWithAWarning);
+// these two causes still hold the reply whole.
+func TestStructuredAnswerHoldsUnavailableAndClosed(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, reason string
@@ -573,17 +576,6 @@ func TestStructuredAnswerHoldsUnavailableClosedAndCrossRoom(t *testing.T) {
 				t.Fatal(err)
 			}
 			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"late"}]}`, f.room.ID)
-		}},
-		{"cross_room_reply", "correction_requested", true, func(t *testing.T, s *Store, f executionFixture) string {
-			other, err := s.CreateRoom(context.Background(), Room{ProjectID: f.project.ID, Kind: "task", Title: "other", CreatedBy: "usr_answers"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			message, err := s.InsertMessage(context.Background(), Message{RoomID: other.ID, AuthorKind: "system", AuthorID: "system", Body: "other"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			return fmt.Sprintf(`{"messages":[{"room":%q,"body":"wrong ref","reply_to":%q}]}`, f.room.ID, message.ID)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -761,11 +761,17 @@ the answered-question check above) every ten seconds, which catches a turn
 whose kill raises its recovery only after the stop, and items opened before
 the rule existed. A worker's malformed final answer never reaches people first. The author gets
 the system note "Your previous reply was held: <error>. Send your final answer
-again…" (the error only, never the agent's text: the note is readable in the room) and is woken by it to resend, and no
+again…" — the error names the exact cause (which message, which field, what was
+wrong and how to fix it, for example "message 0 is a handoff without an
+outcome; set outcome to done, partial or failed"), while
+anything that would quote the agent's own text stays out (the note is readable
+in the room) — and is woken by it to resend, and no
 card is raised. When that does not settle it (the resent answer is held too)
 the failure goes to the project lead as a `delivery_failed` item with phase
 `answer_held` (choices Retry and Abandon, for the lead through `resolve_recovery` and for people after escalation), routed and
-escalated like any worker recovery. Two empty answers (`invalid_answer: EOF`) in
+escalated like any worker recovery; the lead's note carries the same reason
+(`Reason: …`) as its evidence, and the lead's Retry sends the worker a
+correction note that repeats it. Two empty answers (`invalid_answer: EOF`) in
 a row from one agent, with no tool activity in either turn, are a broken
 session: the lead gets one `recovery` item with phase `broken_session`
 (choices `restart`, for the lead through `resolve_recovery` and for people after escalation, which clears the native session so the next turn starts
@@ -1010,8 +1016,14 @@ checks the project's live-agent limit.
 One concept, the reply: a message links to the one it answers with
 `reply_to`, any message in the same room (a reply to a reply is fine). Its
 `thread_root` is derived, the first message of the conversation, and comes back
-in every message view; a writer never chooses it. A `reply_to` that is missing
-or in another room returns `invalid_answer` (400). An inbox answer replies to
+in every message view; a writer never chooses it. An agent's answer may also
+name the message by its number, as `#N` or a bare JSON number, resolved like a
+`#N` reference. A `reply_to` that is missing or in another room returns
+`invalid_answer` (400) for a person's post, and an agent's answer never loses
+its message over it: the message is posted without the reply link and the
+receipt carries a warning saying exactly why (`reply_to 48356 dropped: message
+is in another room`, a room the agent is not a member of, or no message carries
+the reference). An inbox answer replies to
 the ask, so it lands in the ask's conversation.
 
 An agent's single plain answer to the one person's message that woke its turn gets that message as `reply_to` when the agent named none; see the contract's agent I/O rules.

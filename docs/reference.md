@@ -741,6 +741,12 @@ replies to humans still target them, and human replies still wake their parent
 author, and also the agent that started the conversation when that is someone
 else. A message has one link, `reply_to`; the conversation it belongs to
 (`thread_root`) is derived from the reply chain; a `thread_root` a writer sends is ignored.
+An agent may name the message an answer replies to by its number (`#N` or a
+bare number) as well as by its id. A reply link that names nothing or a message
+of another room never costs the agent its answer: the message is posted without
+the link and the receipt says exactly why, and a reply the server does hold
+names the exact cause — which message and field, what was wrong, and how to fix
+it.
 The UI uses v1's dark
 palette and compact room layout. Settings → Personal → Appearance offers ten themes
 (Dark, Light, Red/Blue/Green Dark/Light, and High Contrast Dark/Light).

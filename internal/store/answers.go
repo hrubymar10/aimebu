@@ -301,7 +301,11 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 			return "", "", err
 		}
 		if member != 1 {
-			*dropped = append(*dropped, droppedMessage{i, "not_member", "agent is not an active room member"})
+			detail := "agent is not an active room member"
+			if item.Force {
+				detail += "; force does not allow posting into a room you are not a member of"
+			}
+			*dropped = append(*dropped, droppedMessage{i, "not_member", detail})
 			continue
 		}
 		if !item.Force {
@@ -314,6 +318,33 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 			}
 			if miss != "" {
 				return "missed_mention", fmt.Sprintf("message %d: %s", i, miss), nil
+			}
+		}
+		// A reply names one message of the room the message goes to, by id or by number. A reference that names nothing, or a message of
+		// another room (whether the agent may post there or not), never holds the answer: the link is dropped, the message is posted
+		// without it, and the receipt carries a warning saying why.
+		if item.ReplyTo != "" {
+			refRoom, found, err := tx.messageRefRoom(item.ReplyTo)
+			if err != nil {
+				return "", "", err
+			}
+			switch {
+			case !found:
+				*warnings = append(*warnings, fmt.Sprintf("message %d: reply_to %s dropped: no message carries that reference; the message was posted without the reply link", i, safeReplyRef(item.ReplyTo)))
+			case refRoom == item.Room:
+			default:
+				var member int
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, refRoom, turn.agentID).Scan(&member); err != nil {
+					return "", "", err
+				}
+				if member == 1 {
+					*warnings = append(*warnings, fmt.Sprintf("message %d: reply_to %s dropped: message is in another room; the message was posted without the reply link", i, safeReplyRef(item.ReplyTo)))
+				} else {
+					*warnings = append(*warnings, fmt.Sprintf("message %d: reply_to %s dropped: message is in a room you are not a member of; the message was posted without the reply link", i, safeReplyRef(item.ReplyTo)))
+				}
+			}
+			if refRoom != item.Room || !found {
+				input.Parsed.Messages[i].ReplyTo = ""
 			}
 		}
 		if item.Ask != nil || item.NeedsAttention || len(item.ProposedAnswers) > 0 || len(item.OpenQuestions) > 0 {
@@ -341,19 +372,6 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 			}
 			if recipients == 0 {
 				return "invalid_answer", "ask has no authorized recipient", nil
-			}
-		}
-		for _, ref := range []string{item.ReplyTo} {
-			if ref == "" {
-				continue
-			}
-			var refRoom string
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM message WHERE id=?`, ref).Scan(&refRoom)
-			if errors.Is(err, sql.ErrNoRows) || err == nil && refRoom != item.Room {
-				return "invalid_answer", fmt.Sprintf("message %d has an invalid reply or thread reference", i), nil
-			}
-			if err != nil {
-				return "", "", err
 			}
 		}
 		for _, attachment := range item.Attachments {
@@ -457,6 +475,45 @@ const heldReplyNotePrefix = "Your previous reply was held: "
 const partialHeldNotePrefix = "Part of your previous reply was held: "
 const outsideProjectDetail = "room is outside the agent project"
 
+// heldDetail makes a held-answer reason safe to put in a note the room can read: a parser error quotes what the agent wrote (a field name, a
+// character), so only fixed texts go in as they are and a quoting one is described instead.
+func heldDetail(detail string) string {
+	if strings.ContainsAny(detail, `"'`) || strings.Contains(detail, "json:") {
+		return "it was not one valid JSON answer object (malformed JSON, an unknown or misplaced field, or text around the object)"
+	}
+	return strings.TrimPrefix(detail, "invalid_answer: ")
+}
+
+// recoveryEvidence reduces a held-answer reason to one safe line for the lead's recovery note: the same fixed texts as a held-reply note,
+// with control characters and runs of space collapsed and a length bound, so a crafted reason cannot reshape the note.
+func recoveryEvidence(detail string) string {
+	detail = heldDetail(detail)
+	detail = strings.Join(strings.Fields(detail), " ")
+	runes := []rune(detail)
+	if len(runes) > 240 {
+		return string(runes[:240]) + "…"
+	}
+	return detail
+}
+
+// safeReplyRef reduces a reply reference to a form a note may echo: only the characters a message number or id is made of survive, so a
+// crafted reference cannot carry text or control characters into the note.
+func safeReplyRef(ref string) string {
+	safe := make([]rune, 0, len(ref))
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			safe = append(safe, r)
+		default:
+			safe = append(safe, '?')
+		}
+	}
+	if len(safe) > 64 {
+		safe = safe[:64]
+	}
+	return string(safe)
+}
+
 // routeInvalidReply decides where a held, malformed final answer goes. A person never sees a worker's malformed answer first:
 //  1. two empty answers in a row, with no tool activity, are a broken session: a recovery to the lead (restart with a fresh session);
 //  2. otherwise the agent is told why (the error only: the note is readable in the room, and the agent has its own answer in its session) and
@@ -503,9 +560,7 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 	}
 	// A parser error quotes what the agent wrote (a field name, a character); the room can read this note, so only the fixed
 	// validation texts go in as they are and a quoting one is described instead.
-	if strings.ContainsAny(detail, `"'`) || strings.Contains(detail, "json:") {
-		detail = "it was not one valid JSON answer object (malformed JSON, an unknown or misplaced field, or text around the object)"
-	}
+	detail = heldDetail(detail)
 	body := heldReplyNotePrefix + detail + ". Your previous answer is in your session; send your final answer again as exactly one JSON object with a messages array."
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err == nil, err

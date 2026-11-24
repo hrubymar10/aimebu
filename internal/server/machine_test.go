@@ -1078,7 +1078,8 @@ func TestFakeCorrectionTurnCommitsAfterInvalidBatch(t *testing.T) {
 	}
 	defer journal.Close()
 	fake := adapter.NewFake()
-	bad := fmt.Sprintf(`{"messages":[{"room":%q,"body":"valid"},{"room":%q,"body":"bad","reply_to":"msg_missing"}]}`, f.room.ID, f.room.ID)
+	// An unknown room is a shape error no dropped link can fix, so the batch is held and a correction turn is requested.
+	bad := fmt.Sprintf(`{"messages":[{"room":%q,"body":"valid"},{"room":"room_unknown","body":"bad"}]}`, f.room.ID)
 	fake.Script(parent.ID, adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(bad)}},
 		adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{TerminalEvent: true}})
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)

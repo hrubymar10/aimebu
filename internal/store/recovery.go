@@ -305,7 +305,7 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 		id, projectID, roomID, originID, agentID, agentID, string(optionsBytes), timestamp()); err != nil {
 		return err
 	}
-	handed, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, originID, reason)
+	handed, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, originID, reason, "")
 	if err != nil || handed {
 		return err
 	}
@@ -315,8 +315,9 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 }
 
 // handRecoveryToLead routes a just-inserted worker recovery item to the project lead (see workerRecoveryLead) and wakes it with a note.
-// It reports false when there is no lead to hand it to, and the item then stays with the people.
-func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reason string) (bool, error) {
+// detail carries the reason a held answer could not be delivered (empty for the other reasons); it is stated in the note, so the lead
+// decides on evidence instead of retrying blind. It reports false when there is no lead to hand it to, and the item then stays with the people.
+func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reason, detail string) (bool, error) {
 	leadID, leadRoom, due, err := tx.workerRecoveryLead(projectID, roomID, agentID)
 	if err != nil || leadID == "" {
 		return false, err
@@ -333,6 +334,9 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 	switch reason {
 	case answerHeldReason:
 		body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+		if detail != "" {
+			body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Reason: %s. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, recoveryEvidence(detail), id, roomID, agentID)
+		}
 	case brokenSessionReason:
 		body = fmt.Sprintf("Agent %s in room %s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
 	}

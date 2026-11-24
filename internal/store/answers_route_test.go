@@ -152,8 +152,12 @@ func TestResendToTheIntendedRoomSettlesTheHeldCard(t *testing.T) {
 	if err := s.AddMember(ctx, other.ID, "agent", f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The reply to other is invalid (a bad reply reference), so it is held whole and the card is raised in the turn's room.
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","reply_to":"msg_missing"}]}`, other.ID)); err != nil || receipt.Result != "held" {
+	// The reply to other is held whole for repeating an attachment (a store-level hold, so the candidate parses and the card records its
+	// target rooms), and the card is raised in the turn's room.
+	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_route',?,'hash','image/png',1,'p','owner',?)`, f.project.ID, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","attachments":["att_route"]},{"room":%q,"body":"y","attachments":["att_route"]}]}`, other.ID, other.ID)); err != nil || receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
@@ -188,7 +192,7 @@ func TestResendToAnotherRoomLeavesTheHeldCardOpen(t *testing.T) {
 	if err := s.AddMember(ctx, third.ID, "agent", f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","reply_to":"msg_missing"}]}`, other.ID)); err != nil || receipt.Result != "held" {
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","handoff":true,"outcome":"nope"}]}`, other.ID)); err != nil || receipt.Result != "held" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)

@@ -70,7 +70,15 @@ type LeadRecovery struct {
 }
 
 func (s *Store) ListLeadRecoveries(ctx context.Context, leadID, projectID string) ([]LeadRecovery, error) {
-	rows, err := s.readDB.QueryContext(ctx, `SELECT i.id,i.agent_id,i.room_id,COALESCE(i.turn_id,''),COALESCE((SELECT json_extract(e.payload_json,'$.reason') FROM event e WHERE e.kind='recovery_handed_to_lead' AND json_extract(e.payload_json,'$.inbox_item_id')=i.id ORDER BY e.seq DESC LIMIT 1),''),COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.kind='turn_process_exit' AND e.turn_id=i.turn_id ORDER BY e.seq DESC LIMIT 1),''),i.rev FROM inbox_item i WHERE i.project_id=? AND i.recovery_lead_id=? AND i.state='open' AND i.lead_due_at IS NOT NULL ORDER BY i.created_at,i.id`, projectID, leadID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.id,i.agent_id,i.room_id,COALESCE(i.turn_id,''),COALESCE((SELECT json_extract(e.payload_json,'$.reason') FROM event e WHERE e.kind='recovery_handed_to_lead' AND json_extract(e.payload_json,'$.inbox_item_id')=i.id ORDER BY e.seq DESC LIMIT 1),''),
+		COALESCE(
+			(SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.kind='turn_process_exit' AND e.turn_id=i.turn_id ORDER BY e.seq DESC LIMIT 1),
+			CASE WHEN i.kind='delivery_failed' THEN COALESCE(
+				NULLIF((SELECT json_extract(r.result_json,'$.error') FROM receipt r WHERE r.turn_id=i.turn_id AND r.answer_rev=0),''),
+				(SELECT json_extract(r.result_json,'$.error') FROM turn child JOIN receipt r ON r.turn_id=child.id
+					WHERE child.parent_turn_id=i.turn_id AND child.mode='correction' ORDER BY r.answer_rev DESC LIMIT 1),
+				'') ELSE '' END,
+			''),i.rev FROM inbox_item i WHERE i.project_id=? AND i.recovery_lead_id=? AND i.state='open' AND i.lead_due_at IS NOT NULL ORDER BY i.created_at,i.id`, projectID, leadID)
 	if err != nil {
 		return nil, err
 	}

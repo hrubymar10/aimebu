@@ -116,20 +116,29 @@ func TestAllMessagesRefusedHoldsWholeAnswer(t *testing.T) {
 	}
 }
 
-func TestStructuralErrorStillHoldsMixedReplyWhole(t *testing.T) {
+func TestMixedReplyDeliversWhatItCanAroundAHeldTarget(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
-	// As a lead, so the held reply also reaches people (a worker's goes back to it as a note only).
+	// As a lead, so the held target also reaches people (a worker's goes back to it as a note only).
 	asLead(t, s, f)
 	other := otherProjectRoom(t, s)
-	// A bad target beside a bad reply reference is still a shape error: nothing is delivered.
+	// A bad target beside a dropped reply reference delivers what it can: the bad target is held alone, the messages with a
+	// reference that names nothing post without the link and the receipt warns.
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"ok"},{"room":%q,"body":"elsewhere"},{"room":%q,"body":"x","reply_to":"msg_nope"}]}`, f.room.ID, other.ID, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" || len(receipt.MessageIDs) != 0 || len(receipt.HeldMessages) != 0 {
+	if err != nil || receipt.Result != "committed" || len(receipt.MessageIDs) != 2 || len(receipt.HeldMessages) != 1 || receipt.HeldMessages[0].Index != 1 || receipt.HeldMessages[0].Reason != "not_member" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
-	if got, _ := s.ListMessagesAfter(context.Background(), f.room.ID, 0); len(got) != 3 { // the seed message, the room notice, the author's note
-		t.Fatalf("messages=%+v", got)
+	found := false
+	for _, warning := range receipt.Warnings {
+		found = found || strings.Contains(warning, "reply_to msg_nope dropped: no message carries that reference")
+	}
+	if !found {
+		t.Fatalf("warnings=%q, want the dropped-reference warning", receipt.Warnings)
+	}
+	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
+	if err != nil || len(messages) != 5 { // the seed message, "ok", "x" (its dropped reference), the partial-held row, the author's note
+		t.Fatalf("messages=%+v", messages)
 	}
 	s2, f2 := answerFixture(t, false)
 	bad, err := applyCandidate(t, s2, f2.turn, f2.agent.ID, 0, `{"messages":[`)

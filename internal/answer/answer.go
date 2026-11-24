@@ -96,6 +96,9 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	if reasoning > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d leading reasoning block(s) removed", reasoning))
 	}
+	if problem, misshaped := answerShapeProblem(normalized, diagnostic); misshaped {
+		return candidate, fmt.Errorf("%w: %s", ErrInvalid, problem)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(normalized))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&candidate); err != nil {
@@ -103,7 +106,7 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return candidate, fmt.Errorf("%w: trailing data", ErrInvalid)
+		return candidate, fmt.Errorf("%w: the reply has text after the JSON object; send exactly one JSON object with a messages array", ErrInvalid)
 	}
 	candidate.Warnings = warnings
 	if candidate.Messages == nil || len(candidate.Messages) > 10 {
@@ -120,8 +123,16 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 		return candidate, fmt.Errorf("%w: reconciliation requires diagnostic mode", ErrInvalid)
 	}
 	for i, message := range candidate.Messages {
-		if strings.TrimSpace(message.Room) == "" || strings.TrimSpace(message.Body) == "" || len(message.Body) > 32<<10 {
-			return candidate, fmt.Errorf("%w: message %d needs a room and body of at most 32 KiB", ErrInvalid, i)
+		room, body := strings.TrimSpace(message.Room), strings.TrimSpace(message.Body)
+		switch {
+		case room == "" && body == "":
+			return candidate, fmt.Errorf("%w: message %d needs a room and a body", ErrInvalid, i)
+		case room == "":
+			return candidate, fmt.Errorf("%w: message %d needs a room", ErrInvalid, i)
+		case body == "":
+			return candidate, fmt.Errorf("%w: message %d needs a body", ErrInvalid, i)
+		case len(message.Body) > 32<<10:
+			return candidate, fmt.Errorf("%w: message %d: the body is longer than 32 KiB", ErrInvalid, i)
 		}
 		if message.Outcome != "" && !ValidOutcome(message.Outcome) {
 			return candidate, fmt.Errorf("%w: message %d has an invalid outcome; use %s", ErrInvalid, i, OutcomeChoices)
@@ -310,12 +321,7 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 		if json.Unmarshal(encoded, &fields) != nil || fields == nil {
 			return raw, nil
 		}
-		keys := make([]string, 0, len(fields))
-		for key := range fields {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
+		for _, key := range sortedFieldKeys(fields) {
 			if known[key] {
 				continue
 			}
@@ -351,6 +357,155 @@ func tolerateMessageMetadata(raw []byte) ([]byte, []string) {
 		return raw, nil
 	}
 	return normalized, warnings
+}
+
+// answerShapeProblem classifies the reply-shape faults a strict JSON decoder would only report as raw errors that quote what the agent wrote
+// (which a held-answer note may not repeat): text around the object, an unknown top-level field, a field of the wrong type, a reply_to that is
+// neither a number, an id nor null, and a missing messages array. It reports false when no such cause is found and the decoder's own error
+// stands.
+func answerShapeProblem(raw []byte, diagnostic bool) (string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", false
+	}
+	switch trimmed[0] {
+	case '{':
+	case '[':
+		return "the reply is a JSON array; send exactly one JSON object with a messages array", true
+	default:
+		return "the reply has text around the JSON object; send exactly one JSON object with a messages array", true
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+		// The bytes may hold one good object followed by text: tell that apart from JSON that is broken outright.
+		first := json.NewDecoder(bytes.NewReader(trimmed))
+		first.Decode(&envelope)
+		if len(envelope) > 0 {
+			return "the reply has text after the JSON object; send exactly one JSON object with a messages array", true
+		}
+		return "the reply is not valid JSON; send exactly one JSON object with a messages array", true
+	}
+	for _, key := range sortedFieldKeys(envelope) {
+		if key == "messages" || key == "reconciliation" {
+			continue
+		}
+		return fmt.Sprintf("the reply object has an unknown field %s; the fields are messages and reconciliation", safeFieldName(key)), true
+	}
+	messagesRaw, hasMessages := envelope["messages"]
+	if !hasMessages {
+		// A diagnostic answer carries only a reconciliation, so the messages checks below do not apply to it.
+		if diagnostic {
+			return "", false
+		}
+		return "the reply needs a messages array", true
+	}
+	var messages []map[string]json.RawMessage
+	if json.Unmarshal(messagesRaw, &messages) != nil {
+		return "the reply needs a messages array; every message is an object", true
+	}
+	for i, fields := range messages {
+		for _, key := range sortedFieldKeys(fields) {
+			value := bytes.TrimSpace(fields[key])
+			if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+				continue
+			}
+			switch key {
+			case "room", "body", "outcome":
+				if value[0] != '"' {
+					return fmt.Sprintf("message %d: %s must be text", i, key), true
+				}
+			case "needs_attention", "handoff", "force":
+				if value[0] != 't' && value[0] != 'f' {
+					return fmt.Sprintf("message %d: %s must be true or false", i, key), true
+				}
+			case "reply_to":
+				if value[0] == '"' || plainPositiveInteger(value) {
+					continue
+				}
+				return fmt.Sprintf("message %d: reply_to must be a message number, a msg_ id or null", i), true
+			case "attachments", "proposed_answers", "open_questions", "visual_plan", "appendix_pages":
+				if value[0] != '[' {
+					return fmt.Sprintf("message %d: %s must be an array", i, key), true
+				}
+			case "ask":
+				if value[0] != '{' {
+					return fmt.Sprintf("message %d: ask must be an object", i), true
+				}
+				if problem, misshaped := askShapeProblem(i, value); misshaped {
+					return problem, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// askShapeProblem classifies a wrong field type inside an ask, the one nested object an answer may carry.
+func askShapeProblem(i int, raw []byte) (string, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return fmt.Sprintf("message %d: ask must be an object", i), true
+	}
+	for _, key := range sortedFieldKeys(fields) {
+		value := bytes.TrimSpace(fields[key])
+		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+			continue
+		}
+		switch key {
+		case "kind", "text":
+			if value[0] != '"' {
+				return fmt.Sprintf("message %d: ask %s must be text", i, key), true
+			}
+		case "free_text":
+			if value[0] != 't' && value[0] != 'f' {
+				return fmt.Sprintf("message %d: ask free_text must be true or false", i), true
+			}
+		case "options":
+			if value[0] != '[' {
+				return fmt.Sprintf("message %d: ask options must be an array of texts", i), true
+			}
+		}
+	}
+	return "", false
+}
+
+func plainPositiveInteger(raw []byte) bool {
+	if len(raw) == 0 || raw[0] < '1' || raw[0] > '9' {
+		return false
+	}
+	for _, b := range raw {
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// safeFieldName makes a JSON key safe to name in a room-readable note: only letters, digits and a few separators survive, so a crafted key
+// cannot carry text or control characters into the note.
+func safeFieldName(key string) string {
+	name := make([]rune, 0, len(key))
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-', r == '.':
+			name = append(name, r)
+		default:
+			name = append(name, '?')
+		}
+	}
+	if len(name) > 40 {
+		name = name[:40]
+	}
+	return string(name)
+}
+
+func sortedFieldKeys(fields map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func knownVisualPlanType(kind string) bool {

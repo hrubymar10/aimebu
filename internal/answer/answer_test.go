@@ -268,3 +268,33 @@ func TestAskDropsAttentionControlsWithAWarning(t *testing.T) {
 		t.Fatalf("message=%+v warnings=%v", m, got.Warnings)
 	}
 }
+
+// The shape faults the strict decoder would only report as raw JSON errors come back as fixed, room-readable reasons: they name what was
+// wrong and how to fix it, and never quote what the agent wrote.
+func TestParseNamesTheExactShapeFault(t *testing.T) {
+	for _, c := range []struct {
+		name, raw, want string
+	}{
+		{"text before the object", `Clearly done. {"messages":[{"room":"r","body":"b"}]}`, "text around the JSON object"},
+		{"text after the object", `{"messages":[{"room":"r","body":"b"}]} hope that helps`, "after the JSON object"},
+		{"an array", `[{"room":"r","body":"b"}]`, "the reply is a JSON array"},
+		{"unknown top-level field", `{"messages":[],"source":"memory"}`, "unknown field source"},
+		{"unknown field with odd characters", `{"messages":[],"a b":1}`, "unknown field a?b"},
+		{"messages missing", `{}`, "needs a messages array"},
+		{"messages not an array", `{"messages":{"room":"r"}}`, "messages array"},
+		{"bool as text", `{"messages":[{"room":"r","body":"b","handoff":"yes"}]}`, "handoff must be true or false"},
+		{"text as bool", `{"messages":[{"room":"r","body":"b","outcome":true}]}`, "outcome must be text"},
+		{"array as text", `{"messages":[{"room":"r","body":"b","attachments":"att"}]}`, "attachments must be an array"},
+		{"reply_to object", `{"messages":[{"room":"r","body":"b","reply_to":{"no":1}}]}`, "reply_to must be a message number"},
+		{"ask as text", `{"messages":[{"room":"r","body":"b","ask":"question"}]}`, "ask must be an object"},
+		{"ask kind as number", `{"messages":[{"room":"r","body":"b","ask":{"kind":3,"text":"t","options":["a","b"]}}]}`, "ask kind must be text"},
+	} {
+		_, err := Parse([]byte(c.raw), false)
+		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.want) || strings.ContainsAny(err.Error(), `"'`) {
+			t.Fatalf("%s: err=%v, want it to name %q without quoting anything", c.name, err, c.want)
+		}
+	}
+	if _, err := Parse([]byte(`{"messages":[{"room":"r","body":"b"}]}`), false); err != nil {
+		t.Fatalf("a well-shaped answer was refused: %v", err)
+	}
+}

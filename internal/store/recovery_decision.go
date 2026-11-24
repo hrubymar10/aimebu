@@ -348,8 +348,24 @@ func choiceOffered(options []string, choice string) bool {
 func (tx *Tx) decideAnswerRecovery(phase, turnID, projectID, roomID, agentID, choice string) error {
 	switch {
 	case phase == answerHeldReason && choice == "retry":
-		_, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", OnlyTargets: []string{agentID},
-			Body: heldReplyNotePrefix + "your last final answer could not be delivered. Send your final answer again as exactly one JSON object with a messages array."})
+		body := heldReplyNotePrefix + "your last final answer could not be delivered. Send your final answer again as exactly one JSON object with a messages array."
+		// The correction note repeats the reason the answer was held, from the receipt the hold stored, so the resend fixes the cause.
+		var raw string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT result_json FROM receipt WHERE turn_id=? OR turn_id IN
+			(SELECT id FROM turn WHERE parent_turn_id=? AND mode='correction') ORDER BY created_at DESC,id DESC LIMIT 1`, turnID, turnID).Scan(&raw)
+		if err == nil {
+			var saved struct {
+				AnswerReceipt
+				CandidateRaw string `json:"candidate_raw"`
+			}
+			if json.Unmarshal([]byte(raw), &saved) == nil && saved.Error != "" {
+				body = heldReplyNotePrefix + "your last final answer could not be delivered: " + heldDetail(saved.Error) + ". Send your final answer again as exactly one JSON object with a messages array."
+			}
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+		_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", OnlyTargets: []string{agentID},
+			Body: body})
 		return err
 	case phase == brokenSessionReason && choice == "restart":
 		// The next turn starts a fresh native session (with the room's history) instead of resuming the one that answers with nothing.

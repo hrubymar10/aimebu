@@ -97,13 +97,15 @@ func TestDeliveryFailureNoticeOmitsPrivateParserField(t *testing.T) {
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
 	raw := `{"messages":[],"private cedar lake":true}`
+	// The classified parse error names the field with every odd character replaced, so nothing the agent wrote reaches the receipt the
+	// Inbox card is read from, the room notice or the correction note.
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "private cedar lake") {
+	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "unknown field private?cedar?lake") || strings.Contains(receipt.Error, "private cedar lake") {
 		t.Fatalf("parse receipt=%+v err=%v", receipt, err)
 	}
 	items, err := s.InboxForUser(context.Background(), "usr_answers")
-	if err != nil || len(items) != 1 || !strings.Contains(items[0].DeliveryError, "private cedar lake") {
-		t.Fatalf("private parser detail absent from Inbox: %+v err=%v", items, err)
+	if err != nil || len(items) != 1 || strings.Contains(items[0].DeliveryError, "private cedar lake") {
+		t.Fatalf("private parser detail reached the Inbox: %+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
 	if err != nil || len(messages) != 3 || strings.Contains(messages[1].Body, "private cedar lake") ||
