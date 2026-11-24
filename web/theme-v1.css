@@ -574,6 +574,9 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .open-questions-dialog .open-question-sheet input[type=radio] { flex: 0 0 auto; width: 18px; height: 18px; margin: 2px 0 0; }
 .open-questions-dialog .open-question-option { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .open-questions-dialog .open-question-sheet input[type=text] { flex: 1 1 12ch; min-width: 0; min-height: 36px; }
+/* The "Other" row has a taller field than a plain option's line, so its radio, label and field share one centre line instead of the top. */
+.open-questions-dialog .open-question-sheet label:has(input[type=text]) { align-items: center; }
+.open-questions-dialog .open-question-sheet label:has(input[type=text]) input[type=radio] { margin: 0; }
 @media (max-width: 720px) {
   #open-questions-dialog.open-questions-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; }
   #open-questions-dialog.open-questions-dialog[open] { display: flex; }
@@ -581,9 +584,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .open-questions-dialog .open-question-sheet, .open-questions-dialog .open-questions-review { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   .open-questions-dialog .open-question-sheet[hidden], .open-questions-dialog .open-questions-review[hidden] { display: none; }
   .open-questions-dialog .open-question-option { flex: 1 1 0; }
-  .open-questions-dialog .open-question-sheet label:has(input[type=text]) { flex-wrap: wrap; }
-  .open-questions-dialog .open-question-sheet label:has(input[type=text]) .open-question-option { flex: 1 1 calc(100% - 30px); }
-  .open-questions-dialog .open-question-sheet input[type=text] { flex-basis: 100%; }
+  .open-questions-dialog .open-question-sheet label:has(input[type=text]) .open-question-option { flex: 0 0 auto; }
+  .open-questions-dialog .open-question-sheet input[type=text] { flex-basis: 12ch; }
   .open-questions-step { min-width: 40px; min-height: 40px; }
   .open-questions-actions { flex: 0 0 auto; gap: 8px; padding: 10px 0 max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
   .open-questions-actions button { min-height: 44px; padding: 0 14px; }

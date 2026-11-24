@@ -967,6 +967,35 @@ async function main() {
     await page.close();
   }
 
+  // The "Other" row of an Open Questions card: its radio, label and field share one centre line (desktop and phone, plain, dark and both high-contrast themes).
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      window.__data.rooms.rm_a.messages[119] = { ...window.__data.rooms.rm_a.messages[119], author_kind: 'agent', author_id: 'agt_zed', author_name: 'zed', body: 'Choose a route', open_questions: [{ question: 'Route?', options: ['A', 'B'] }] };
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => {
+      window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
+      window.__chat.setInbox({ answer: async () => true });
+      window.__chat.updateAnswerControls([{ id: 'inb_other', rev: 1, kind: 'question', message_id: 'rm_a_m120', open_questions: [{ question: 'Route?', options: ['A', 'B'] }], free_text: true, can_decide: true }]);
+    });
+    await page.$eval('#messages [data-message-id=rm_a_m120] .open-questions-open', button => button.click());
+    await page.waitForSelector('#open-questions-dialog[open]');
+    for (const [theme, width] of [['', 1280], ['dark', 1280], ['high-contrast-dark', 1280], ['high-contrast-light', 1280], ['', 390], ['dark', 390], ['high-contrast-dark', 390], ['high-contrast-light', 390]]) {
+      await page.setViewport({ width, height: 900 });
+      await page.evaluate(theme => { if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme; }, theme);
+      await settle(page);
+      const centres = await page.evaluate(() => {
+        const label = document.querySelector('#open-questions-dialog .open-question-sheet label:has(input[type=text])');
+        const mid = node => { const box = node.getBoundingClientRect(); return (box.top + box.bottom) / 2; };
+        return { radio: mid(label.querySelector('input[type=radio]')), label: mid(label.querySelector('.open-question-option')), input: mid(label.querySelector('input[type=text]')) };
+      });
+      const spread = Math.max(centres.radio, centres.label, centres.input) - Math.min(centres.radio, centres.label, centres.input);
+      assert.ok(spread <= 2, `the Other row's radio, label and field share a centre line in ${theme || 'plain'} at ${width}px: ${JSON.stringify(centres)}`);
+    }
+    await page.close();
+  }
+
   // Opens a root's conversation the way its chip does; with replies as rows of the room the root may lie outside the loaded window, and then it is fetched as a jump would.
   const chip = (page, root) => page.evaluate(async root => {
     const node = document.querySelector(`[data-message-id=${root}] .thread-chip`);
