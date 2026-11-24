@@ -48,6 +48,42 @@ func OpensPrivateKey(text string) bool {
 // ClosesPrivateKey says whether text holds the END line of a PEM private key.
 func ClosesPrivateKey(text string) bool { return privateKeyClosePattern.MatchString(text) }
 
+// HasPrivateKeyBegin says whether text holds the BEGIN line of a PEM private key.
+func HasPrivateKeyBegin(text string) bool { return privateKeyOpenPattern.MatchString(text) }
+
+// PrivateKeyLines follows a PEM private key across the lines of a text that is redacted one line at a time: RedactSecrets masks a key only
+// within the text it is given, so a reader that hands it single lines would let the base64 lines of a key through. Give Skip every line,
+// in order: after a line that begins a key without ending it (which RedactSecrets turns into a marker), Skip says true for each line up to
+// and with the one that ends it, and the reader drops those. Limit bounds how many lines are taken for a key whose END never comes; 0
+// takes every line to the end of the text (fail closed). The output log (internal/agentlog) and the server's second pass over a worker's
+// conversation (internal/server, worker_output.go) both use it.
+type PrivateKeyLines struct {
+	Limit int
+	open  bool
+	left  int
+}
+
+// Skip says whether line is part of a key begun on an earlier line, and must be dropped.
+func (k *PrivateKeyLines) Skip(line string) bool {
+	if !k.open {
+		if OpensPrivateKey(line) {
+			k.open, k.left = true, k.Limit
+		}
+		return false
+	}
+	k.left--
+	if ClosesPrivateKey(line) {
+		// An END line that a new BEGIN follows on the same line ends one key and starts the next.
+		k.open, k.left = OpensPrivateKey(line), k.Limit
+	} else if k.Limit > 0 && k.left <= 0 {
+		k.open = false
+	}
+	return true
+}
+
+// Open says whether a key begun on an earlier line has not ended yet.
+func (k *PrivateKeyLines) Open() bool { return k.open }
+
 // StderrTail keeps a bounded launcher error tail without retaining full output.
 type StderrTail struct {
 	mu   sync.Mutex

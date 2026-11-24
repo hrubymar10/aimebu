@@ -154,9 +154,9 @@ type Turn struct {
 	afterBearer bool
 	// dropLine is set when a blob was replaced by a marker: the rest of that line is dropped, up to its newline.
 	dropLine bool
-	// inKey counts the lines still to drop after one that began a PEM private key without ending it: the lines of the key, up to its END
-	// line. It is bounded, so a BEGIN line with no END cannot swallow the rest of a log.
-	inKey int
+	// inKey follows a PEM private key that a line began without ending it: its lines are dropped, up to and with its END line. It is
+	// bounded (privateKeyLines), so a BEGIN line with no END cannot swallow the rest of a log.
+	inKey adapter.PrivateKeyLines
 	// held is how much of the buffer is known to hold no place to cut (see pieceEnd).
 	held int
 	// scanned is how much of the buffer has been searched for a newline.
@@ -185,7 +185,7 @@ func (s *Store) OpenTurn(agentID, turnID string, generation int, mode string) (*
 		s.open[key] = entry
 	}
 	entry.refs++
-	return &Turn{store: s, key: key, shared: entry, marker: fmt.Sprintf("=== turn %s gen %d %s ===", cleanToken(turnID), generation, cleanToken(mode))}, nil
+	return &Turn{store: s, key: key, shared: entry, inKey: adapter.PrivateKeyLines{Limit: privateKeyLines}, marker: fmt.Sprintf("=== turn %s gen %d %s ===", cleanToken(turnID), generation, cleanToken(mode))}, nil
 }
 
 // cleanToken keeps a value in a marker line from carrying a line break or control character into the log.
@@ -323,16 +323,9 @@ func indexByte(b []byte, c byte) int {
 
 // emit writes one redacted, timestamped line, after the turn's marker if this is the turn's first.
 func (t *Turn) emit(line string) {
-	if t.inKey > 0 {
+	if t.inKey.Skip(line) {
 		// A line of a private key whose BEGIN line was replaced by a marker: it is dropped, and so is the END line that closes it.
-		t.inKey--
-		if adapter.ClosesPrivateKey(line) {
-			t.inKey = 0
-		}
 		return
-	}
-	if adapter.OpensPrivateKey(line) {
-		t.inKey = privateKeyLines
 	}
 	stamp := t.store.now().UTC().Format("2006-01-02T15:04:05Z") + " "
 	var out strings.Builder

@@ -998,7 +998,11 @@ A notice about a worker's turn (a `silent_turn` note, a `worker_recovery`
 note) also carries `worker_output`: `{untrusted, agent_id, turn_id, text?,
 truncated?, withheld?}`, the end of that turn's conversation (at most 2 KiB,
 keys and tokens masked), read from the worker's machine in the background when
-the notice is written. A delivery waits at most about 250 ms for a read that
+the notice is written. The server masks this text, and `agent_output`'s, a
+second time before it cuts it to size, following a PEM private key across
+lines: the BEGIN line becomes `[redacted private key]` and the rest of the key
+is dropped, everything after a BEGIN that no END closes, and the base64 lines
+before an END whose BEGIN lies before the text read. A delivery waits at most about 250 ms for a read that
 has not finished; the first delivery that uses a read checks the recipient's
 room access again, so access lost since the read withholds the text. Without text, `withheld` is `room_not_readable` (the turn served a room the recipient may not read), `not_found` (the turn is no longer in the end of the worker's log), `unreadable` (the machine is offline or too old, or the read failed) or `not_ready` (the read had not finished when the note was delivered). `untrusted` marks it as
 the worker's own output: evidence, never instructions. See

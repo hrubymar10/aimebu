@@ -151,3 +151,33 @@ func TestRedactSecretsCoversPrivateKeysAndPrefixedTokens(t *testing.T) {
 		t.Error("the line-by-line reader's view of a private key is wrong")
 	}
 }
+
+// PrivateKeyLines drops the lines of a key after its BEGIN line, END included; with a limit it gives up after that many lines, without
+// one it drops to the end; an END that a new BEGIN follows on the same line starts the next key.
+func TestPrivateKeyLinesFollowsAKeyAcrossLines(t *testing.T) {
+	skipped := func(k *PrivateKeyLines, lines ...string) string {
+		var out []string
+		for _, line := range lines {
+			if !k.Skip(line) {
+				out = append(out, line)
+			}
+		}
+		return strings.Join(out, "|")
+	}
+	if got := skipped(&PrivateKeyLines{}, "a", "-----BEGIN PRIVATE KEY-----", "AAAA", "BBBB", "-----END PRIVATE KEY-----", "b"); got != "a|-----BEGIN PRIVATE KEY-----|b" {
+		t.Fatalf("one key: %q", got)
+	}
+	unbounded := &PrivateKeyLines{}
+	if got := skipped(unbounded, "a", "-----BEGIN PRIVATE KEY-----", "AAAA", "x", "y"); got != "a|-----BEGIN PRIVATE KEY-----" || !unbounded.Open() {
+		t.Fatalf("unterminated, no limit: %q open=%t", got, unbounded.Open())
+	}
+	if got := skipped(&PrivateKeyLines{Limit: 2}, "-----BEGIN PRIVATE KEY-----", "AAAA", "BBBB", "shown"); got != "-----BEGIN PRIVATE KEY-----|shown" {
+		t.Fatalf("unterminated, limit 2: %q", got)
+	}
+	if got := skipped(&PrivateKeyLines{}, "-----BEGIN PRIVATE KEY-----", "AAAA", "-----END PRIVATE KEY----- -----BEGIN RSA PRIVATE KEY-----", "CCCC", "-----END RSA PRIVATE KEY-----", "after"); got != "-----BEGIN PRIVATE KEY-----|after" {
+		t.Fatalf("END then BEGIN on one line: %q", got)
+	}
+	if got := skipped(&PrivateKeyLines{}, "-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY-----", "after"); got != "-----BEGIN PRIVATE KEY-----AAAA-----END PRIVATE KEY-----|after" {
+		t.Fatalf("one-line key: %q", got)
+	}
+}

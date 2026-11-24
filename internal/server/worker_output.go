@@ -96,14 +96,42 @@ func splitTurns(page agentlog.Page) []turnSlice {
 
 // redactOutput masks keys and tokens in a worker's output once more before it leaves the server for another agent. The log is written
 // redacted on the machine; this is the same redaction, applied again so a machine that wrote an older log (or a broken one) does not carry
-// a secret into another agent's context.
+// a secret into another agent's context. It goes a line at a time, and a PEM private key across lines is followed as the machine's log
+// writer follows it (adapter.PrivateKeyLines): its BEGIN line becomes a marker and its other lines, END included, are dropped; a key whose
+// END never comes drops everything after its BEGIN (fail closed). A text that begins inside a key (the page read from the machine starts
+// after its BEGIN line) shows an END with no BEGIN before it: the base64 lines right before that END are the rest of the key and are
+// dropped, and the END line becomes the marker. The callers cut the text to their bound only after this, so a cut never exposes a key.
 func redactOutput(text string) string {
-	lines := strings.SplitAfter(text, "\n")
-	for i, line := range lines {
+	keyLines := adapter.PrivateKeyLines{} // no limit: an unterminated key masks the rest of the text
+	var out []string
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if keyLines.Skip(line) {
+			continue
+		}
+		if adapter.ClosesPrivateKey(line) && !adapter.HasPrivateKeyBegin(line) {
+			for len(out) > 0 && keyBodyLine(out[len(out)-1]) {
+				out = out[:len(out)-1]
+			}
+		}
 		body := strings.TrimSuffix(line, "\n")
-		lines[i] = adapter.RedactSecrets(body) + line[len(body):]
+		out = append(out, adapter.RedactSecrets(body)+line[len(body):])
 	}
-	return strings.Join(lines, "")
+	return strings.Join(out, "")
+}
+
+// keyBodyLine says whether a line of a worker's log can be a line of a PEM key's body: base64 alone, after the tab a record's
+// continuation line starts with.
+func keyBodyLine(line string) bool {
+	body := strings.TrimSpace(line)
+	if body == "" {
+		return false
+	}
+	for _, c := range body {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '=') {
+			return false
+		}
+	}
+	return true
 }
 
 // lastBytes keeps the end of text within limit bytes, starting at a line when one fits and never inside a UTF-8 sequence. truncated says
