@@ -299,6 +299,15 @@ func (s *Store) RedeemUserInvite(ctx context.Context, tokenHash, login, password
 				if count > 0 {
 					return ErrInviteInvalid
 				}
+				// The caller is not signed in: a login an agent holds is refused with the bare sentinel, so the answer never names the agent or its
+				// project (the detailed NameInUseError stays for callers who can see them: an admin creating a user, doctor, spawn).
+				if err := checkLoginFree(ctx, tx.tx, login); err != nil {
+					var inUse *NameInUseError
+					if errors.As(err, &inUse) {
+						return ErrLoginTaken
+					}
+					return err
+				}
 				user, err := tx.CreateUser(User{Login: login, PWHash: passwordHash, PWParams: passwordParams})
 				if err != nil {
 					return err

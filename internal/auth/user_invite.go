@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -82,7 +83,8 @@ func (service *Service) RedeemUserInvite(ctx context.Context, token, login, pass
 	}
 	invite, userID, err := service.Store.RedeemUserInvite(ctx, hashToken(token), login, hash, params, existingID, now)
 	if err != nil {
-		if err == store.ErrInviteInvalid {
+		// A login that is taken counts like a wrong token: the invite is not used up, so without it a login could be guessed without limit.
+		if err == store.ErrInviteInvalid || errors.Is(err, store.ErrLoginTaken) {
 			service.PairThrottle.fail(throttleKey, remoteIP, service.Now().UTC())
 		}
 		return store.UserInvite{}, "", "", err

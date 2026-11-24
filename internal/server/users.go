@@ -148,6 +148,11 @@ func (s *Server) redeemUserInvite(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 429, "rate_limited", "rate limited")
 		return
 	}
+	if errors.Is(err, store.ErrLoginTaken) {
+		// Not signed in, so never the holder: no agent slug, no project name.
+		apiError(w, 409, "login_in_use", "that login is taken")
+		return
+	}
 	if err != nil {
 		userError(w, err)
 		return

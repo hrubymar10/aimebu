@@ -2282,7 +2282,7 @@ ambiguous and address nobody. A new collision cannot arise: no name is shared
 by a login and an agent, so a login is refused when it equals (case-insensitive)
 the slug of any agent in any project, and an agent's slug is refused when it
 equals any login (409 `login_in_use` / `name_in_use`, naming the name and what
-holds it). Collisions that predate the rule stay, and `aimebu doctor` lists them.
+holds it; an unauthenticated redemption answers `login_in_use` without naming the holder). Collisions that predate the rule stay, and `aimebu doctor` lists them.
 
 ## 7. Spawn / move / role change checks
 
