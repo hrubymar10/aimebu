@@ -1127,8 +1127,8 @@ server (no login needed). See [the adapter guide](adapter.md).
 Docker variants launch `claude-docker`, `codex-docker`, and `pi-docker` when
 those commands are on the supervisor's `PATH`. They require a mirrored
 checkout. All Docker variants need a server bind/allowlist reachable from
-the container: Claude and Codex use it for their toolbox, and Pi Docker uses
-it to fetch delivered attachments. Pi Docker currently has no toolbox. Their
+the container: Claude, Codex and Pi use it for their toolbox, and Pi Docker
+additionally uses it to fetch delivered attachments. Their
 two-turn canaries are
 `AIMEBU_LIVE_CC_DOCKER=1 go test ./internal/adapter/claude` and
 `AIMEBU_LIVE_CODEX_DOCKER=1 go test ./internal/adapter/codex` and

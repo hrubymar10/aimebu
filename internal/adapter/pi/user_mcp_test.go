@@ -20,7 +20,7 @@ func TestUserMCPServersAreCopiedWithoutAimebu(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	servers, env := userMCPServers(dir, "aimebu")
+	servers, env := userMCPServers(dir, "aimebu", false)
 	if _, ok := servers["aimebu"]; ok || len(servers) != 2 {
 		t.Fatalf("servers = %v", servers)
 	}
@@ -33,7 +33,7 @@ func TestUserMCPServersAreCopiedWithoutAimebu(t *testing.T) {
 	if strings.Join(env, ",") != "DOCS_TOKEN,TOOL_KEY" {
 		t.Fatalf("env = %v", env)
 	}
-	if got, _ := userMCPServers(filepath.Join(dir, "missing"), "aimebu"); len(got) != 0 {
+	if got, _ := userMCPServers(filepath.Join(dir, "missing"), "aimebu", false); len(got) != 0 {
 		t.Fatal("a person without a config has no servers")
 	}
 	items := strings.Join(childEnv("/tmp/agent", env...), "\n")
@@ -75,8 +75,8 @@ func TestNativeTurnLoadsThePersonsOwnMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(argsPath)
-	if !strings.Contains(string(args), "codemode") || strings.Contains(string(args), "mcp__") {
-		t.Fatalf("the allowlist names codemode and no mcp__ entry:\n%s", args)
+	if !strings.Contains(string(args), "codemode") || !strings.Contains(string(args), "mcp__*") {
+		t.Fatalf("the allowlist names codemode and every MCP tool:\n%s", args)
 	}
 	sum := sha256.Sum256([]byte("agt_test"))
 	data, err := os.ReadFile(filepath.Join(root, "runtime", hex.EncodeToString(sum[:]), "mcp.json"))
@@ -111,7 +111,7 @@ func TestUserMCPServersAreMadeSafeToCarry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	servers, env := userMCPServers(dir, "aimebu")
+	servers, env := userMCPServers(dir, "aimebu", false)
 	if !strings.Contains(string(servers["loud"]), `"exposure":"codemode"`) {
 		t.Fatalf("an exposure is decoded before it is compared: %s", servers["loud"])
 	}
@@ -130,7 +130,35 @@ func TestUserMCPServersAreMadeSafeToCarry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(`{"mcpServers": {`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got, vars := userMCPServers(dir, "aimebu"); len(got) != 0 || len(vars) != 0 {
+	if got, vars := userMCPServers(dir, "aimebu", false); len(got) != 0 || len(vars) != 0 {
 		t.Fatalf("a file that is not JSON carries nothing: %v %v", got, vars)
+	}
+}
+
+// A container turn carries only the entries that are safe to write into the shared checkout: a plain url, and nothing that holds a
+// credential or names a command on the host. Everything else is left out, never carried in a weaker form.
+func TestContainerCarriesOnlyPlainRemoteServers(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"mcpServers":{
+	  "plain":{"url":"https://a.example/mcp"},
+	  "exposed":{"url":"https://b.example/mcp","exposure":"direct"},
+	  "header":{"url":"https://c.example/mcp","headers":{"Authorization":"Bearer token"}},
+	  "referenced":{"url":"https://d.example/mcp","headers":{"Authorization":"Bearer ${DOCS_TOKEN}"}},
+	  "stdio":{"command":"/usr/bin/tool"},
+	  "loopback":{"url":"http://localhost:9997/mcp"}
+	}}`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	servers, env := userMCPServers(dir, "aimebu", true)
+	if len(servers) != 2 || servers["plain"] == nil || servers["exposed"] == nil ||
+		servers["header"] != nil || servers["referenced"] != nil || servers["stdio"] != nil || servers["loopback"] != nil {
+		t.Fatalf("only the plain remote servers are carried: %v", servers)
+	}
+	if !strings.Contains(string(servers["exposed"]), `"exposure":"codemode"`) {
+		t.Fatalf("a direct exposure becomes codemode in a container too: %s", servers["exposed"])
+	}
+	if len(env) != 0 {
+		t.Fatalf("a carried entry names no variable: %v", env)
 	}
 }

@@ -403,7 +403,7 @@ func TestSpawnCatalogSeparatesCLIVersionFromModels(t *testing.T) {
 	if got := catalog.Tools[1].Models[1].ID; got != "gpt-6-luna" {
 		t.Fatalf("Codex model %q", got)
 	}
-	if got := catalog.Tools[2]; got.Tool != "pi" || got.Variant != "docker" || got.Toolbox || got.ToolboxReason == "" || got.Models[0].ID != "ollama-cloud/gemma4:31b" {
+	if got := catalog.Tools[2]; got.Tool != "pi" || got.Variant != "docker" || !got.Toolbox || got.ToolboxReason != "" || got.Models[0].ID != "ollama-cloud/gemma4:31b" {
 		t.Fatalf("Pi Docker catalog %+v", got)
 	}
 	if got := catalog.Tools[5]; got.Tool != "pi" || got.Variant != "native" || !got.Toolbox {

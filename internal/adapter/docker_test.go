@@ -71,7 +71,7 @@ func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) 
 			time.Sleep(10 * time.Millisecond)
 		}
 	})
-	script := "#!/bin/sh\n( : > \"$PREFLIGHT_HELPER_READY\"; while [ ! -e \"$PREFLIGHT_HELPER_RELEASE\" ]; do sleep 0.1; done; : > \"$PREFLIGHT_HELPER_DONE\" ) &\nwhile [ ! -e \"$PREFLIGHT_HELPER_READY\" ]; do sleep 0.01; done\necho 'pi 1.0'\nexit 0\n"
+	script := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\n( : > \"$PREFLIGHT_HELPER_READY\"; while [ ! -e \"$PREFLIGHT_HELPER_RELEASE\" ]; do sleep 0.1; done; : > \"$PREFLIGHT_HELPER_DONE\" ) &\nwhile [ ! -e \"$PREFLIGHT_HELPER_READY\" ]; do sleep 0.01; done\necho 'pi 1.0'\nexit 0\n"
 	if err := testenv.WriteExecutable(launcher, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestDockerFeaturesTellANewLauncherFromAnOldOne(t *testing.T) {
 		t.Fatalf("a probe that fails says why: %v", err)
 	}
 	// The tools whose Docker turns configure the harness through the environment, or hand it the agent's key by name, need the feature.
-	if !DockerNeedsForwardEnv("opencode") || !DockerNeedsForwardEnv("vibe") || !DockerNeedsForwardEnv("claude") || !DockerNeedsForwardEnv("codex") || DockerNeedsForwardEnv("pi") {
+	if !DockerNeedsForwardEnv("opencode") || !DockerNeedsForwardEnv("vibe") || !DockerNeedsForwardEnv("claude") || !DockerNeedsForwardEnv("codex") || !DockerNeedsForwardEnv("pi") {
 		t.Fatal("only the tools configured through the environment need the feature")
 	}
 }

@@ -33,8 +33,10 @@ var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // adapter.LooksLikeV1Bus), and the names of the environment variables they refer to as ${NAME} (a bearer token, say), which a private turn has
 // only when they are passed on. A copied entry is never exposed unprefixed: Pi's "direct" exposure would put its tools next to aimebu's own
 // under their bare names, so it is changed to the default, "codemode". A config that cannot be read is left out with a line in the log (the
-// path, never the content).
-func userMCPServers(dir, skip string) (servers map[string]json.RawMessage, envVars []string) {
+// path, never the content). A container turn carries only the entries that are safe to carry into one (containerServers): the config file
+// lands in the shared checkout, where a co-tenant could read it, so an entry that holds more than a url is left out entirely rather than
+// carried in a weaker form.
+func userMCPServers(dir, skip string, container bool) (servers map[string]json.RawMessage, envVars []string) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -68,6 +70,9 @@ func userMCPServers(dir, skip string) (servers map[string]json.RawMessage, envVa
 			log.Printf("pi: the MCP server %q of %s is not carried: the entry is not an object", name, path)
 			continue
 		}
+		if container && !containerServer(name, fields) {
+			continue
+		}
 		var exposure string
 		if raw, ok := fields["exposure"]; ok && json.Unmarshal(raw, &exposure) == nil && strings.EqualFold(strings.TrimSpace(exposure), "direct") {
 			fields["exposure"] = json.RawMessage(`"codemode"`)
@@ -86,4 +91,31 @@ func userMCPServers(dir, skip string) (servers map[string]json.RawMessage, envVa
 	}
 	sort.Strings(envVars)
 	return servers, adapter.UserEnvNames(envVars)
+}
+
+// containerServer says whether an entry of the person's mcp.json may be carried into a container, where the file that would hold it is
+// readable by a co-tenant: only a plain HTTP server with nothing but its url (and its exposure, which is rewritten above) is. A command
+// points at a binary the container does not have, and a header, an environment variable or an OAuth field is a credential or a setting the
+// checkout file must not hold; the entry is left out with the reason, never carried in a weaker form.
+func containerServer(name string, fields map[string]json.RawMessage) bool {
+	for key := range fields {
+		switch key {
+		case "url", "exposure":
+		default:
+			log.Printf("pi: the MCP server %q is not carried to the container: its %s does not belong in the shared checkout", name, key)
+			return false
+		}
+	}
+	var entry struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(fields["url"], &entry.URL); err != nil || entry.URL == "" {
+		log.Printf("pi: the MCP server %q is not carried to the container: a server without a url has no remote form", name)
+		return false
+	}
+	if reason, unsafe := adapter.UnsafeContainerURL(entry.URL); unsafe {
+		log.Printf("pi: the MCP server %q is not carried to the container: %s", name, reason)
+		return false
+	}
+	return true
 }

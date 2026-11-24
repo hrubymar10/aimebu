@@ -33,9 +33,6 @@ func validateLauncher(def protocol.LauncherDefinition) error {
 	if strings.ContainsRune(def.Command, filepath.Separator) && !filepath.IsAbs(def.Command) {
 		return errors.New("command path must be absolute")
 	}
-	if def.Containerized && def.Tool == "pi" && def.Toolbox {
-		return errors.New("Pi container launchers cannot provide the toolbox with the current adapter")
-	}
 	if def.AgentServerURL != "" {
 		u, err := url.Parse(def.AgentServerURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {

@@ -100,12 +100,17 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 	path := filepath.Join(root, "pi")
 	argsPath := filepath.Join(root, "args")
 	envPath := filepath.Join(root, "env")
+	forwardPath := filepath.Join(root, "forward")
 	fixture, err := filepath.Abs(filepath.Join("testdata", "print.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	keyPath := filepath.Join(root, "key")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\nprintf '%s' \"${AIMEBU_AGENT_KEY:-}\" > " + keyPath + "\ncat " + fixture + "\n"
+	script := "#!/bin/sh\n" +
+		`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; exit 0; fi` + "\n" +
+		"printf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\n" +
+		"printf '%s' \"${AIMEBU_AGENT_KEY:-}\" > " + keyPath + "\nprintf '%s' \"${HARNESS_DOCKER_FORWARD_ENV:-}\" > " + forwardPath + "\n" +
+		"cat " + fixture + "\n"
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -132,40 +137,76 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			forward, err := os.ReadFile(forwardPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !strings.Contains(string(args), "--session-id\n"+testSession) || !strings.Contains(string(args), "--session-dir\n"+filepath.Join(checkout, ".aimebu", "pi-sessions")) {
 				t.Fatalf("session args=%q", args)
 			}
+			// The allowlist names every MCP tool: Pi keeps an unmatched MCP tool registered but inactive,
+			// so a direct tool is declared to the model only when the allowlist matches it.
+			if !strings.Contains(string(args), "mcp__*") || strings.Contains(string(args), "--no-mcp") || strings.Contains(string(args), "--mcp-config") {
+				t.Fatalf("%s toolbox args=%q", variant, args)
+			}
+			sum := sha256.Sum256([]byte("agt_test"))
+			var configPath string
 			if variant == "native" {
 				if string(envDir) == "" {
 					t.Fatal("native Pi config directory was not isolated")
 				}
-				// No mcp__ entry in the allowlist: Pi then keeps every MCP tool, aimebu's and the person's own.
-				if strings.Contains(string(args), "--mcp-config") || strings.Contains(string(args), "mcp__") || !strings.Contains(string(args), "--tools\n") {
-					t.Fatalf("native toolbox args=%q", args)
+				configPath = filepath.Join(root, "runtime", hex.EncodeToString(sum[:]), "mcp.json")
+			} else {
+				// The container's config directory is under the mirrored checkout, named by the variable the launcher forwards.
+				if !strings.Contains(string(args), "--session-dir\n"+filepath.Join(checkout, ".aimebu", "pi-sessions")) || string(envDir) != filepath.Join(checkout, ".aimebu", "pi", hex.EncodeToString(sum[:])) {
+					t.Fatalf("docker Pi config directory=%q args=%q", envDir, args)
 				}
-				sum := sha256.Sum256([]byte("agt_test"))
-				configPath := filepath.Join(root, "runtime", hex.EncodeToString(sum[:]), "mcp.json")
-				info, err := os.Stat(configPath)
-				if err != nil || info.Mode().Perm() != 0600 {
-					t.Fatalf("private Pi config mode=%v err=%v", info, err)
+				if string(forward) != "PI_CODING_AGENT_DIR,AIMEBU_AGENT_KEY" {
+					t.Fatalf("the launcher is told which variables to forward: %q", forward)
 				}
-				data, err := os.ReadFile(configPath)
-				if err != nil || !strings.Contains(string(data), "127.0.0.1:9897/api/agent/mcp") {
-					t.Fatalf("private Pi endpoint=%q err=%v", data, err)
-				}
-				// The key is not in the file, nor in the arguments: the header names the variable Pi expands, and the key is in Pi's environment.
-				if strings.Contains(string(data), config.Key) || !strings.Contains(string(data), "Bearer ${AIMEBU_AGENT_KEY}") || strings.Contains(string(args), config.Key) {
-					t.Fatalf("the key must not be in the private Pi config or the arguments: %s / %q", data, args)
-				}
-				if key, err := os.ReadFile(keyPath); err != nil || string(key) != config.Key {
-					t.Fatalf("the key reaches Pi only in its environment: %q err=%v", key, err)
-				}
-			} else if !strings.Contains(string(args), "--no-mcp\n") || strings.Contains(string(args), "--mcp-config") || len(envDir) != 0 {
-				t.Fatalf("docker toolbox args=%q", args)
-			} else if _, err := os.Stat(filepath.Join(checkout, ".aimebu", "mcp.json")); !os.IsNotExist(err) {
-				t.Fatalf("docker checkout contains credential file: %v", err)
+				configPath = filepath.Join(checkout, ".aimebu", "pi", hex.EncodeToString(sum[:]), "mcp.json")
+			}
+			info, err := os.Stat(configPath)
+			if err != nil || info.Mode().Perm() != 0600 {
+				t.Fatalf("private Pi config mode=%v err=%v", info, err)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantHost := "127.0.0.1"
+			if variant == "docker" {
+				wantHost = "host.docker.internal"
+			}
+			if !strings.Contains(string(data), wantHost+":9897/api/agent/mcp") {
+				t.Fatalf("private Pi endpoint=%q err=%v", data, err)
+			}
+			// The key is not in the file, nor in the arguments: the header names the variable Pi expands, and the key travels in the
+			// environment (to the harness directly when native, through the launcher by name when Docker).
+			if strings.Contains(string(data), config.Key) || !strings.Contains(string(data), "Bearer ${AIMEBU_AGENT_KEY}") || strings.Contains(string(args), config.Key) {
+				t.Fatalf("the key must not be in the private Pi config or the arguments: %s / %q", data, args)
+			}
+			if key, err := os.ReadFile(keyPath); err != nil || string(key) != config.Key {
+				t.Fatalf("the key reaches the launcher only in its environment: %q err=%v", key, err)
 			}
 		})
+	}
+}
+
+// A Docker launcher that cannot forward environment variables would start Pi without its configuration and toolbox: the turn is refused
+// before anything starts, naming the way out.
+func TestDockerTurnRefusesALauncherWithoutForwardEnv(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "pi-docker")
+	script := "#!/bin/sh\necho 1.1.0\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	_, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "old-launcher", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
+		CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
+	if err == nil || !strings.Contains(err.Error(), "forward environment variables") {
+		t.Fatalf("an old launcher must be refused with the way out: %v", err)
 	}
 }
 

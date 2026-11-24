@@ -68,15 +68,15 @@ echo 2.0`)
 	if row, err = inspectLauncher(native, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil {
 		t.Fatalf("native: %+v %v", row, err)
 	}
-	// A Docker tool that needs no feature (Pi) is not asked for one, and a launcher that cannot answer is no problem.
+	// Pi's Docker turns also hand the harness its configuration and key by name, so its launcher is probed: a probe that fails is said.
 	pi := def
 	pi.Tool = "pi"
 	pi.Toolbox = false
-	if row, err = inspectLauncher(pi, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil || !row.Available {
+	if row, err = inspectLauncher(pi, checkout); err != nil || !strings.Contains(row.FeatureProblem, "feature probe failed") || !row.Available {
 		t.Fatalf("a pi-docker launcher that fails the probe: %+v %v", row, err)
 	}
 	write("echo 2.0") // predates the probe: nothing is known, and nothing is said
-	if row, err = inspectLauncher(pi, checkout); err != nil || row.FeatureProblem != "" || len(row.Features) != 0 || !row.Available {
+	if row, err = inspectLauncher(pi, checkout); err != nil || !strings.Contains(row.FeatureProblem, "launcher too old") || !row.Available {
 		t.Fatalf("an old pi-docker launcher: %+v %v", row, err)
 	}
 	// Claude's Docker turns hand the agent's key over by name, so an old launcher is too old for it, like one for OpenCode.
@@ -84,6 +84,12 @@ echo 2.0`)
 	claude.Tool = "claude"
 	if row, err = inspectLauncher(claude, checkout); err != nil || !strings.Contains(row.FeatureProblem, "launcher too old") || !row.Available {
 		t.Fatalf("an old claude-docker launcher: %+v %v", row, err)
+	}
+	// Pi's Docker turns also hand the harness its configuration and key by name: a launcher with the probe answers it.
+	write(`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; exit 0; fi
+echo 2.0`)
+	if row, err = inspectLauncher(pi, checkout); err != nil || row.FeatureProblem != "" || strings.Join(row.Features, ",") != "forward_env" {
+		t.Fatalf("a pi-docker launcher that forwards the environment: %+v %v", row, err)
 	}
 	write(`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then printf 'forward_env\nclaude_home_shared\n'; exit 0; fi
 echo 2.0`)

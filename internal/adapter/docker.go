@@ -78,7 +78,7 @@ const FeatureClaudeHomeShared = "claude_home_shared"
 // DockerNeedsForwardEnv says whether a tool's Docker turns configure the harness through forwarded environment variables, which an older
 // launcher would silently drop: the turn would then run without its isolated configuration or its toolbox.
 func DockerNeedsForwardEnv(tool string) bool {
-	return tool == "opencode" || tool == "vibe" || tool == "claude" || tool == "codex"
+	return tool == "opencode" || tool == "vibe" || tool == "claude" || tool == "codex" || tool == "pi"
 }
 
 // AgentKeyEnv is the variable that carries an agent's key into a Docker harness. The key never appears in an argument list (ps shows those

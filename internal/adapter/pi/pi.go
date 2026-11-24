@@ -133,13 +133,52 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	args := []string{"-p", "--mode", "json", "--model", spec.Agent.Model, "--session-id", spec.NativeSessionHandle,
 		"--session-dir", visibleSessionDir, "--no-context-files", "--no-skills", "--no-approve"}
+	command := a.Command
+	if spec.LauncherPath != "" {
+		command = spec.LauncherPath
+	}
 	var agentDir string
-	var ownEnv []string // variables the person's own MCP servers read, passed through to a native turn
+	var visibleAgentDir string // what the launcher's container sees, for a Docker turn
+	var ownEnv []string       // variables the person's own MCP servers read, passed through to a native turn
+	var endpoint string
 	if spec.Mode == adapter.ModeNormal {
-		tools := []string{"read", "bash", "edit", "write", "grep", "find", "ls"}
+		// mcp__* names every MCP tool: Pi keeps an unmatched MCP tool registered but
+		// inactive, and a direct one is never declared to the model until the allowlist
+		// matches it (checked in Pi 1.1.0 and 1.6.0). The person's own servers are
+		// exposed through codemode, which stays registered without being declared.
+		tools := []string{"read", "bash", "edit", "write", "grep", "find", "ls", "mcp__*"}
 		if a.variant() == "docker" {
-			// The launcher has no private channel for an HTTP MCP bearer key.
-			args = append(args, "--no-mcp")
+			// The aimebu entry reaches the container as a private mcp.json under the
+			// mirrored checkout; its header names the key's variable, which the launcher
+			// hands over by name (HARNESS_DOCKER_FORWARD_ENV), so the key is in neither
+			// argv nor a file.
+			agentDir = filepath.Join(spec.CheckoutPath, ".aimebu", "pi", hex.EncodeToString(sum[:]))
+			if err := os.MkdirAll(agentDir, 0700); err != nil {
+				return nil, err
+			}
+			if err := os.Chmod(agentDir, 0700); err != nil {
+				return nil, err
+			}
+			if visibleAgentDir, err = adapter.VisiblePath(spec, agentDir); err != nil {
+				return nil, err
+			}
+			// The server address as the container sees it: loopback becomes host.docker.internal.
+			var aerr error
+			endpoint, _, aerr = adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
+			if aerr != nil {
+				return nil, aerr
+			}
+			// The launcher must hand the configuration and the key to the harness by name;
+			// an older one would start Pi without either.
+			probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+			features, probeErr := adapter.DockerFeatures(probe, command, spec.LauncherArgs, spec.CheckoutPath, adapter.DockerBaseEnv())
+			cancel()
+			if probeErr == nil {
+				probeErr = adapter.CheckDockerFeature(features, "Pi", command, adapter.FeatureForwardEnv)
+			}
+			if probeErr != nil {
+				return nil, probeErr
+			}
 		} else {
 			if a.RuntimeRoot == "" {
 				return nil, errors.New("Pi runtime root required")
@@ -151,59 +190,64 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			if err := os.Chmod(agentDir, 0700); err != nil {
 				return nil, err
 			}
-			endpoint, _, err := adapter.NativeMCP(spec.AgentTools, spec.Agent.ID)
-			if err != nil {
-				return nil, err
+			var aerr error
+			endpoint, _, aerr = adapter.NativeMCP(spec.AgentTools, spec.Agent.ID)
+			if aerr != nil {
+				return nil, aerr
 			}
-			// The person's own servers (see user_mcp.go), then aimebu's entry, which replaces one of that name.
-			servers := map[string]any{}
-			own, envVars := userMCPServers(userAgentDir(), "aimebu")
-			for name, entry := range own {
-				servers[name] = entry
-			}
-			ownEnv = envVars
-			if len(own) > 0 {
-				// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
-				tools = append(tools, "codemode")
-			}
-			servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}, "exposure": "direct"}
-			config, err := json.Marshal(map[string]any{"mcpServers": servers})
-			if err != nil {
-				return nil, err
-			}
-			configPath := filepath.Join(agentDir, "mcp.json")
-			if err := writePrivate(configPath, config); err != nil {
-				return nil, err
-			}
-			// The bounded Ollama Cloud model is supplied by the user's installed
-			// provider extension. Load only that extension into this private Pi
-			// agent directory; do not import the user's other packages.
+		}
+		// The person's own servers (see user_mcp.go), then aimebu's entry, which replaces one of that name.
+		servers := map[string]any{}
+		own, envVars := userMCPServers(userAgentDir(), "aimebu", a.variant() == "docker")
+		for name, entry := range own {
+			servers[name] = entry
+		}
+		ownEnv = envVars
+		if len(own) > 0 {
+			// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
+			tools = append(tools, "codemode")
+		}
+		servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}, "exposure": "direct"}
+		config, err := json.Marshal(map[string]any{"mcpServers": servers})
+		if err != nil {
+			return nil, err
+		}
+		if err := writePrivate(filepath.Join(agentDir, "mcp.json"), config); err != nil {
+			return nil, err
+		}
+		// The bounded Ollama Cloud model is supplied by the user's installed
+		// provider extension. Load only that extension into this private Pi
+		// agent directory; do not import the user's other packages.
+		if a.variant() != "docker" {
 			if extension := ollamaCloudExtension(); extension != "" {
 				args = append(args, "--extension", extension)
 			}
-			// No mcp__ entry in the allowlist: Pi then keeps every MCP tool, aimebu's and the person's own.
 		}
 		args = append(args, "--tools", strings.Join(tools, ","))
 	} else {
 		args = append(args, "--tools", "read,grep,find,ls", "--no-mcp")
-	}
-	command := a.Command
-	if spec.LauncherPath != "" {
-		command = spec.LauncherPath
 	}
 	cmd := exec.Command(command, adapter.LauncherArgs(spec, args)...)
 	// Pi print mode accepts a prompt from piped stdin. Keep large batches out
 	// of argv, where Linux caps each argument at 128 KiB.
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Dir = spec.CheckoutPath
-	cmd.Env = childEnv(agentDir, ownEnv...)
 	if a.variant() == "docker" {
-		cmd.Env = append(cmd.Env, "PI_LAUNCH_FLAGS=")
-	}
-	cmd.Env = adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs)
-	if agentDir != "" && spec.AgentTools != nil {
-		// mcp.json names the variable in aimebu's Authorization header (Pi expands it), so the key is only in this process's environment.
-		cmd.Env = append(cmd.Env, adapter.AgentKeyEnv+"="+spec.AgentTools.Key)
+		// The launcher's environment, not the harness's: it carries the configuration
+		// directory and the key only as variables the launcher forwards by name, so
+		// neither value can appear in argv. An owner's reference to one of these names
+		// configures the launcher, not the agent, and is ignored.
+		env := childEnv("")
+		env = append(env, "PI_LAUNCH_FLAGS=", "PI_CODING_AGENT_DIR="+visibleAgentDir,
+			adapter.AgentKeyEnv+"="+spec.AgentTools.Key, "HARNESS_DOCKER_FORWARD_ENV=PI_CODING_AGENT_DIR,"+adapter.AgentKeyEnv)
+		cmd.Env = adapter.LauncherEnv(env, dockerLauncherRefs(spec.LauncherEnvRefs))
+	} else {
+		cmd.Env = childEnv(agentDir, ownEnv...)
+		cmd.Env = adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs)
+		if agentDir != "" && spec.AgentTools != nil {
+			// mcp.json names the variable in aimebu's Authorization header (Pi expands it), so the key is only in this process's environment.
+			cmd.Env = append(cmd.Env, adapter.AgentKeyEnv+"="+spec.AgentTools.Key)
+		}
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
@@ -322,6 +366,20 @@ func childEnv(agentDir string, extra ...string) []string {
 		out = append(out, "PI_CODING_AGENT_DIR="+agentDir)
 	}
 	return out
+}
+
+// dockerLauncherRefs drops an owner's references to the variables a Docker turn sets itself: its launch flags, the configuration directory and
+// the key it forwards, and the launcher's own mode switches. A reference to one of them would configure the agent, or swap the agent's key for
+// another variable's value, instead of configuring the launcher.
+func dockerLauncherRefs(refs map[string]string) map[string]string {
+	protected := map[string]bool{"PI_LAUNCH_FLAGS": true, "PI_CODING_AGENT_DIR": true}
+	kept := make(map[string]string, len(refs))
+	for target, source := range refs {
+		if !protected[target] && !adapter.DockerControlEnvName(target) {
+			kept[target] = source
+		}
+	}
+	return kept
 }
 
 type turn struct {

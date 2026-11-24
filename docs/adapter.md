@@ -289,7 +289,8 @@ the tool runs decides that:
   through its path map (a mirrored checkout keeps the host path). A supervisor
   from before the frame, or a machine that is offline, gets the file answered
   with its type, its size and the reason it could not be saved.
-- Pi Docker has no MCP channel; its prompt receives a turn-scoped HTTP bearer
+- Pi Docker reaches the same HTTP MCP endpoint as the other Docker harnesses
+  (below), and its prompt also receives a turn-scoped HTTP bearer
   and reachable URL for on-demand download to its own temporary directory. The
   bearer is omitted from the supervisor journal and stops working when the
   turn ends.
@@ -575,7 +576,9 @@ password in the url, a query string or a fragment (likely tokens); and for Codex
 name is not a plain word (Codex reads a quoted `-c` key with its quotes) or is `aimebu_docker`; OpenCode puts them
 in the inline config and forwards the `{env:NAME}` variables by name like the provider keys;
 Vibe writes them into the private home, with their `api_key_env` variables forwarded; Pi
-Docker has no MCP channel at all (`--no-mcp`), so it carries none. A variable a server names is passed to the harness, except one that would
+Docker carries only an entry that holds nothing but a `url`, which is written into the
+private `mcp.json` under the mirrored checkout, and leaves one with a header, a command or
+any other field out entirely (see [Pi](#pi-native-and-docker-adapters)). A variable a server names is passed to the harness, except one that would
 undo the isolation: the tool's own homes and config locations, `AIMEBU*`,
 `CLAUDE*`, `XDG_*`, `HOME` and `PATH`, `SSH_AUTH_SOCK` and `GIT_*`, and what injects code
 (`LD_*`, `DYLD_*`, `NODE_OPTIONS` and `NODE_PATH`, the interpreters' own option and path
@@ -659,7 +662,11 @@ runtime root, isolated with `PI_CODING_AGENT_DIR`. The `mcpServers` of the
 person's own global `mcp.json` are copied into it next to aimebu's entry (a server
 called `aimebu` is not copied, so a v1 bus never reaches an agent), the `${NAME}`
 variables they name pass through, and the tool allowlist names `codemode` for them
-and no `mcp__` entry, so Pi keeps every MCP tool. The project's `.pi/mcp.json` is not
+plus `mcp__*` for every MCP tool: Pi keeps an unmatched MCP tool registered but
+inactive, and a direct one (aimebu's entry) is never declared to the model until
+the allowlist matches it, while the person's own entries are rewritten to the
+`codemode` exposure, which stays callable through that tool without being
+declared (checked in Pi 1.1.0 and 1.6.0). The project's `.pi/mcp.json` is not
 carried over. The installed Ollama Cloud provider extension is loaded explicitly for
 the bounded model without loading other user packages. Correction and diagnostic turns
 allow only `read,grep,find,ls`, disable MCP, and do not load project context
@@ -669,10 +676,20 @@ turn, while read-only isolation remains unverified. Native execution is
 controlled by the selected machine launcher.
 
 Pi Docker runs through `pi-docker` from a mirrored checkout and uses the same
-session directory. Its launcher has no private credential channel for HTTP
-MCP, so the spawn catalog reports `toolbox:false` with a reason and Pi Docker
-turns use `--no-mcp`. Pi Docker's turn attachment bearer is included in its
-prompt and may remain in the checkout's Pi session transcript. The bearer
+session directory. A normal turn gets the same toolbox as the native one: the
+adapter writes the private `mcp.json` (aimebu's HTTP entry, plus the person's
+own servers that are safe to carry into a container) under the mirrored
+checkout's `.aimebu/pi/<agent hash>/`, points `PI_CODING_AGENT_DIR` at it, and
+lists that variable and `AIMEBU_AGENT_KEY` in `HARNESS_DOCKER_FORWARD_ENV`, so
+the launcher hands both to the harness by name and the key is in neither argv
+nor a file (the config file names the variable, as natively). A launcher that
+cannot forward environment variables is refused before the turn starts. An own
+server is carried only when its entry holds nothing but a `url` (and its
+exposure): a command points at a binary the container does not have, and a
+header or another field is a credential the shared checkout's file must not
+hold; anything else is left out with the reason, never carried in a weaker
+form. Pi Docker's turn attachment bearer is included in its prompt and may
+remain in the checkout's Pi session transcript. The bearer
 works only while that turn is live, for delivered files in rooms where the
 agent remains a member; a saved transcript cannot fetch files after the turn.
 No long-lived agent key is written in the checkout. The

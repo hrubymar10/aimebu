@@ -298,9 +298,9 @@ supervisor should run and holds no key for. Issuing the key replaces the stored 
 the old process held stops authenticating (keys rotate on a supervisor restart). A supervisor that does not
 say so (an older one, which keeps keys on disk) is sent none.
 
-Claude and Codex Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing is copied into the shared checkout. The key is not in the harness's
+Claude, Codex and Pi Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing key-bearing is copied into the shared checkout. The key is not in the harness's
 argument list: the MCP entry names a variable
-(`Authorization: Bearer ${AIMEBU_AGENT_KEY}` for Claude, `bearer_token_env_var` for
+(`Authorization: Bearer ${AIMEBU_AGENT_KEY}` for Claude and Pi, `bearer_token_env_var` for
 Codex) and the launcher hands the variable over by name through `HARNESS_DOCKER_FORWARD_ENV`, so a Docker
 launcher without that feature (`forward_env`) is refused with the way out. The HTTP endpoint uses the
 same agent-key authorization and scope as the stdio toolbox's API calls.

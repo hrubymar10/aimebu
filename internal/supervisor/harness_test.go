@@ -49,7 +49,7 @@ func TestDockerSpawnRefreshesVersionAndCapabilitiesAfterFolderMapping(t *testing
 		t.Fatal(err)
 	}
 	launcher := filepath.Join(root, "pi-docker")
-	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\n[ \"$(pwd)\" = \"$TEST_MOUNT\" ] || exit 1\necho 1.1.0\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\n[ \"$(pwd)\" = \"$TEST_MOUNT\" ] || exit 1\necho 1.1.0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TEST_MOUNT", checkout)

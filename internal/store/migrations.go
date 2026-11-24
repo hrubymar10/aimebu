@@ -2167,6 +2167,11 @@ DROP TABLE agent;
 ALTER TABLE agent_new RENAME TO agent;
 CREATE INDEX agent_home_room ON agent(home_room_id);
 CREATE INDEX agent_launcher_active ON agent(launcher_id,desired,observed);
+`}, {138, `
+-- Pi in a container can provide the toolbox now: its turn carries the HTTP MCP entry in a private config under the mirrored checkout and
+-- the launcher forwards the key's variable by name. The seeded Pi Docker harness said it could not, so every preset one is told it can;
+-- a launcher the owner customised keeps what the owner chose.
+UPDATE machine_launcher SET supports_toolbox=1 WHERE preset=1 AND tool='pi' AND name='harness-docker';
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

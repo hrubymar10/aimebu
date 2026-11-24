@@ -226,10 +226,7 @@ func (s *Server) spawnCatalog(w http.ResponseWriter, r *http.Request) {
 	defer s.machineMu.Unlock()
 	items := make([]spawnCatalogTool, 0, len(boundedAdapters))
 	for _, allowed := range boundedAdapters {
-		item := spawnCatalogTool{Tool: allowed.tool, Variant: allowed.variant, Label: allowed.label, Models: legacyModels(allowed.tool, allowed.variant), UnavailableReason: "no connected machine lists this adapter", Containerized: allowed.variant == "docker", Toolbox: allowed.tool != "pi" || allowed.variant == "native"}
-		if allowed.tool == "pi" && allowed.variant == "docker" {
-			item.ToolboxReason = "pi-docker has no private credential channel"
-		}
+		item := spawnCatalogTool{Tool: allowed.tool, Variant: allowed.variant, Label: allowed.label, Models: legacyModels(allowed.tool, allowed.variant), UnavailableReason: "no connected machine lists this adapter", Containerized: allowed.variant == "docker", Toolbox: true}
 		if machine := s.machines[machineID]; machine != nil && selected.Approved {
 			machine.harnessMu.Lock()
 			rows := append([]protocol.HarnessRow(nil), machine.harnesses...)
