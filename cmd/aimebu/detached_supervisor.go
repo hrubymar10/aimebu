@@ -225,7 +225,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int, start string) {
 	}
 	kill := m.kill
 	if kill == nil {
-		kill = killSupervisorTree
+		kill = func(p int) error { return killSupervisorTree(p, m.detachableJobs(ctx)) }
 	}
 	handover.Kill = func(p int) error {
 		err := kill(p)
@@ -242,6 +242,32 @@ func (m *detachedSupervisorManager) killIfStuck(pid int, start string) {
 		}()
 		handover.Run(ctx, pid, start)
 	}()
+}
+
+// detachableJobs are the jobs the server counts as open on this machine, for the kill of a hung supervisor to spare (killSupervisorTree).
+// The supervisor's journal is not read: the server's own record gives each job's log path, and the process table (argument list and
+// start time) tells whether a process is that job's. Where the list cannot be read nothing is spared.
+func (m *detachedSupervisorManager) detachableJobs(ctx context.Context) []detachableJob {
+	if m.store == nil || m.machineID == "" {
+		return nil
+	}
+	open, err := m.store.OpenCommandJobs(ctx, m.machineID)
+	if err != nil {
+		fmt.Fprintln(m.stderr, "supervisor kill: the open jobs could not be listed, none is spared:", err)
+		return nil
+	}
+	var jobs []detachableJob
+	for _, job := range open {
+		since, err := time.Parse(time.RFC3339Nano, job.StartedAt)
+		if err != nil {
+			since, err = time.Parse(time.RFC3339Nano, job.CreatedAt)
+		}
+		if err != nil {
+			continue
+		}
+		jobs = append(jobs, detachableJob{logPath: job.LogPath, since: since})
+	}
+	return jobs
 }
 
 // processStart is the system's record of when pid started (supervisor.ProcessStart), unless a test replaces it.

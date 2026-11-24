@@ -350,6 +350,27 @@ func (s *Store) CommandJobs(ctx context.Context, agentID string) ([]CommandJob, 
 	return jobs, rows.Err()
 }
 
+// OpenCommandJobs lists the jobs of one machine the server still counts as queued or running: what a hung supervisor may be running.
+func (s *Store) OpenCommandJobs(ctx context.Context, machineID string) ([]CommandJob, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND state IN ('queued','running')`, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []CommandJob
+	for rows.Next() {
+		job, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
 // CommandJobByID reads one job. sql.ErrNoRows means there is none (or it is another agent's).
 func (s *Store) CommandJobByID(ctx context.Context, agentID, id string) (CommandJob, error) {
 	if err := s.checkTxReentry(ctx); err != nil {

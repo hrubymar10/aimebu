@@ -59,7 +59,12 @@ then logs that and stops). This holds for whatever build the old supervisor
 is. It is killed
 together with what it started: every process group one of its child processes
 leads (each harness CLI and each `run_command` job runs in a group of its
-own) and its other child processes, so nothing of the old supervisor on the
+own) and its other child processes, except the detachable `run_command`
+jobs, which survive this kill too and are adopted by the replacement: a job
+is spared only when its group leader is verified (it runs the job's wrapper
+with the log path of a job the server counts as open on the machine, leads a
+session of its own and started no earlier than the job did), and one that
+cannot be verified is killed and ends `lost_in_swap`. So nothing of the old supervisor on the
 host keeps writing in a checkout while a turn is continued on the new one. A
 process inside a container is not a child of the supervisor: killing the host
 side does not stop it, and its launcher ends it only when its session
@@ -86,8 +91,8 @@ replaced while the command ran; run it again if you still need it`, and the
 wake note reaches the agent (replayed by the replacement if the old connection
 was already gone). An older build ends its jobs as cancelled without the
 reason. A job whose process the replacement finds gone without an exit marker
-(it died with a supervisor that had to be killed, whose tree kill takes the
-jobs too, or with one that crashed) is `lost` with exit code `-1` and the error
+(it died with a supervisor that had to be killed and whose job could not be
+verified for the tree kill to spare it, or with one that crashed) is `lost` with exit code `-1` and the error
 `lost_in_swap: …`, and its agent is woken. Between the old supervisor's exit and the
 replacement's connection the machine is not connected: a `run_command` call in
 that window is refused (`command_refused`, machine unavailable) and can simply

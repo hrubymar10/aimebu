@@ -142,17 +142,111 @@ func TestStuckSupervisorIsKilledWithItsChildProcessGroups(t *testing.T) {
 // Only what the supervisor started is killed: the groups its descendants lead, and descendants in its own group one by one. A group
 // led by a stranger is never signalled, also when a descendant sits in it.
 func TestDescendantsOfAProcess(t *testing.T) {
-	rows := []processRow{{1, 0, 1}, {100, 1, 100}, // the supervisor, in its own session
-		{200, 100, 200}, {201, 200, 200}, {202, 201, 200}, // a harness in its group, with a tool and the tool's child
-		{300, 100, 300},                               // a command in its group
-		{400, 100, 100},                               // a helper in the supervisor's own group
-		{500, 400, 900},                               // a descendant in a group a stranger leads
-		{900, 1, 900}, {901, 900, 900}, {600, 1, 600}} // strangers
-	groups, singles := descendantsOf(100, rows)
+	row := func(pid, ppid, pgid int) processRow { return processRow{pid: pid, ppid: ppid, pgid: pgid} }
+	rows := []processRow{row(1, 0, 1), row(100, 1, 100), // the supervisor, in its own session
+		row(200, 100, 200), row(201, 200, 200), row(202, 201, 200), // a harness in its group, with a tool and the tool's child
+		row(300, 100, 300),                                     // a command in its group
+		row(400, 100, 100),                                     // a helper in the supervisor's own group
+		row(500, 400, 900),                                     // a descendant in a group a stranger leads
+		row(900, 1, 900), row(901, 900, 900), row(600, 1, 600), // strangers
+		row(310, 100, 310), row(311, 310, 311)} // a detachable job and what it started in a group of its own
+	groups, singles := descendantsOf(100, rows, func(r processRow) bool { return r.pid == 310 })
 	sort.Ints(groups)
 	sort.Ints(singles)
 	if fmt.Sprint(groups) != "[200 300]" || fmt.Sprint(singles) != "[400 500]" {
 		t.Fatalf("groups %v, singles %v", groups, singles)
+	}
+}
+
+// treeJobEnv makes the stand-in supervisor also start a detachable job's leader (its own session, the wrapper's argument list with this
+// log) and a plain command (its own group), and print both pids.
+const treeJobEnv = "AIMEBU_TEST_TREE_JOB_LOG"
+
+func init() {
+	log := os.Getenv(treeJobEnv)
+	if log == "" || os.Getenv(treeParentEnv) != "" {
+		return
+	}
+	job := exec.Command("sh", "-c", `sleep 300; : "$4" command-log "$2"`, "sh", log+".exit", log, "true", "/bin/logger")
+	job.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	plain := exec.Command("sleep", "300")
+	plain.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if job.Start() != nil || plain.Start() != nil {
+		os.Exit(1)
+	}
+	fmt.Println(job.Process.Pid, plain.Process.Pid)
+	signal.Ignore(syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	time.Sleep(5 * time.Minute)
+	os.Exit(0)
+}
+
+// A hung supervisor's kill spares the detachable job it verifies (its group leader runs the wrapper with the job's log, in a session of
+// its own, started no earlier than the job) and kills what it does not: a job whose start time does not fit, one the server does not list,
+// and a plain command.
+func TestHungSupervisorKillSparesVerifiedDetachableJobs(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "job.log")
+	for name, item := range map[string]struct {
+		jobs  func() []detachableJob
+		spare bool
+	}{
+		"verified":          {func() []detachableJob { return []detachableJob{{log, time.Now().Add(-time.Minute)}} }, true},
+		"started too early": {func() []detachableJob { return []detachableJob{{log, time.Now().Add(time.Hour)}} }, false},
+		"not listed":        {func() []detachableJob { return nil }, false},
+		"another log":       {func() []detachableJob { return []detachableJob{{log + "x", time.Now().Add(-time.Minute)}} }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			parent := exec.Command(os.Args[0], "-test.run=^$")
+			parent.Env = append(os.Environ(), treeJobEnv+"="+log)
+			parent.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			stdout, err := parent.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := parent.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var job, plain int
+			t.Cleanup(func() {
+				_ = parent.Process.Kill()
+				_, _ = parent.Process.Wait()
+				if job > 0 {
+					_ = syscall.Kill(-job, syscall.SIGKILL)
+				}
+				if plain > 0 {
+					_ = syscall.Kill(-plain, syscall.SIGKILL)
+				}
+			})
+			line, err := bufio.NewReader(stdout).ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n, _ := fmt.Sscan(line, &job, &plain); n != 2 {
+				t.Fatalf("the stand-in supervisor printed %q", line)
+			}
+			// ps reads the job's argument list only once the shell has exec'd: wait until the table shows it.
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				rows, _ := processTable()
+				found := false
+				for _, row := range rows {
+					found = found || (row.pid == job && strings.Contains(row.args, "command-log"))
+				}
+				if found {
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if err := killSupervisorTree(parent.Process.Pid, item.jobs()); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(300 * time.Millisecond)
+			if !gone(plain) {
+				t.Fatal("the plain command was not killed")
+			}
+			if gone(job) == item.spare {
+				t.Fatalf("job gone=%t, want spared=%t", gone(job), item.spare)
+			}
+		})
 	}
 }
 
