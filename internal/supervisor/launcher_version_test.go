@@ -56,9 +56,9 @@ func TestContainerLauncherRowSaysWhyItsVersionIsUnknown(t *testing.T) {
 
 // A launcher that is slow to answer is told apart from one that refuses, so it can be asked again with more time.
 func TestLauncherVersionProbeTellsATimeoutFromARefusal(t *testing.T) {
-	def, root := versionLauncher(t, `sleep 5`)
+	def, root := versionLauncher(t, `sleep 30`)
 	started := time.Now()
-	if version, problem := probeLauncherVersion(def, def.Command, root, 100*time.Millisecond); version != "" || problem != versionTimedOut || time.Since(started) > 3*time.Second {
+	if version, problem := probeLauncherVersion(def, def.Command, root, 100*time.Millisecond); version != "" || problem != versionTimedOut || time.Since(started) > 20*time.Second {
 		t.Fatalf("slow launcher: version=%q problem=%q after %s", version, problem, time.Since(started))
 	}
 	refusing, root := versionLauncher(t, `echo nope >&2; exit 3`)

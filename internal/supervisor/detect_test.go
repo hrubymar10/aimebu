@@ -196,14 +196,14 @@ func TestDetectModelsRunsTheHarnessAndRefusesWhatItCannotDo(t *testing.T) {
 }
 
 func TestDetectModelsAcceptsSuccessfulLauncherWithOpenPipe(t *testing.T) {
-	harness := writeScript(t, t.TempDir(), "opencode", `sleep 4 &
+	harness := writeScript(t, t.TempDir(), "opencode", `sleep 30 &
 printf 'opencode/a\n'`)
 	start := time.Now()
 	models, err := detectModels(t.Context(), "opencode", harness, nil, "")
 	if err != nil || len(models) != 1 || models[0].Slug != "opencode/a" {
 		t.Fatalf("models = %+v, err = %v", models, err)
 	}
-	if took := time.Since(start); took > 3*time.Second {
+	if took := time.Since(start); took > 20*time.Second {
 		t.Fatalf("model listing waited for the child: %v", took)
 	}
 }

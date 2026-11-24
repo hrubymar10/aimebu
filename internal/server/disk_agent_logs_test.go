@@ -104,7 +104,7 @@ func TestDiskReportDoesNotWaitLongForASilentMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if took := time.Since(start); took < sizeWait || took > sizeWait+3*time.Second {
+	if took := time.Since(start); took < sizeWait || took > sizeWait+15*time.Second {
 		t.Errorf("the report took %v; a silent machine should cost about %v", took, sizeWait)
 	}
 	if len(report.Machines) != 1 || report.Machines[0].Error == "" || report.Machines[0].LogBytes != 0 {

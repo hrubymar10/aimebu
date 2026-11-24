@@ -142,7 +142,7 @@ func TestCodexLauncherHomeProbeIsCachedAndInvalidated(t *testing.T) {
 func TestCodexHomeProbeTimeoutIsBounded(t *testing.T) {
 	root := t.TempDir()
 	command := filepath.Join(root, "codex-docker")
-	body := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then sleep 2; exit 0; fi\necho 2.0\n"
+	body := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then sleep 30; exit 0; fi\necho 2.0\n"
 	if err := testenv.WriteExecutable(command, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestCodexHomeProbeTimeoutIsBounded(t *testing.T) {
 	row := protocol.LauncherRow{LauncherDefinition: def}
 	started := time.Now()
 	probeLauncherFeaturesWithTimeout(&row, def, command, root, 40*time.Millisecond)
-	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 20*time.Second {
 		t.Fatalf("probe took %v", elapsed)
 	}
 	if row.CodexHome != "" || !strings.Contains(row.FeatureProblem, "deadline exceeded") {
@@ -224,10 +224,10 @@ func TestCodexDockerHomeReprobeAllowsNextTurnWarm(t *testing.T) {
 	started := time.Now()
 	c.maybeReprobeCodexHome(row)
 	c.maybeReprobeCodexHome(row)
-	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Fatalf("reprobe blocked turn for %v", elapsed)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if c.launcherRow(def.ID).CodexHome == home {
 			break

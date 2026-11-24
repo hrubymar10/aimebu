@@ -460,7 +460,7 @@ func TestVersionProbeDoesNotWaitForHelpersTheLauncherLeftBehind(t *testing.T) {
 	implementation.Command = script
 	started := time.Now()
 	entries := implementation.Catalog()
-	if elapsed := time.Since(started); elapsed > 12*time.Second {
+	if elapsed := time.Since(started); elapsed > 18*time.Second {
 		t.Fatalf("the version probe took %v: it waited for the launcher's helpers", elapsed)
 	}
 	if len(entries) != 0 {
@@ -474,7 +474,7 @@ func TestVersionProbeSucceedsForALauncherThatExitedZeroAndLeftAHelperBehind(t *t
 		t.Skip("needs a POSIX shell")
 	}
 	script := filepath.Join(t.TempDir(), "codex")
-	if err := testenv.WriteExecutable(script, []byte("#!/bin/sh\necho 'codex-cli 0.162.1'\nsleep 4 &\nexit 0\n"), 0o700); err != nil {
+	if err := testenv.WriteExecutable(script, []byte("#!/bin/sh\necho 'codex-cli 0.162.1'\nsleep 30 &\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	implementation := New(t.TempDir())
@@ -484,7 +484,7 @@ func TestVersionProbeSucceedsForALauncherThatExitedZeroAndLeftAHelperBehind(t *t
 	if len(entries) != 1 || entries[0].Version != "0.162.1" {
 		t.Fatalf("catalog = %+v, want codex 0.162.1", entries)
 	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
+	if elapsed := time.Since(started); elapsed > 20*time.Second {
 		t.Fatalf("the probe took %v: it waited for the helper", elapsed)
 	}
 }

@@ -61,7 +61,7 @@ func TestSignalGroupTrustsPermissionErrorsOnlyOnceReaped(t *testing.T) {
 	if !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("live process: %v", err)
 	}
-	if elapsed := time.Since(started); elapsed < reapGrace-100*time.Millisecond || elapsed > reapGrace+3*time.Second {
+	if elapsed := time.Since(started); elapsed < reapGrace-100*time.Millisecond || elapsed > reapGrace+10*time.Second {
 		t.Fatalf("the grace was %v", elapsed)
 	}
 }

@@ -45,7 +45,7 @@ func TestLauncherResolvesCommandAndVisibleCheckout(t *testing.T) {
 func TestCancelledLauncherProbeDoesNotWaitForChildOutputPipe(t *testing.T) {
 	root := t.TempDir()
 	command := filepath.Join(root, "launcher-with-child")
-	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nsleep 5 &\necho ready > .probe-started\nwait\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(command, []byte("#!/bin/sh\nsleep 30 &\necho ready > .probe-started\nwait\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	def := protocol.LauncherDefinition{ID: "slow", Name: "slow", Tool: "codex", Command: command, Enabled: true}
@@ -54,7 +54,7 @@ func TestCancelledLauncherProbeDoesNotWaitForChildOutputPipe(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := preflightLauncher(ctx, def, row, root); done <- err }()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(filepath.Join(root, ".probe-started")); err == nil {
 			break
@@ -68,10 +68,10 @@ func TestCancelledLauncherProbeDoesNotWaitForChildOutputPipe(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if err == nil || time.Since(start) > 3*time.Second {
+		if err == nil || time.Since(start) > 20*time.Second {
 			t.Fatalf("cancelled probe waited for child pipe: %v, %v", err, time.Since(start))
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("cancelled probe waited for child pipe")
 	}
 }

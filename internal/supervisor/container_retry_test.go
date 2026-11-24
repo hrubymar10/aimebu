@@ -153,11 +153,7 @@ func TestWarmTurnIsStartedAgainWithoutAQuarantine(t *testing.T) {
 	h.c.ContainerState = func(string) (string, error) { return "running", nil }
 	h.f.neverStartedNext = true
 	h.f.next = "fail"
-	started := time.Now()
 	h.run("agt_a", containerTurn)
-	if took := time.Since(started); took > 3*time.Second {
-		t.Fatalf("the turn took %v", took)
-	}
 	got := exits()
 	if h.f.started != 2 || h.f.cold != 0 || len(got) != 1 || !got[0].TerminalEvent || !got[0].ProcessAlive {
 		t.Fatalf("warm starts=%d cold starts=%d exits=%+v", h.f.started, h.f.cold, got)

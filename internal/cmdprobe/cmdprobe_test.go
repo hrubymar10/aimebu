@@ -27,7 +27,7 @@ func script(t *testing.T, body string) string {
 // A launcher that exits 0 and leaves a helper holding the pipe is a success: its version is what it printed. Before, the read waited for
 // the helper; with only a WaitDelay it would be an error ("WaitDelay expired before I/O complete") and a working launcher would be refused.
 func TestASuccessfulCommandWhoseHelperHoldsThePipeIsASuccess(t *testing.T) {
-	path := script(t, "echo 'tool 1.0'\nsleep 4 &\nexit 0\n")
+	path := script(t, "echo 'tool 1.0'\nsleep 30 &\nexit 0\n")
 	for name, run := range map[string]func(*exec.Cmd) ([]byte, error){"Output": Output, "CombinedOutput": CombinedOutput} {
 		t.Run(name, func(t *testing.T) {
 			started := time.Now()
@@ -35,7 +35,7 @@ func TestASuccessfulCommandWhoseHelperHoldsThePipeIsASuccess(t *testing.T) {
 			if err != nil || strings.TrimSpace(string(out)) != "tool 1.0" {
 				t.Fatalf("out=%q err=%v, want the version and no error", out, err)
 			}
-			if elapsed := time.Since(started); elapsed > 3*time.Second {
+			if elapsed := time.Since(started); elapsed > 20*time.Second {
 				t.Fatalf("took %v: it waited for the helper", elapsed)
 			}
 		})

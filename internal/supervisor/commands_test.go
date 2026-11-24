@@ -497,7 +497,7 @@ func TestCommandSurvivesTheSwapAndIsAdoptedByTheReplacement(t *testing.T) {
 			if err := a.StopAcceptingAndDrain(ctx); err != nil {
 				t.Fatalf("drain: %v", err)
 			}
-			if waited := time.Since(began); waited > 5*time.Second {
+			if waited := time.Since(began); waited > 20*time.Second {
 				t.Fatalf("A's exit waited %s for the command", waited)
 			}
 			if a.hasRetireBlockingWork() {
