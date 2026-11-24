@@ -226,7 +226,7 @@ func TestHungSupervisorKillSparesVerifiedDetachableJobs(t *testing.T) {
 			// ps reads the job's argument list only once the shell has exec'd: wait until the table shows it.
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
-				rows, _ := processTable()
+				rows, _, _ := processTable()
 				found := false
 				for _, row := range rows {
 					found = found || (row.pid == job && strings.Contains(row.args, "command-log"))

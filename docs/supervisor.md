@@ -64,7 +64,10 @@ jobs, which survive this kill too and are adopted by the replacement: a job
 is spared only when its group leader is verified (it runs the job's wrapper
 with the log path of a job the server counts as open on the machine, leads a
 session of its own and started no earlier than the job did), and one that
-cannot be verified is killed and ends `lost_in_swap`. So nothing of the old supervisor on the
+cannot be verified is killed and ends `lost_in_swap`. On a host whose `ps`
+has no `lstart` (BusyBox), the tree is read from `pid`, `ppid` and `pgid`
+alone, no job can be verified and none is spared (every job is killed with
+the tree, as before jobs were spared), and the log says so. So nothing of the old supervisor on the
 host keeps writing in a checkout while a turn is continued on the new one. A
 process inside a container is not a child of the supervisor: killing the host
 side does not stop it, and its launcher ends it only when its session

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -49,26 +50,54 @@ func isDetachableJob(row processRow, jobs []detachableJob) bool {
 	return false
 }
 
-// processTable lists every process on the machine (tests replace it).
-var processTable = func() ([]processRow, error) {
-	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,pgid=,lstart=,args=").Output()
-	if err != nil {
-		return nil, err
+// psFormat is the process table processTable asks ps for: the tree, and the start time and command line that verify a detachable job.
+// psTreeFormat is the tree alone, which every ps prints; BusyBox's ps rejects lstart, so on such a host processTable falls back to it.
+const (
+	psFormat     = "pid=,ppid=,pgid=,lstart=,args="
+	psTreeFormat = "pid=,ppid=,pgid="
+)
+
+// runPS runs ps over every process with an output format and returns what it printed (tests replace it).
+var runPS = func(format string) ([]byte, error) {
+	return exec.Command("ps", "-A", "-o", format).Output()
+}
+
+// processTable lists every process on the machine. verifiable says whether the rows carry the start time and command line a detachable
+// job is verified by: false when ps rejected that query (BusyBox's ps knows no lstart) and the table comes from the tree columns alone.
+// A line whose first three columns are numbers is always a row, whatever follows them, so the full query never lists fewer processes
+// than the tree query would (a row with a start time it cannot read just cannot be verified).
+func processTable() (rows []processRow, verifiable bool, err error) {
+	out, fullErr := runPS(psFormat)
+	if fullErr != nil {
+		out, err = runPS(psTreeFormat)
+		if err != nil {
+			return nil, false, errors.Join(fullErr, err)
+		}
+		log.Printf("supervisor swap: ps rejected the start-time query (%v); listing pid, ppid and pgid only, so no detachable run_command job is spared", fullErr)
+		return parseProcessTable(out, false), false, nil
 	}
+	return parseProcessTable(out, true), true, nil
+}
+
+// parseProcessTable reads ps output in psFormat (full) or psTreeFormat.
+func parseProcessTable(out []byte, full bool) []processRow {
 	var rows []processRow
 	for _, line := range strings.Split(string(out), "\n") {
 		rest := line
 		var fields []string
 		for len(fields) < 8 {
 			rest = strings.TrimLeft(rest, " \t")
+			if rest == "" {
+				break
+			}
 			end := strings.IndexAny(rest, " \t")
 			if end < 0 {
-				break
+				end = len(rest)
 			}
 			fields = append(fields, rest[:end])
 			rest = rest[end:]
 		}
-		if len(fields) < 8 {
+		if len(fields) < 3 {
 			continue
 		}
 		pid, errPid := strconv.Atoi(fields[0])
@@ -77,10 +106,14 @@ var processTable = func() ([]processRow, error) {
 		if errPid != nil || errPpid != nil || errPgid != nil {
 			continue
 		}
-		start, _ := time.ParseInLocation(startLayout, strings.Join(fields[3:8], " "), time.Local)
-		rows = append(rows, processRow{pid: pid, ppid: ppid, pgid: pgid, start: start, args: strings.TrimSpace(rest)})
+		row := processRow{pid: pid, ppid: ppid, pgid: pgid}
+		if full && len(fields) == 8 {
+			row.start, _ = time.ParseInLocation(startLayout, strings.Join(fields[3:8], " "), time.Local)
+			row.args = strings.TrimSpace(rest)
+		}
+		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows
 }
 
 // descendantsOf returns what a kill of root's process tree has to signal besides root: the process groups one of root's descendants
@@ -125,6 +158,19 @@ func descendantsOf(root int, rows []processRow, spare func(processRow) bool) (gr
 	return groups, singles
 }
 
+// supervisorTreeTargets reads the process table and returns the groups and single processes killSupervisorTree signals besides pid.
+// Detachable jobs are spared only when the table could verify them; from the tree columns alone (BusyBox's ps) nothing is spared, and
+// the targets are what they were before jobs were spared at all.
+func supervisorTreeTargets(pid int, jobs []detachableJob) (groups, singles []int, err error) {
+	rows, verifiable, err := processTable()
+	var spare func(processRow) bool
+	if verifiable {
+		spare = func(row processRow) bool { return isDetachableJob(row, jobs) }
+	}
+	groups, singles = descendantsOf(pid, rows, spare)
+	return groups, singles, err
+}
+
 // killSupervisorTree kills a supervisor that hangs together with everything it started. The supervisor alone would leave its harness
 // processes and commands running: each is in a process group of its own, so they outlive it and would go on writing in the checkout
 // while the replacement continues their turns. The tree is read first, the supervisor is killed next (it can start nothing more), and
@@ -132,8 +178,7 @@ func descendantsOf(root int, rows []processRow, spare func(processRow) bool) (gr
 // its host side is gone. The detachable run_command jobs among jobs are spared (their groups are verified by isDetachableJob): they are
 // no part of what must stop, and the replacement adopts them; a job that does not verify is killed with the rest.
 func killSupervisorTree(pid int, jobs []detachableJob) error {
-	rows, tableErr := processTable()
-	groups, singles := descendantsOf(pid, rows, func(row processRow) bool { return isDetachableJob(row, jobs) })
+	groups, singles, tableErr := supervisorTreeTargets(pid, jobs)
 	err := syscall.Kill(pid, syscall.SIGKILL)
 	for _, group := range groups {
 		if killErr := syscall.Kill(-group, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
