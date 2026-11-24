@@ -3157,24 +3157,28 @@ async function main() {
             step.harnesses.addTicked = () => { adds++; return new Promise(resolve => { finish = () => { step.harnesses.tickedCount = () => 0; resolve(true); }; }); };
             step.harnesses.onTick(1);
             await new Promise(resolve => setTimeout(resolve, 80));
-            const button = document.querySelector('#onboarding-harnesses-continue'), status = document.querySelector('#onboarding-harness-status');
+            // This step shares #onboarding-view with the app's own onboarding, whose poll draws into the same container and re-mounts its nodes: so
+            // each read draws this step's state again and takes the nodes fresh (a node kept from before can be a detached copy), and the store's
+            // own state is read alongside the DOM.
+            const view = () => { step.store.flush(); return { button: document.querySelector('#onboarding-harnesses-continue'), status: document.querySelector('#onboarding-harness-status') }; };
             const run = step.continueHarnesses();
             await new Promise(resolve => setTimeout(resolve, 200)); // several polls while the add is in flight
-            const during = { adds, disabled: button.disabled };
-            button.disabled = false; button.click(); button.disabled = true; // even a re-enabled button cannot start a second add
+            const during = { adds, disabled: view().button.disabled };
+            { const { button } = view(); button.disabled = false; button.click(); button.disabled = true; } // even a re-enabled button cannot start a second add
             const doubleClick = adds;
             finish(); // the add succeeds, but no harness has a model
             await run;
             // The message is there as soon as the run ends, not only after a later poll; and the polls that follow keep it.
-            const atOnce = { disabled: button.disabled, status: status.textContent };
+            const atOnce = { disabled: view().button.disabled, status: view().status.textContent, store: step.store.harnessStatus.value };
             await new Promise(resolve => setTimeout(resolve, 200));
-            const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden, same: status.textContent === atOnce.status };
+            const now = view();
+            const after = { disabled: now.button.disabled, status: now.status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden, same: now.status.textContent === atOnce.status && step.store.harnessStatus.value === atOnce.store };
             // Leave the page as the next steps expect it: the last step shown, the poll stopped.
             step.stopWatching(); step.harnesses.clear(); step.store.set(() => { step.store.step.value = 'how'; });
             window.__lastOnboarding = step;
             return { during, doubleClick, atOnce, after };
           }), { during: { adds: 1, disabled: true }, doubleClick: 1,
-            atOnce: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.' },
+            atOnce: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.', store: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.' },
             after: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.', stayed: true, same: true } },
           'Continue adds once, and a harness added without a model keeps its message and a disabled Continue');
           // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
