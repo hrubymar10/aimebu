@@ -22,6 +22,9 @@ type Admission struct {
 	Generation                 int
 	DesiredRev                 int64
 	NoteIDs                    []string
+	// HandoffOutcomeRequired is the dispatching supervisor's supports_handoff_outcome. It is recorded on the turn, and the turn's answer
+	// is judged by it (AnswerInput), whichever connection later delivers that answer.
+	HandoffOutcomeRequired bool
 }
 
 func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
@@ -190,6 +193,10 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 			if _, err := tx.Exec(`UPDATE turn SET login=? WHERE id=?`, nullable(s.HostLogin(tool)), input.TurnID); err != nil {
 				return err
 			}
+		}
+		// Set on every dispatch, so a turn sent again takes the flag of the supervisor it is sent to now.
+		if _, err := tx.Exec(`UPDATE turn SET handoff_outcome_required=? WHERE id=?`, input.HandoffOutcomeRequired, input.TurnID); err != nil {
+			return err
 		}
 		_, err = tx.AppendEvent(Event{Kind: "turn_dispatch_requested", ProjectID: projectID, RoomID: roomID, AgentID: input.AgentID, TurnID: input.TurnID, PayloadJSON: payloadJSON(map[string]string{"turn_id": input.TurnID})})
 		return err

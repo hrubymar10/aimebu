@@ -24,7 +24,8 @@ done; the body says why). Every adapter's prompt states this rule right after
 its output contract (`prompt.HandoffOutcome`, not an overridable sentence),
 and the Claude and Codex response schemas carry `outcome` as a nullable enum.
 A supervisor with these prompts reports `supports_handoff_outcome` in `hello`,
-and only then does the server hold a handoff without an outcome as invalid
+and only in the answer to a turn dispatched to such a supervisor (recorded on
+the turn at dispatch) does the server hold a handoff without an outcome as invalid
 ("message N is a handoff without an outcome; set outcome to done, partial or
 failed"); an outcome on any other message is dropped with a receipt warning. `needs_attention` creates a free-text human question;
 `proposed_answers` adds two to four quick choices, or `open_questions` adds

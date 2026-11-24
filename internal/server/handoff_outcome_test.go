@@ -16,20 +16,17 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
-// handoffOutcomeAnswer sends one answer for the fixture's turn over a machine socket whose hello does or does not report
-// supports_handoff_outcome, and returns the receipt.
-func handoffOutcomeAnswer(t *testing.T, f *fixture, agent store.Agent, turn store.Turn, supports bool, candidate string) protocol.Frame {
+// machineSocket connects to the fixture's machine endpoint with a hello that does or does not report supports_handoff_outcome, binding the
+// agent (with its open turns, as a supervisor reports what its journal holds), and returns the socket's write and read.
+func machineSocket(t *testing.T, ctx context.Context, f *fixture, agent store.Agent, supports bool, open ...protocol.OpenTurn) (*websocket.Conn, func(protocol.Frame), func() protocol.Frame) {
 	t.Helper()
 	header := http.Header{}
 	header.Set("X-Machine-ID", f.machineID)
 	header.Set("Authorization", "Bearer "+f.machineKey)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(f.http.URL, "http")+"/api/machine", &websocket.DialOptions{HTTPHeader: header})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
 	write := func(frame protocol.Frame) {
 		raw, _ := json.Marshal(frame)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
@@ -48,19 +45,52 @@ func handoffOutcomeAnswer(t *testing.T, f *fixture, agent store.Agent, turn stor
 		return frame
 	}
 	write(protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: f.machineID, JournalID: "journal-outcome", SupportsStopReplay: true,
-		SupportsHandoffOutcome: supports, Agents: []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0}}})
+		SupportsHandoffOutcome: supports, Agents: []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0, OpenTurns: open}}})
 	if ack := read(); ack.Type != protocol.HelloAck {
 		t.Fatalf("hello_ack=%+v", ack)
 	}
+	return conn, write, read
+}
+
+func answerFrame(agent store.Agent, turn store.Turn, candidate string) protocol.Frame {
 	sum := sha256.Sum256([]byte(candidate))
-	write(protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: agent.ID, Generation: 0, TurnID: turn.ID, AnswerRev: 0,
-		Digest: hex.EncodeToString(sum[:]), Candidate: candidate})
+	return protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: agent.ID, Generation: 0, TurnID: turn.ID, AnswerRev: 0,
+		Digest: hex.EncodeToString(sum[:]), Candidate: candidate}
+}
+
+func receiptOf(read func() protocol.Frame) protocol.Frame {
 	for {
-		frame := read()
-		if frame.Type == protocol.Receipt {
+		if frame := read(); frame.Type == protocol.Receipt {
 			return frame
 		}
 	}
+}
+
+// handoffOutcomeAnswer dispatches the fixture's turn to a machine whose hello does or does not report supports_handoff_outcome (dispatched),
+// then sends one answer for it, over the same connection when answered equals dispatched, else over a new connection with the other flag
+// that reports the turn as journaled with its answer (a supervisor swap replaying it). It returns the receipt.
+func handoffOutcomeAnswer(t *testing.T, f *fixture, agent store.Agent, turn store.Turn, delivery protocol.Delivery, dispatched, answered bool, candidate string) protocol.Frame {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, write, read := machineSocket(t, ctx, f, agent, dispatched)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if err := f.srv.Dispatch(ctx, delivery); err != nil {
+		t.Fatal(err)
+	}
+	for read().Type != protocol.Deliver {
+	}
+	frame := answerFrame(agent, turn, candidate)
+	if answered == dispatched {
+		write(frame)
+		return receiptOf(read)
+	}
+	conn.Close(websocket.StatusNormalClosure, "swap")
+	replay, write, read := machineSocket(t, ctx, f, agent, answered,
+		protocol.OpenTurn{TurnID: turn.ID, Exec: "running", ProcessAlive: true, HasAnswer: true, Digest: frame.Digest})
+	defer replay.Close(websocket.StatusNormalClosure, "")
+	write(frame)
+	return receiptOf(read)
 }
 
 func listedOutcomes(t *testing.T, f *fixture) map[string]any {
@@ -87,8 +117,8 @@ func TestMachineHandoffOutcome(t *testing.T) {
 	t.Run("stored and returned", func(t *testing.T) {
 		t.Parallel()
 		f := newFixture(t)
-		agent, turn, _, _ := f.execution(t)
-		receipt := handoffOutcomeAnswer(t, f, agent, turn, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"it broke","handoff":true,"outcome":"failed"}]}`, f.room.ID))
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, true, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"it broke","handoff":true,"outcome":"failed"}]}`, f.room.ID))
 		if receipt.Result != "committed" {
 			t.Fatalf("receipt=%+v", receipt)
 		}
@@ -99,8 +129,8 @@ func TestMachineHandoffOutcome(t *testing.T) {
 	t.Run("missing is rejected", func(t *testing.T) {
 		t.Parallel()
 		f := newFixture(t)
-		agent, turn, _, _ := f.execution(t)
-		receipt := handoffOutcomeAnswer(t, f, agent, turn, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true,"outcome":null}]}`, f.room.ID))
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, true, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true,"outcome":null}]}`, f.room.ID))
 		var details struct {
 			Error string `json:"error"`
 		}
@@ -115,8 +145,8 @@ func TestMachineHandoffOutcome(t *testing.T) {
 	t.Run("a plain message needs none", func(t *testing.T) {
 		t.Parallel()
 		f := newFixture(t)
-		agent, turn, _, _ := f.execution(t)
-		receipt := handoffOutcomeAnswer(t, f, agent, turn, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"status","handoff":false,"outcome":null}]}`, f.room.ID))
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, true, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"status","handoff":false,"outcome":null}]}`, f.room.ID))
 		if receipt.Result != "committed" {
 			t.Fatalf("receipt=%+v", receipt)
 		}
@@ -128,13 +158,41 @@ func TestMachineHandoffOutcome(t *testing.T) {
 	t.Run("older supervisor", func(t *testing.T) {
 		t.Parallel()
 		f := newFixture(t)
-		agent, turn, _, _ := f.execution(t)
-		receipt := handoffOutcomeAnswer(t, f, agent, turn, false, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true}]}`, f.room.ID))
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, false, false, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true}]}`, f.room.ID))
 		if receipt.Result != "committed" {
 			t.Fatalf("receipt=%+v", receipt)
 		}
 		if got, ok := listedOutcomes(t, f)["report"]; !ok || got != nil {
 			t.Fatalf("listed outcome=%v (%t), want an agent message without one", got, ok)
+		}
+	})
+}
+
+// Whether a handoff needs an outcome is decided by the turn, from the supervisor it was dispatched to, not by the connection that delivers
+// the answer: an answer an older supervisor journaled and a newer one replays after a swap commits its handoff with no outcome, and a
+// turn dispatched to a supervisor that offered the field still needs one when its answer arrives over an older connection.
+func TestMachineHandoffOutcomeFollowsTheDispatch(t *testing.T) {
+	t.Parallel()
+	t.Run("journaled by an older supervisor, replayed by a newer one", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, false, true, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true}]}`, f.room.ID))
+		if receipt.Result != "committed" {
+			t.Fatalf("receipt=%+v details=%s", receipt, receipt.Details)
+		}
+		if got, ok := listedOutcomes(t, f)["report"]; !ok || got != nil {
+			t.Fatalf("listed outcome=%v (%t), want an agent message without one", got, ok)
+		}
+	})
+	t.Run("dispatched to a newer supervisor, answered over an older one", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		agent, turn, _, delivery := f.execution(t)
+		receipt := handoffOutcomeAnswer(t, f, agent, turn, delivery, true, false, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true}]}`, f.room.ID))
+		if receipt.Result != "held" {
+			t.Fatalf("receipt=%+v details=%s", receipt, receipt.Details)
 		}
 	})
 }

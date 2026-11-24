@@ -1144,8 +1144,11 @@ continuation in all, of either kind; a repeat takes the ordinary failure path be
 
 **Handoff outcome.** A supervisor announces `supports_handoff_outcome` in `hello` because its
 adapters ask every agent for the `outcome` of a task-result handoff (`done`, `partial` or
-`failed`) and the Claude and Codex response schemas carry the field. The server then holds an
-answer from it whose handoff has no outcome as invalid, telling the agent the allowed values. An
+`failed`) and the Claude and Codex response schemas carry the field. The server records the flag
+on each turn it dispatches to that supervisor (`turn.handoff_outcome_required`) and holds an
+answer to such a turn whose handoff has no outcome as invalid, telling the agent the allowed
+values. The turn decides, not the connection that delivers the answer: an answer an older
+supervisor journaled and its replacement replays after a swap is committed without an outcome. An
 older supervisor, still running until the swap replaces it or on a remote machine not yet
 updated, gives its agents a schema without the field: their handoffs are committed without an
 outcome and shown without one, and `aimebu doctor` lists the missing flag.

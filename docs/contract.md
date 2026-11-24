@@ -1554,8 +1554,8 @@ it never silently reruns a turn with uncertain effects.
   endpoint answers that the file cannot be saved, with the reason.
 - `supports_handoff_outcome=true` in `hello` says the supervisor's adapters
   put the handoff `outcome` (§4.4) in their prompts and response schemas. The
-  server rejects a handoff without an outcome only in an answer from a
-  supervisor that says so.
+  server rejects a handoff without an outcome only in the answer to a turn
+  dispatched to a supervisor that says so (§4.4, `turn.handoff_outcome_required`).
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
   harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...], telemetry?}` — the optional probe directories are the
@@ -2043,9 +2043,15 @@ CC/Codex, prompt-only on pi):
   every other message and on older handoffs, which show no outcome) and
   returned by the message API, delivery notes and agent history. An outcome
   on a message that is not a handoff is dropped with a receipt warning. The
-  requirement applies only to a turn answered by a supervisor that reports
+  requirement applies only to a turn dispatched to a supervisor that reports
   `supports_handoff_outcome` (§4.1): an older one's response schema has no
-  `outcome` field, so its agents' handoffs are committed without one.
+  `outcome` field, so its agents' handoffs are committed without one. Each
+  dispatch records the dispatching connection's flag on the turn
+  (`turn.handoff_outcome_required`, migration 132, 0 for every turn
+  dispatched before it), and the answer is judged by that column, never by
+  the connection that delivers it: an answer an older supervisor journaled
+  and a newer one replays after a swap is committed without an outcome. A
+  correction turn is judged by its own dispatch, not its parent's.
 - A committed agent message that ends with no target at all (no agent, no
   person) and no wake note, no forwarded mention pointer, and is not a reply,
   not in a private chat, not an ask of a person, not written in a turn a

@@ -848,7 +848,7 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 			parsed, parseErr = answer.Parse([]byte(frame.Candidate), mode == "diagnostic")
 		}
 		input := store.AnswerInput{TurnID: frame.TurnID, AgentID: frame.AgentID, Generation: frame.Generation,
-			AnswerRev: frame.AnswerRev, Digest: frame.Digest, Candidate: []byte(frame.Candidate), RequireHandoffOutcome: c.supportsHandoffOutcome}
+			AnswerRev: frame.AnswerRev, Digest: frame.Digest, Candidate: []byte(frame.Candidate)}
 		if parseErr != nil {
 			input.ParseError = parseErr.Error()
 		} else {
@@ -1002,7 +1002,8 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	for _, note := range delivery.Notes {
 		noteIDs = append(noteIDs, note.NoteID)
 	}
-	if err := s.Store.AdmitTurn(ctx, store.Admission{TurnID: delivery.TurnID, AgentID: delivery.AgentID, MachineID: agent.MachineID, Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: noteIDs}); err != nil {
+	if err := s.Store.AdmitTurn(ctx, store.Admission{TurnID: delivery.TurnID, AgentID: delivery.AgentID, MachineID: agent.MachineID, Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: noteIDs,
+		HandoffOutcomeRequired: c.supportsHandoffOutcome}); err != nil {
 		return err
 	}
 	return c.send(protocol.DeliverFrame(delivery))

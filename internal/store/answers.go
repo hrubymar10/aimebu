@@ -18,9 +18,6 @@ type AnswerInput struct {
 	Candidate               []byte
 	Parsed                  *answer.Candidate
 	ParseError              string
-	// RequireHandoffOutcome makes a handoff without an outcome invalid. The server sets it when the supervisor that ran the turn reports
-	// supports_handoff_outcome: only then did the agent's prompt and response schema offer the field.
-	RequireHandoffOutcome bool
 }
 
 type AnswerReceipt struct {
@@ -58,6 +55,9 @@ type answerTurn struct {
 	id, parentID, agentID, sessionID, roomID, mode, exec, policyJSON string
 	generation, attempt                                              int
 	terminal, blocked                                                bool
+	// handoffOutcomeRequired makes a handoff without an outcome invalid: the supervisor the turn was dispatched to reported
+	// supports_handoff_outcome (Admission), so only then did the agent's prompt and response schema offer the field.
+	handoffOutcomeRequired bool
 }
 
 // ApplyAnswer owns the answer's commit and receipt in one server transaction.
@@ -137,7 +137,9 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				}
 			}
 			var dropped []droppedMessage
-			reason, detail, err := tx.validateAnswer(parent, input, &receipt.Warnings, &dropped)
+			// The turn that answers decides whether a handoff needs an outcome: a correction runs under the supervisor it was
+			// dispatched to, which may not be its parent's.
+			reason, detail, err := tx.validateAnswer(parent, input, turn.handoffOutcomeRequired, &receipt.Warnings, &dropped)
 			if err != nil {
 				return err
 			}
@@ -239,8 +241,8 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 func (tx *Tx) answerTurn(id string) (answerTurn, error) {
 	var turn answerTurn
 	var parent, policy sql.NullString
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.parent_turn_id,t.agent_id,t.session_id,t.room_id,t.mode,t.exec,t.generation,t.attempt,t.terminal_event,a.recovery_block,t.policy_json FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, id).
-		Scan(&turn.id, &parent, &turn.agentID, &turn.sessionID, &turn.roomID, &turn.mode, &turn.exec, &turn.generation, &turn.attempt, &turn.terminal, &turn.blocked, &policy)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.parent_turn_id,t.agent_id,t.session_id,t.room_id,t.mode,t.exec,t.generation,t.attempt,t.terminal_event,a.recovery_block,t.policy_json,t.handoff_outcome_required FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, id).
+		Scan(&turn.id, &parent, &turn.agentID, &turn.sessionID, &turn.roomID, &turn.mode, &turn.exec, &turn.generation, &turn.attempt, &turn.terminal, &turn.blocked, &policy, &turn.handoffOutcomeRequired)
 	turn.parentID, turn.policyJSON = parent.String, policy.String
 	return turn, err
 }
@@ -250,7 +252,7 @@ func (tx *Tx) noActionMode(raw string) bool {
 	return json.Unmarshal([]byte(raw), &policy) == nil && policy.Capabilities.NoActionMode
 }
 
-func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]string, dropped *[]droppedMessage) (reason, detail string, dbErr error) {
+func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome bool, warnings *[]string, dropped *[]droppedMessage) (reason, detail string, dbErr error) {
 	if input.ParseError != "" || input.Parsed == nil {
 		return "invalid_answer", input.ParseError, nil
 	}
@@ -263,7 +265,7 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, warnings *[]str
 	// peer's reply has to tell its people). A chat with a person stays closed to everything else.
 	agentChat := turnRoomKind == "dm" && turnRoomProject == AgentDMProjectID
 	for i, item := range input.Parsed.Messages {
-		if item.Handoff && item.Outcome == "" && input.RequireHandoffOutcome {
+		if item.Handoff && item.Outcome == "" && requireOutcome {
 			return "invalid_answer", fmt.Sprintf("message %d is a handoff without an outcome; set outcome to %s", i, answer.OutcomeChoices), nil
 		}
 		if turnRoomKind == "dm" && item.Room != turn.roomID && !agentChat {

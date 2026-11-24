@@ -8,7 +8,7 @@ import (
 
 // rewindUsageTotalMigration rewinds the schema to before migration 124 the way a database that already ran it looks after the version
 // rows are deleted: the total columns and the context-delivery table are dropped, so the migrations run again over them. Deleting the
-// version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too, and so are the columns migrations 130 and 131 add.
+// version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too, and so are the columns migrations 130, 131 and 132 add.
 func rewindUsageTotalMigration(t *testing.T, s *Store) {
 	t.Helper()
 	for _, statement := range []string{
@@ -22,6 +22,7 @@ func rewindUsageTotalMigration(t *testing.T, s *Store) {
 		`ALTER TABLE turn DROP COLUMN login`,
 		`ALTER TABLE provider_limit DROP COLUMN login`,
 		`ALTER TABLE message DROP COLUMN outcome`,
+		`ALTER TABLE turn DROP COLUMN handoff_outcome_required`,
 		`DELETE FROM schema_version WHERE version>=124`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {

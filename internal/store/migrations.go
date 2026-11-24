@@ -2095,6 +2095,12 @@ ALTER TABLE provider_limit ADD COLUMN login TEXT;
 -- The outcome a task-result handoff reports: done, partial or failed. Only a handoff message has one; NULL is every other message and every
 -- handoff written before this, which a client shows without an outcome.
 ALTER TABLE message ADD COLUMN outcome TEXT CHECK (outcome IS NULL OR outcome IN ('done','partial','failed'));
+`}, {132, `
+-- Whether a handoff in this turn's answer must carry an outcome: 1 when the supervisor the turn was last dispatched to reported
+-- supports_handoff_outcome, so the agent's prompt and response schema offered the field. The answer is judged by the turn, not by the
+-- connection that delivers it, which after a supervisor swap may be a newer one replaying an answer the older one journaled. 0 is every
+-- turn dispatched before this.
+ALTER TABLE turn ADD COLUMN handoff_outcome_required INTEGER NOT NULL DEFAULT 0 CHECK (handoff_outcome_required IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

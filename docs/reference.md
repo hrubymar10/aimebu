@@ -609,8 +609,8 @@ a sender with no live agent record shows as departed, and one that exists only i
 human shows a 🔔. A task-result handoff shows its outcome next to the sender
 as a bordered word with a glyph: ✓ Done (green border), ◐ Partial (dashed
 amber border) or ✕ Failed (white on solid red, bold, so it stands out in every
-theme without relying on colour). A handoff from before outcomes, or from an agent
-whose supervisor predates them, shows no badge. A model switch handoff appears as a compact card naming the
+theme without relying on colour). A handoff from before outcomes, or from a turn
+dispatched to a supervisor that predates them, shows no badge. A model switch handoff appears as a compact card naming the
 agent, old and new runtimes, and summary source; its **Show** button opens a
 dialog with the handoff and a Copy button. The dialog follows the viewer's
 rendered or raw Markdown setting. Older handoffs without card metadata still hide their

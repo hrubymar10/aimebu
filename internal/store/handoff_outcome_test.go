@@ -12,13 +12,27 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
-// applyOutcomeCandidate applies an answer the way the server does for a supervisor that reports (require) or lacks supports_handoff_outcome.
+// applyOutcomeCandidate applies an answer to a turn dispatched to a supervisor that reports (require) or lacks supports_handoff_outcome:
+// the dispatch records it on the turn (AdmitTurn), which the fixture's turn stands in for.
 func applyOutcomeCandidate(t *testing.T, s *Store, f executionFixture, raw string, require bool) AnswerReceipt {
+	t.Helper()
+	if _, err := s.db.Exec(`UPDATE turn SET handoff_outcome_required=? WHERE id=?`, require, f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	return applyTurnOutcomeCandidate(t, s, f.turn, f.agent.ID, raw)
+}
+
+// applyTurnOutcomeCandidate applies an answer to a turn as its row stands: whether a handoff needs an outcome is the turn's.
+func applyTurnOutcomeCandidate(t *testing.T, s *Store, turn Turn, agentID, raw string) AnswerReceipt {
 	t.Helper()
 	parsed, parseErr := answer.Parse([]byte(raw), false)
 	sum := sha256.Sum256([]byte(raw))
-	input := AnswerInput{TurnID: f.turn.ID, AgentID: f.agent.ID, Generation: f.turn.Generation, Digest: hex.EncodeToString(sum[:]),
-		Candidate: []byte(raw), RequireHandoffOutcome: require}
+	rev := 0
+	if turn.Mode == "correction" {
+		rev = 1
+	}
+	input := AnswerInput{TurnID: turn.ID, AgentID: agentID, Generation: turn.Generation, AnswerRev: rev, Digest: hex.EncodeToString(sum[:]),
+		Candidate: []byte(raw)}
 	if parseErr != nil {
 		input.ParseError = parseErr.Error()
 	} else {
@@ -225,5 +239,128 @@ func TestHandoffOutcomeReachesTheLead(t *testing.T) {
 	got, err := s.AgentMessageByNo(ctx, lead.ID, project.ID, failed.No)
 	if err != nil || got.Outcome != "failed" {
 		t.Fatalf("message_get=%+v err=%v", got, err)
+	}
+}
+
+// linkNote gives the fixture's turn its note, as PrepareDispatch does, so the turn can be admitted.
+func linkNote(t *testing.T, s *Store, f executionFixture) {
+	t.Helper()
+	if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, f.turn.ID, f.note.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func turnRequiresOutcome(t *testing.T, s *Store, turnID string) bool {
+	t.Helper()
+	var required bool
+	if err := s.db.QueryRow(`SELECT handoff_outcome_required FROM turn WHERE id=?`, turnID).Scan(&required); err != nil {
+		t.Fatal(err)
+	}
+	return required
+}
+
+// The dispatch records the dispatching supervisor's supports_handoff_outcome on the turn, and the turn's answer is judged by it: an answer
+// to a turn dispatched to an older supervisor (journaled there, replayed after a swap over a connection that supports outcomes) commits its
+// handoff with a NULL outcome; a turn dispatched with the flag holds a handoff without one, as before. A new turn row requires nothing.
+func TestHandoffOutcomeRequirementFollowsTheDispatch(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	handoff := `{"messages":[{"room":%q,"body":"report","handoff":true}]}`
+	for _, dispatched := range []bool{false, true} {
+		s, f := answerFixture(t, false)
+		if turnRequiresOutcome(t, s, f.turn.ID) {
+			t.Fatal("a turn not yet dispatched requires an outcome")
+		}
+		linkNote(t, s, f)
+		if err := s.AdmitTurn(ctx, Admission{TurnID: f.turn.ID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, NoteIDs: []string{f.note.ID},
+			HandoffOutcomeRequired: dispatched}); err != nil {
+			t.Fatal(err)
+		}
+		if got := turnRequiresOutcome(t, s, f.turn.ID); got != dispatched {
+			t.Fatalf("dispatched with %t: the turn records %t", dispatched, got)
+		}
+		receipt := applyTurnOutcomeCandidate(t, s, f.turn, f.agent.ID, fmt.Sprintf(handoff, f.room.ID))
+		if !dispatched {
+			if receipt.Result != "committed" || len(receipt.MessageIDs) != 1 {
+				t.Fatalf("an older supervisor's turn: receipt=%+v", receipt)
+			}
+			if got, ok := storedOutcome(t, s, receipt.MessageIDs[0]); ok {
+				t.Fatalf("stored outcome %q, want NULL", got)
+			}
+			continue
+		}
+		if receipt.Result != "held" || !strings.Contains(receipt.Error, "handoff without an outcome") {
+			t.Fatalf("a supporting supervisor's turn: receipt=%+v", receipt)
+		}
+	}
+}
+
+// A turn dispatched again takes the flag of the new dispatch: a correction turn (the continuation of a held answer) dispatched to a supervisor
+// that supports outcomes requires one even though its parent was dispatched to one that did not, and the other way round.
+func TestHandoffOutcomeRequirementOfAContinuation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, child := range []bool{true, false} {
+		s, f := answerFixture(t, true)
+		linkNote(t, s, f)
+		if err := s.AdmitTurn(ctx, Admission{TurnID: f.turn.ID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, NoteIDs: []string{f.note.ID},
+			HandoffOutcomeRequired: !child}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE turn SET exec='running' WHERE id=?`, f.turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		first := applyTurnOutcomeCandidate(t, s, f.turn, f.agent.ID, `{"messages":[`)
+		if first.Result != "correction_requested" {
+			t.Fatalf("first=%+v", first)
+		}
+		if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 0, true, false); err != nil {
+			t.Fatal(err)
+		}
+		correction, err := s.CorrectionTurn(ctx, f.turn.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if turnRequiresOutcome(t, s, correction.ID) {
+			t.Fatal("a correction turn not yet dispatched requires an outcome")
+		}
+		if err := s.AdmitTurn(ctx, Admission{TurnID: correction.ID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, HandoffOutcomeRequired: child}); err != nil {
+			t.Fatal(err)
+		}
+		receipt := applyTurnOutcomeCandidate(t, s, correction, f.agent.ID, fmt.Sprintf(`{"messages":[{"room":%q,"body":"report","handoff":true}]}`, f.room.ID))
+		if child && (receipt.Result == "committed" || !strings.Contains(receipt.Error, "handoff without an outcome")) {
+			t.Fatalf("a correction dispatched with the flag (parent without): receipt=%+v", receipt)
+		}
+		if !child && receipt.Result != "committed" {
+			t.Fatalf("a correction dispatched without the flag (parent with): receipt=%+v", receipt)
+		}
+	}
+}
+
+// Migration 132 gives every turn row the safe default (no outcome required), on a fresh database and on one upgraded from 131 with turns in
+// it, and the column takes only 0 and 1.
+func TestHandoffOutcomeRequiredMigration(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	if turnRequiresOutcome(t, s, f.turn.ID) {
+		t.Fatal("a fresh database's turn requires an outcome")
+	}
+	if _, err := s.db.Exec(`UPDATE turn SET handoff_outcome_required=2 WHERE id=?`, f.turn.ID); err == nil {
+		t.Fatal("the column took 2")
+	}
+	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `DELETE FROM schema_version WHERE version=132`} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(context.Background(), s.db); err != nil {
+		t.Fatal(err)
+	}
+	if turnRequiresOutcome(t, s, f.turn.ID) {
+		t.Fatal("an upgraded turn requires an outcome")
+	}
+	var version int
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 132 {
+		t.Fatalf("version=%d err=%v", version, err)
 	}
 }
