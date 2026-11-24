@@ -1189,12 +1189,12 @@ async function main() {
       add({ id: 'late-reply-self', reply_to: 'late-self', thread_root: 'late-self' });
       add({ id: 'late-att', body: 'asks late', needs_attention: true });
       add({ id: 'late-self', body: 'asks late too', needs_attention: true });
-      const view = id => { const answer = chat.answerView(chat.messages.get(id)); return `${answer.kind}${answer.kind === 'history' ? `:${answer.answered}` : ''}`; };
+      const view = id => { const answer = chat.answerView(chat.messages.get(id)); return `${answer.kind}${answer.kind === 'history' || answer.kind === 'kept' ? `:${answer.answered}` : ''}`; };
       const kinds = Object.fromEntries(['plain', 'att', 'att-self', 'pa-other', 'pa-self', 'late-att', 'late-self'].map(id => [id, view(id)]));
       main.remove();
       return kinds;
     });
-    assert.deepEqual(replyKinds, { plain: 'none', att: 'done', 'att-self': 'none', 'pa-other': 'history:true', 'pa-self': 'history:false', 'late-att': 'done', 'late-self': 'none' }, 'a reply does not make an ordinary message "Answered"; only another person\'s reply does, to a message that asked, whichever of the two loaded first, and a self-reply never');
+    assert.deepEqual(replyKinds, { plain: 'none', att: 'done', 'att-self': 'none', 'pa-other': 'kept:true', 'pa-self': 'kept:false', 'late-att': 'done', 'late-self': 'none' }, 'a reply does not make an ordinary message "Answered"; only another person\'s reply does, to a message that asked, whichever of the two loaded first, and a self-reply never');
     // A thumbnail with a known size keeps its shape: a panorama and a portrait are scaled into the box, not letterboxed in it.
     const thumbs = await first.evaluate(async () => {
       const picture = (width, height) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="gray"/></svg>`);

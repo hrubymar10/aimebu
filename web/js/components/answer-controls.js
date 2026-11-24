@@ -7,31 +7,35 @@ import { renderMarkdown } from '../markdown.js';
 // composer, with the reply link, instead of sending it (Shift-click). Without it a Shift-click sends like any click. With `freeAnswer` (the inbox, which has no composer) a compact
 // "Answer…" button under the chips opens a small text field. `className` is added to the root (a message list row's slot), `disabled` switches every control off from outside, and
 // the rest of the props (data attributes) go on the root.
-export function AnswerControls({ item, submit, mention = '', compose = null, freeAnswer = false, disabled = false, className = '', ...rest }) {
+// `answered` (the answer's text, `''` for one the page has not read yet) is a question a person has answered: every control stays, off, and the option that was chosen is
+// marked. A question that can no longer be answered (`disabled` without `answered`) keeps its controls the same way: they are never taken away, only switched off.
+export function AnswerControls({ item, submit = null, mention = '', compose = null, freeAnswer = false, disabled = false, answered = null, className = '', ...rest }) {
   const [pending, setPending] = useState(false), [error, setError] = useState(''), [free, setFree] = useState(false), [, refresh] = useState(0);
   const field = useRef(null), form = useRef(null);
   // The newest item and submit of the controls on the page are what an open dialog uses when it sends, and the count is drawn again when the dialog changes an answer.
   useLayoutEffect(() => {
-    if (!item.open_questions?.length) return undefined;
+    if (!item.open_questions?.length || !submit) return undefined;
     const key = draftKey(item), entry = { item, submit, compose: compose && (text => compose(mention ? `${mention} ${text}` : text)), refresh: () => refresh(count => count + 1) };
     live.set(key, [...(live.get(key) || []), entry]);
     return () => { live.set(key, (live.get(key) || []).filter(other => other !== entry)); settleLive(key); };
   });
   useLayoutEffect(() => { if (free) field.current?.focus(); }, [free]);
-  const off = pending || disabled;
+  const done = answered !== null, off = pending || disabled || done;
   const send = async value => {
-    if (!value || pending) return;
+    if (!value || pending || !submit) return;
     setPending(true);
     try { if (await submit(value) === false) throw new Error('Could not send answer'); }
     catch (failure) { setPending(false); setError(failure.message || 'Could not send answer'); }
   };
   const values = item.proposed_answers || (item.open_questions?.length ? [] : item.options || []);
-  const count = item.open_questions?.length ? `${answeredCount(loadAnswers(item))}/${item.open_questions.length}` : '';
+  // The server knows a set of questions only as answered (one reply carries every answer) or not; the count of a draft is this page's own.
+  const count = !item.open_questions?.length ? '' : done ? `${item.open_questions.length}/${item.open_questions.length}` : off && !submit ? `0/${item.open_questions.length}` : `${answeredCount(loadAnswers(item))}/${item.open_questions.length}`;
+  const chosen = done ? chosenOption(values, answered) : '';
   return html`<div class=${`answer-controls${className}`} ...${rest}>
     ${item.open_questions?.length ? html`<button type="button" class="btn open-questions-open" disabled=${off} onClick=${() => openQuestions(item, !!compose)}><span>Open Questions</span>${' '}<span class="open-questions-count">${count}</span></button>` : null}
     ${values.map(value => {
       const text = mention ? `${mention} ${value}` : value;
-      return html`<button type="button" class="btn proposed-answer-btn" key=${value} disabled=${off} title=${compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer'}
+      return html`<button type="button" class=${`btn proposed-answer-btn${value === chosen ? ' chosen' : ''}`} key=${value} disabled=${off} aria-pressed=${done ? String(value === chosen) : undefined} title=${compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer'}
         onClick=${event => { if (event.shiftKey && compose) compose(text); else send(text); }}>${value}</button>`;
     })}
     ${freeAnswer && item.free_text ? html`<button type="button" class="btn proposed-answer-btn answer-free-open" aria-expanded=${String(free)} title="Write an answer of your own" disabled=${off} onClick=${() => setFree(!free)}>Answer…</button>
@@ -42,13 +46,19 @@ export function AnswerControls({ item, submit, mention = '', compose = null, fre
   </div>`;
 }
 
+// The proposed answer a reply chose: the longest one the reply starts with (after the "@agent" mention a click puts in front), ending at a word break; '' for a free-text reply.
+export function chosenOption(values, body) {
+  const plain = String(body || '').replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '').replace(/\s+/g, ' ').trim();
+  return (values || []).filter(value => plain.startsWith(value) && (plain.length === value.length || /[\s\p{P}]/u.test(plain[value.length]))).sort((a, b) => b.length - a.length)[0] || '';
+}
+
 // A resolved question points to the person's reply. A closed one has a single quiet status; a superseded ask has no history line.
 export function AnswerHistory({ message, answered, className = '' }) {
   if (!answered && message.answer_state === 'superseded') return null;
   if (!answered) return html`<div class=${`answer-history${className}`} data-answered="false"><span class="answer-history-status">No longer pending</span></div>`;
   const chosen = message.answer_body || '';
   const plain = chosen.replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '').replace(/\s+/g, ' ').trim();
-  const choice = (message.proposed_answers || []).filter(value => plain.startsWith(value) && (plain.length === value.length || /[\s\p{P}]/u.test(plain[value.length]))).sort((a, b) => b.length - a.length)[0];
+  const choice = chosenOption(message.proposed_answers, chosen);
   const summary = message.open_questions?.length
     ? `Answered by ${message.answer_author_name || 'someone'} (${message.open_questions.length}/${message.open_questions.length})`
     : `Answered by ${message.answer_author_name || 'someone'}: ${choice || [...plain].slice(0, 60).join('')}${[...plain].length > 60 && !choice ? '…' : ''}`;

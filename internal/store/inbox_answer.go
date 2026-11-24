@@ -32,7 +32,17 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			return "", ErrAlreadyResolved
 		}
 		if state == "withdrawn" {
-			return "", ErrAlreadyWithdrawn
+			// Structured choices (proposed answers, Open Questions) wait for their answer however the card left the Inbox (dismissed, withdrawn by
+			// a restart); an answer is only a reply, so it resolves the card like one on a superseded ask, while its room is open (checked below)
+			// and its agent exists. Any other withdrawn item stays final.
+			var again bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM inbox_item i JOIN message ask ON ask.id=i.message_id
+				WHERE i.id=? AND `+reanswerableSQL+`)`, itemID).Scan(&again); err != nil {
+				return "", err
+			}
+			if !again {
+				return "", ErrAlreadyWithdrawn
+			}
 		}
 		if currentRev != rev {
 			return "", ErrStaleInboxRev
@@ -75,8 +85,8 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			return "", ErrInvalidTransition
 		}
 		// Close the item before writing the answer so that the answer itself cannot supersede its ask. A superseded ask is not over: it
-		// left the Inbox only, and the answer resolves it here like an open one.
-		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state IN ('open','superseded') AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
+		// left the Inbox only, and the answer resolves it here like an open one (so does a withdrawn card with structured choices).
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state IN ('open','superseded','withdrawn') AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
 			return "", err
 		}
 		// The answer replies to the ask, so it joins the ask's conversation (its thread_root is derived from that).

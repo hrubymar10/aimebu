@@ -90,3 +90,16 @@ func (tx *Tx) supersedeAsks(message Message) error {
 	}
 	return nil
 }
+
+// reanswerableSQL is whether a withdrawn card (alias i, its message ask) can still be answered: an agent's question or approval that offers structured
+// answers (proposed answers or open questions, no explicit ask), asked by an agent that still exists, in a room that is open. A card with structured
+// choices keeps them until a person picks one (the chat shows them for as long as the answer can be sent), however the card left the Inbox: dismissed, or
+// withdrawn by a restart. A closed room or a removed agent cannot receive an answer, so those stay final.
+const reanswerableSQL = `i.state='withdrawn' AND i.kind IN ('question','approval') AND i.requester_kind='agent' AND ask.ask_json IS NULL
+	AND ` + structuredAnswersSQL + `
+	AND NOT EXISTS(SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id)
+	AND NOT EXISTS(SELECT 1 FROM agent ag WHERE ag.id=i.agent_id AND ag.revoked_at IS NOT NULL)
+	AND EXISTS(SELECT 1 FROM room rm WHERE rm.id=i.room_id AND rm.lifecycle='open')`
+
+// reanswerableListSQL is reanswerableSQL for the inbox listing, whose message alias is msg.
+const reanswerableListSQL = `(` + `EXISTS(SELECT 1 FROM message ask WHERE ask.id=i.message_id AND ` + reanswerableSQL + `))`

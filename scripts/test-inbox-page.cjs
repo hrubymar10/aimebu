@@ -120,6 +120,14 @@ async function main() {
         [items().length, String(items().length), false, true, false], 'a superseded ask is not in the Inbox but is handed to the chat');
       await page.close();
     }
+    // A withdrawn question with structured choices (dismissed from the Inbox) stays answerable in the chat; the Inbox list, its count and its badge do not grow.
+    {
+      const page = await mount({ list: [...items(), { ...base, id: 'wd1', kind: 'question', question: 'Pick', proposed_answers: ['A', 'B'], options: [], state: 'withdrawn' }] });
+      await waitList(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.inbox-card').length, document.querySelector('#inbox-count').textContent, window.__onItems.at(-1).includes('wd1'), !!document.querySelector('[data-inbox-id=wd1]')]),
+        [items().length, String(items().length), true, false], 'a withdrawn structured card is handed to the chat and is not in the Inbox list or its count');
+      await page.close();
+    }
     // A recovery card of a turn that failed before it did anything shows the sentence the harness gave, the raw output folded away behind a
     // toggle, Retry and Abandon only (nothing to resume), and a repeated failure says so in its question.
     {

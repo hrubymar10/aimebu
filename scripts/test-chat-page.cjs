@@ -799,6 +799,73 @@ async function main() {
     await page.close();
   }
 
+  // Choices stay on their message until answered, however much was said since; an answer posts as a reply to that message; once answered (by anyone, as the server
+  // records it) every control is off for everybody, the chosen one is marked and the "Answered by" line stays, also after a reload (a page that opens it already answered).
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', body: 'Old question', proposed_answers: ['alpha', 'beta'], open_questions: undefined };
+      window.__answered = [];
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const state = () => page.evaluate(() => {
+      const row = document.querySelector('#messages [data-message-id=rm_a_m119]');
+      return { buttons: [...row.querySelectorAll('.answer-controls .proposed-answer-btn')].map(button => [button.textContent, button.disabled, button.classList.contains('chosen')]), line: row.querySelector('.answer-history-link')?.textContent.trim() || '' };
+    });
+    await page.evaluate(() => {
+      window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
+      window.__chat.setInbox({ answer: async (item, text) => { window.__answered.push([item.id, item.message_id, text]); return true; } });
+      // the person replied to it with a clarification and newer messages came: the card is superseded, which is not over
+      window.__chat.updateAnswerControls([{ id: 'inb_old', rev: 2, kind: 'question', message_id: 'rm_a_m119', state: 'superseded', proposed_answers: ['alpha', 'beta'], options: [], free_text: false, can_decide: true }]);
+    });
+    await page.waitForSelector('#messages [data-message-id=rm_a_m119] .answer-controls .proposed-answer-btn');
+    await typeDraft(page, 'a clarification question'); await page.evaluate(() => window.__chat.setReply(window.__chat.messages.get('rm_a_m119'))); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([(await posts(page)).at(-1).body, (await posts(page)).at(-1).reply_to], ['a clarification question', 'rm_a_m119'], 'a text reply is an ordinary message');
+    assert.deepEqual(await state(), { buttons: [['alpha', false, false], ['beta', false, false]], line: '' }, 'after a text reply the choices are still there, on and unmarked');
+    await page.$$eval('#messages [data-message-id=rm_a_m119] .proposed-answer-btn', buttons => buttons[1].click());
+    await page.waitForFunction(() => window.__answered.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__answered), [['inb_old', 'rm_a_m119', '@zed beta']], 'an old question is answered through its own item, the answer replying to that message');
+    // the server resolves it: the item leaves the list and the message carries the answered state
+    await page.evaluate(() => {
+      const question = window.__data.rooms.rm_a.messages.find(message => message.id === 'rm_a_m119');
+      question.answer_state = 'resolved'; question.answer_body = '@zed beta'; question.answer_author_name = 'owner'; question.answer_message_no = 4242;
+      window.__chat.updateAnswerControls([]);
+    });
+    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m119] .answer-history-link')?.textContent.includes('beta'));
+    assert.deepEqual(await state(), { buttons: [['alpha', true, false], ['beta', true, true]], line: 'Answered by owner: beta' }, 'answered: every choice is off, the chosen one marked, the line stays');
+    await page.$$eval('#messages [data-message-id=rm_a_m119] .proposed-answer-btn', buttons => buttons.forEach(button => button.click()));
+    assert.equal(await page.evaluate(() => window.__answered.length), 1, 'no answering again through the buttons');
+    await page.close();
+    // a reload, or another device: the page opens the room with the answered state already on the message
+    const other = await mount();
+    await other.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', body: 'Old question', proposed_answers: ['alpha', 'beta'], answer_state: 'resolved', answer_body: '@zed beta', answer_author_name: 'owner', answer_message_no: 4242 };
+    });
+    await openRoom(other, 'rm_a'); await opened(other); await settle(other);
+    assert.deepEqual(await other.evaluate(() => {
+      const row = document.querySelector('#messages [data-message-id=rm_a_m119]');
+      return { buttons: [...row.querySelectorAll('.answer-controls .proposed-answer-btn')].map(button => [button.textContent, button.disabled, button.classList.contains('chosen')]), line: row.querySelector('.answer-history-link')?.textContent.trim() || '' };
+    }), { buttons: [['alpha', true, false], ['beta', true, true]], line: 'Answered by owner: beta' }, 'the answered state comes from the server: a fresh page shows the same');
+    await other.close();
+  }
+
+  // A question that can no longer be answered (its room is closed, its agent is gone) keeps its choices too, switched off, with its one status line.
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[119] = { ...messages[119], author_kind: 'agent', author_id: 'agt_zed', body: 'Pick one', proposed_answers: ['alpha', 'beta'], answer_state: 'withdrawn' };
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await page.evaluate(() => {
+      const row = document.querySelector('#messages [data-message-id=rm_a_m120]');
+      return { buttons: [...row.querySelectorAll('.answer-controls .proposed-answer-btn')].map(button => [button.textContent, button.disabled]), status: row.querySelector('.answer-history-status')?.textContent || '' };
+    }), { buttons: [['alpha', true], ['beta', true]], status: 'No longer pending' }, 'a closed question keeps its choices, off');
+    await page.close();
+  }
+
   // An attention card asked outside the home room is open but left out of the Inbox (inbox_hidden): the chat still shows live answer buttons.
   {
     const page = await mount();

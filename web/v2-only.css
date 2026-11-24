@@ -706,6 +706,8 @@ button.harness-master-item { flex: 0 0 auto; width: auto; scroll-snap-align: sta
    draws for them. */
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):not(:disabled) { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
 :root:root :is(button.proposed-answer-btn, button.open-questions-open):is(:hover, :focus-visible):not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); color: var(--text-primary); }
+/* A question that is answered keeps its choices, all off; the one that was chosen stays at full strength with the accent outline and fill. */
+:root:root button.proposed-answer-btn.chosen:disabled { opacity: 1; background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
 /* "Review in Inbox" on an agent card that needs a decision (v2 only): a small outlined control like the card's other buttons, in v1's palette (the orange of a decision
    waiting, the border colour for its outline, the accent on hover and focus), not the browser's plain button; the high-contrast themes fill it with the page colour. */
 :root:root .agent-card button.agent-recovery { background: transparent; color: var(--orange); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; }

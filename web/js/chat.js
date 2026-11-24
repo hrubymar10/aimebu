@@ -627,7 +627,11 @@ export class Chat {
     // The quiet "Answered" is for a message that asked for an answer (it needed attention, or its question was answered here); an ordinary message that
     // somebody replied to is not "answered".
     const doneOk = Boolean(this.answeredMessages.has(id) || (repliedByOther && message.needs_attention)), area = answerArea(item, message, doneOk);
-    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}:${message.answer_body || ''}:${message.answer_message_no || ''}:${message.answer_author_name || ''}` };
+    // A question with choices keeps them for good: switched off once it is answered (by anyone, as the server records it) or cannot be answered any more.
+    if (area === 'history') {
+      const resolved = answered;
+      return { kind: 'kept', answered: resolved, line: resolved || message.answer_state !== 'superseded', key: `k:${resolved}:${message.answer_state || ''}:${message.answer_body || ''}:${message.answer_message_no || ''}:${message.answer_author_name || ''}` };
+    }
     if (area === 'done') return { kind: 'done', answered, key: 'd:answered', label: 'Answered' };
     return { kind: 'none', answered, key: '' };
   }

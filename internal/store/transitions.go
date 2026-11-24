@@ -93,6 +93,6 @@ var WriterStateTransitions = TransitionTable{"checkout.writer_state", map[string
 var InboxItemTransitions = TransitionTable{"inbox_item", map[string][]string{
 	"open":       {"resolved", "withdrawn", "superseded"},
 	"resolved":   {},
-	"withdrawn":  {},
+	"withdrawn":  {"resolved"},
 	"superseded": {"resolved"},
 }}

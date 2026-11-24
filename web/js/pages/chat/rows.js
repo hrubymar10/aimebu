@@ -98,6 +98,9 @@ export function Plan({ message }) {
 export function AnswerSlot({ message, view, host, listed = '' }) {
   const answer = view.answer;
   if (answer.kind === 'controls') return html`<${AnswerControls} key=${answer.key} className=${listed} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} item=${answer.item} submit=${value => host.answer(answer.item, value)} ...${host.answerOptions(answer.parent)} />`;
+  // A question that is answered, or can no longer be answered, keeps its choices, switched off (the chosen one marked), above the one-line history.
+  if (answer.kind === 'kept') return html`<${Fragment}><${AnswerControls} key=${`${answer.key}:c`} className=${listed} item=${message} answered=${answer.answered ? message.answer_body || '' : null} disabled data-kept=${answer.answered ? 'answered' : 'closed'} />
+    ${answer.line ? html`<${AnswerHistory} key=${`${answer.key}:h`} className=${listed} message=${message} answered=${answer.answered} />` : null}<//>`;
   if (answer.kind === 'history') return html`<${AnswerHistory} key=${answer.key} className=${listed} message=${message} answered=${answer.answered} />`;
   if (answer.kind === 'done') return html`<div key=${answer.key} class=${`answer-done${listed}`}><button type="button" class="btn" disabled>${answer.label}</button></div>`;
   return null;

@@ -89,7 +89,7 @@ const inboxHiddenSQL = `(i.kind IN ('question','approval') AND r.kind<>'home' AN
 const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
         AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxVisibleSQL
 const inboxCountWhereSQL = inboxWhereSQL + ` AND NOT ` + inboxHiddenSQL
-const inboxSupersededWhereSQL = `WHERE i.state='superseded' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
+const inboxSupersededWhereSQL = `WHERE (i.state='superseded' OR i.state='withdrawn' AND ` + reanswerableListSQL + `) AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)

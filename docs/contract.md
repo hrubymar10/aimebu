@@ -1339,7 +1339,10 @@ switches, or dispatch. Checkout identity includes the project, so projects
 that use one physical folder do not share a checkout record.
 
 ### 3.7 inbox item
-`open → resolved | withdrawn | superseded`, `superseded → resolved`;
+`open → resolved | withdrawn | superseded`, `superseded → resolved`, and
+`withdrawn → resolved` only for an agent's attention card with structured choices
+(proposed answers or open questions, no explicit `ask`) whose room is open and
+whose agent exists;
 compare-and-set on (state, rev) — an answer to an open item matches
 `state=open`, an answer to a superseded ask matches `state=superseded`:
 - Boundary admission is a distinct use of `approval`: only a project owner
@@ -1371,8 +1374,11 @@ compare-and-set on (state, rev) — an answer to an open item matches
   `open → superseded` in that message's transaction. It only removes the item
   from the Inbox listing and the unseen count — the ask is not closed, so the
   chat keeps its answer controls and an answer resolves it.
-- Withdraw (requester or system): open → withdrawn. `resolved` and `withdrawn`
-  stay final and reject answers (`already_resolved`, `already_withdrawn`).
+- Withdraw (requester or system): open → withdrawn. `resolved` stays final and
+  rejects answers (`already_resolved`); so does `withdrawn` (`already_withdrawn`),
+  except a card with structured choices in an open room whose agent exists: its
+  choices wait for an answer, which is only a reply, so it answers like a
+  superseded ask and `GET /api/inbox` keeps listing it for the chat.
 - Close vs answer: closing a room withdraws its open question/approval
   items in the close transaction (an answer committed first wins). A
   recovery decision after close is stored as a control/audit decision

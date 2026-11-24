@@ -586,7 +586,7 @@ Project responses set `repo_url` to `null` when absent. Message responses
 expose `targets` as a JSON array and omit the raw `targets_json` column.
 For a resolved question, the message view includes `answer_state: "resolved"`,
 `answer_body`, `answer_message_no` (the reply's `#N`), and
-`answer_author_name` (the answering person's login).
+`answer_author_name` (the answering person's login); the message view keeps `answer_state` for an unanswered one too (`open`, `superseded`, `withdrawn`), and the chat draws the choices of a message off, with the chosen one marked, from `resolved`. `GET /api/inbox` also lists, next to the superseded asks, a `withdrawn` question or approval that has structured choices (proposed answers or open questions, no explicit `ask`), while its room is open and its agent exists; `POST /api/inbox/{item}/answer` resolves it like a superseded one (a withdrawn item of any other kind, a closed room or a removed agent still answers `already_withdrawn` or `invalid_transition`). The Inbox view lists open items only, as before.
 Project room lists and single-room details include read-only `member_count`
 (active project humans, or a private chat's own people, plus room agents; a disabled
 user counts nowhere), `message_count`, `user_message_count` (the messages that are not system notices: a room whose newest such message has only an attachment has an empty preview but a count above zero), and an optional
