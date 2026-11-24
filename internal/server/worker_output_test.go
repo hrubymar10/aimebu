@@ -213,6 +213,7 @@ func TestNoticeCarriesTheEndOfTheWorkersTurn(t *testing.T) {
 		{NoteID: "note_private", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_private"}},
 		{NoteID: "note_plain"},
 	}}
+	prefetchForDelivery(t, o, &delivery)
 	o.srv.addWorkerOutput(t.Context(), &delivery)
 	last := delivery.Notes[0].WorkerOutput
 	if last == nil || last.Untrusted != untrustedWorkerOutput || last.AgentID != o.agent.ID || last.TurnID != "trn_last" || last.Withheld != "" {
@@ -257,6 +258,7 @@ func TestNoticeCarriesTheEndOfTheWorkersTurn(t *testing.T) {
 	// A turn nobody read yet, on a machine with no log, says why it has no text.
 	o.conversationTurn(t, "trn_unread", o.room.ID)
 	unread := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_other", Notes: []protocol.DeliveryNote{{NoteID: "note_unread", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_unread"}}}}
+	prefetchForDelivery(t, o, &unread)
 	o.srv.addWorkerOutput(t.Context(), &unread)
 	if out := unread.Notes[0].WorkerOutput; out == nil || out.Text != "" || out.Withheld != noticeOutputUnreadable {
 		t.Fatalf("no log: %+v", out)
@@ -282,6 +284,31 @@ func waitFetch(t *testing.T, o *outputFixture, source protocol.OutputSource, rea
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("no read was started")
+}
+
+// prefetchNoticeOutput starts the read of a worker turn for a reader and waits for it to finish, so a delivery that needs the text does not
+// depend on addWorkerOutput's short wait (a production behaviour a loaded test machine must not race).
+func prefetchNoticeOutput(t *testing.T, o *outputFixture, source protocol.OutputSource, readerID string) {
+	t.Helper()
+	fetch := o.srv.fetchNoticeOutput(t.Context(), source, readerID)
+	if fetch == nil {
+		t.Fatal("no read was started: every fetch slot was busy")
+	}
+	select {
+	case <-fetch.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the read did not finish")
+	}
+}
+
+// prefetchForDelivery starts and waits for every read the notes of a delivery name.
+func prefetchForDelivery(t *testing.T, o *outputFixture, delivery *protocol.Delivery) {
+	t.Helper()
+	for i := range delivery.Notes {
+		if source := delivery.Notes[i].OutputSource; source != nil {
+			prefetchNoticeOutput(t, o, *source, delivery.AgentID)
+		}
+	}
 }
 
 // A slow machine holds a delivery up for the short wait only: the notice says not_ready and the dispatcher's pass goes on. The read still
@@ -363,6 +390,7 @@ func TestNoticeOutputIsSizeCapped(t *testing.T) {
 	}
 	o.mu.Unlock()
 	delivery := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_none", Notes: []protocol.DeliveryNote{{NoteID: "note_big", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_big"}}}}
+	prefetchForDelivery(t, o, &delivery)
 	o.srv.addWorkerOutput(t.Context(), &delivery)
 	out := delivery.Notes[0].WorkerOutput
 	if out == nil || len(out.Text) > noticeOutputBytes || len(out.Text) < noticeOutputBytes-100 || !out.Truncated || !strings.HasPrefix(out.Text, "\tfiller") || !strings.HasSuffix(out.Text, "done, but said nothing\n") {
@@ -454,6 +482,7 @@ func TestTurnsBeforeRoomReadRecordsAreJudgedByTheWorkersRoomsThen(t *testing.T) 
 		{NoteID: "note_pre_lost", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_pre_lost"}},
 		{NoteID: "note_post", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_post"}},
 	}}
+	prefetchForDelivery(t, o, &delivery)
 	o.srv.addWorkerOutput(ctx, &delivery)
 	for i, note := range delivery.Notes[:2] {
 		if out := note.WorkerOutput; out == nil || out.Text != "" || out.Withheld != noticeOutputWithheld {
@@ -509,6 +538,7 @@ func TestNoticeOutputRechecksRoomAccessOnFirstDelivery(t *testing.T) {
 	// The normal case: the lead may read the private chat, and the first delivery carries the text.
 	leadTurn(t, o, lead.ID, "trn_lead_sent")
 	sent := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_sent", Notes: []protocol.DeliveryNote{{NoteID: "note_sent", OutputSource: &privateTurn}}}
+	prefetchForDelivery(t, o, &sent)
 	o.srv.addWorkerOutput(t.Context(), &sent)
 	first := sent.Notes[0].WorkerOutput
 	if first == nil || first.Withheld != "" || !strings.Contains(first.Text, "a private answer") {
@@ -549,6 +579,7 @@ func TestNoticeOutputRechecksRoomAccessOnFirstDelivery(t *testing.T) {
 		{NoteID: "note_late", OutputSource: &late},
 		{NoteID: "note_last", OutputSource: &lastTurn},
 	}}
+	prefetchForDelivery(t, o, &after)
 	o.srv.addWorkerOutput(t.Context(), &after)
 	if out := after.Notes[0].WorkerOutput; out == nil || out.Text != "" || out.Withheld != noticeOutputWithheld {
 		t.Fatalf("a lead removed from the private chat after the read: %+v", out)

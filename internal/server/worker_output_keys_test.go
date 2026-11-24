@@ -108,6 +108,7 @@ func TestNoticeOutputDropsAPrivateKeyAcrossLines(t *testing.T) {
 	lead, _ := o.createToolAgentNamed(t, "role_leader_default", "outputlead")
 	keyLog(t, o, "trn_key")
 	delivery := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_lead_key", Notes: []protocol.DeliveryNote{{NoteID: "note_key", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_key"}}}}
+	prefetchForDelivery(t, o, &delivery)
 	o.srv.addWorkerOutput(t.Context(), &delivery)
 	out := delivery.Notes[0].WorkerOutput
 	if out == nil || out.Withheld != "" {
