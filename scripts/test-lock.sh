@@ -7,7 +7,7 @@
 #   - a waiter holds an exclusive flock on its own ticket for as long as it waits. A ticket is stale when that lock can be taken: the kernel
 #     frees it when the owner dies, in whatever PID namespace or container it ran (a pid check cannot see across them, and a pid can collide
 #     with a live local one). Whoever finds a stale ticket drops it;
-#   - while it waits it prints, now and every AIMEBU_TEST_LOCK_REPORT seconds, "waiting for the test lock (position N, held by X since T)";
+#   - while it waits it prints on arrival, when its position or the holder changes, and every AIMEBU_TEST_LOCK_REPORT seconds otherwise;
 #   - the holder writes a small metadata file (its command line and start time) next to the tickets and keeps a flock on it while it runs, so
 #     a metadata file nobody holds (a crashed holder, or a plain-flock holder after it) is not believed.
 #
@@ -16,7 +16,7 @@
 # The queue directory is world-writable and sticky like /tmp, so callers running as different users can share it.
 # usage: scripts/test-lock.sh <command> [args...]
 # env:   AIMEBU_TEST_LOCK (default /tmp/aimebu-test.lock), AIMEBU_TEST_QUEUE (default /tmp/aimebu-test.queue),
-#        AIMEBU_TEST_LOCK_POLL (seconds between tries, default 1), AIMEBU_TEST_LOCK_REPORT (seconds between reports, default 30)
+#        AIMEBU_TEST_LOCK_POLL (seconds between tries, default 1), AIMEBU_TEST_LOCK_REPORT (seconds between reports, default 60)
 set -u
 if [ $# -eq 0 ]; then
 	echo "usage: scripts/test-lock.sh <command> [args...]" >&2
@@ -25,7 +25,7 @@ fi
 LOCK=${AIMEBU_TEST_LOCK:-/tmp/aimebu-test.lock}
 QUEUE=${AIMEBU_TEST_QUEUE:-/tmp/aimebu-test.queue}
 POLL=${AIMEBU_TEST_LOCK_POLL:-1}
-REPORT=${AIMEBU_TEST_LOCK_REPORT:-30}
+REPORT=${AIMEBU_TEST_LOCK_REPORT:-60}
 mkdir -p "$QUEUE" || exit 1
 chmod 1777 "$QUEUE" 2>/dev/null || true
 HOLDER=$QUEUE/holder
@@ -66,6 +66,8 @@ exec 8>&-
 
 exec 9>>"$LOCK"
 last_report=-1
+last_position=
+last_holder=
 waited=0
 start=$(date +%s)
 while :; do
@@ -78,16 +80,20 @@ while :; do
 		fi
 	done
 	if [ "$position" -eq 1 ] && flock -n 9; then break; fi
-	if [ "$last_report" -lt 0 ] || [ $((waited - last_report)) -ge "$REPORT" ]; then
-		if [ -e "$HOLDER" ] && ! unowned "$HOLDER"; then
-			by=$(field cmd "$HOLDER")
-			since=$(field since "$HOLDER")
-		else
-			by="an unknown holder (a plain flock, or no command line recorded)"
-			since="an unknown time"
-		fi
+	if [ -e "$HOLDER" ] && ! unowned "$HOLDER"; then
+		holder_id=$(field id "$HOLDER")
+		by=$(field cmd "$HOLDER")
+		since=$(field since "$HOLDER")
+	else
+		holder_id=unknown
+		by="an unknown holder (a plain flock, or no command line recorded)"
+		since="an unknown time"
+	fi
+	if [ "$last_report" -lt 0 ] || [ "$position" != "$last_position" ] || [ "$holder_id" != "$last_holder" ] || [ $((waited - last_report)) -ge "$REPORT" ]; then
 		echo "waiting for the test lock (position $position, held by $by since $since)" >&2
 		last_report=$waited
+		last_position=$position
+		last_holder=$holder_id
 	fi
 	sleep "$POLL"
 	waited=$(($(date +%s) - start))

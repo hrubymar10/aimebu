@@ -9,7 +9,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const work = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'test-lock-test-'));
 const script = path.join(__dirname, 'test-lock.sh');
 const env = { PATH: process.env.PATH, HOME: work, AIMEBU_TEST_LOCK: path.join(work, 'lock'), AIMEBU_TEST_QUEUE: path.join(work, 'queue'),
-  AIMEBU_TEST_LOCK_POLL: '0.1', AIMEBU_TEST_LOCK_REPORT: '1' };
+  AIMEBU_TEST_LOCK_POLL: '0.1', AIMEBU_TEST_LOCK_REPORT: '60' };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const lockRun = (cmd, args = []) => {
   const child = spawn('sh', [script, cmd, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -49,6 +49,27 @@ const waitFor = async (cond, what) => { for (let i = 0; i < 300 && !cond(); i++)
   assert.equal(flockN(), 0, 'the lock is free again');
   assert.equal(fs.existsSync(path.join(env.AIMEBU_TEST_QUEUE, 'holder')), false, 'the holder file is removed');
   assert.deepEqual(fs.readdirSync(env.AIMEBU_TEST_QUEUE).filter(f => f.endsWith('.ticket')), [], 'no tickets are left');
+
+  // A steady queue stays quiet; a changed position reports immediately even before the time limit.
+  const quietHolder = lockRun('sh', ['-c', `echo quiet-holder-started; ${until(path.join(work, 'rel-quiet-holder'))}`]);
+  await waitFor(() => quietHolder.out.includes('quiet-holder-started'), 'the quiet holder is running');
+  const first = lockRun('sh', ['-c', `echo first-started; ${until(path.join(work, 'rel-first'))}`]);
+  await waitFor(() => first.err.includes('waiting for the test lock'), 'the first waiter reports on arrival');
+  const second = lockRun('echo', ['second-ran']);
+  await waitFor(() => second.err.includes('waiting for the test lock'), 'the second waiter reports on arrival');
+  const waitLines = run => run.err.split('\n').filter(line => line.startsWith('waiting for the test lock'));
+  assert.match(second.err, /position 2, held by sh -c echo quiet-holder-started/);
+  await sleep(2200);
+  const quietReports = waitLines(second).length;
+  fs.writeFileSync(path.join(work, 'rel-quiet-holder'), '');
+  await waitFor(() => first.out.includes('first-started'), 'the first waiter takes the lock');
+  await sleep(500);
+  const changedReports = waitLines(second).filter(line => /position 1, held by sh -c echo first-started/.test(line));
+  fs.writeFileSync(path.join(work, 'rel-first'), '');
+  assert.deepEqual(await Promise.all([quietHolder.done, first.done, second.done]), [0, 0, 0]);
+  assert.equal(second.out, 'second-ran\n', 'the second waiter runs after the lock frees');
+  assert.equal(quietReports, 1, 'no repeated report while holder and position stay the same');
+  assert.equal(changedReports.length, 1, 'the waiter reports its new position immediately');
 
   // The exit status of the command is the script's.
   assert.equal(await lockRun('sh', ['-c', 'exit 7']).done, 7);

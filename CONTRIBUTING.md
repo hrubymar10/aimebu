@@ -190,7 +190,7 @@ Run tests in the isolated environment above. When several people or agents
 share one machine, run the slow commands (`test-ui`, `test-full`) one at a
 time; the shared workspace gate is `scripts/test-lock.sh <command>`, a first-come-first-served queue on the lock
 `/tmp/aimebu-test.lock` (plain `flock /tmp/aimebu-test.lock <command>` takes the same lock but is not fair). Tickets are owned by a flock, not a pid, so the queue works across PID namespaces and containers on a shared `/tmp`. While it waits it prints "waiting for
-the test lock (position N, held by X since T)"; for a `run_command` that line is in `command_log`.
+the test lock (position N, held by X since T)" on arrival, when the queue position or holder changes, and once every 60 seconds while neither changes. For a `run_command` those lines are in `command_log`.
 Redirect long output to a file and search that, rather than re-running.
 
 Every Go package with tests needs a `TestMain` that calls `testenv.Main(m)`;
