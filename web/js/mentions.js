@@ -33,6 +33,41 @@ export class MentionIndex {
     for (const slug of [...this.cards.map(card => String(card.slug)), ...this.humans]) this.slugs.set(slug.toLowerCase(), (this.slugs.get(slug.toLowerCase()) || 0) + 1);
     this.roles = new Map();
     for (const card of this.cards) if (card.role_key) { const key = card.role_key.toLowerCase(); if (!this.roles.has(key)) this.roles.set(key, { emoji: card.role_emoji || '', slugs: [] }); this.roles.get(key).slugs.push(card.slug); }
+    // Agents that share a name in this room (a name is reusable once its old agent is stopped with its room closed for a
+    // day): in creation order the later ones are shown and addressed as `name-2`, `name-3`, ... The cards arrive in
+    // creation order, so the first index of each name keeps the plain name. Same-named agents of different projects
+    // (a chat between agents) keep their qualified `slug@project` form instead.
+    this.ordinal = new Map();
+    const seenCount = new Map();
+    const totals = new Map();
+    this.ordered = cards;
+    const keyOf = card => `${String(card.slug).toLowerCase()}\u0000${card.project_id || ''}`;
+    for (const card of cards) totals.set(keyOf(card), (totals.get(keyOf(card)) || 0) + 1);
+    for (const card of cards) {
+      const key = keyOf(card);
+      if (!card.id || totals.get(key) < 2) continue;
+      const n = (seenCount.get(key) || 0) + 1;
+      seenCount.set(key, n);
+      if (n > 1) this.ordinal.set(card.id, n);
+    }
+  }
+  // The name an agent of this room is shown (and addressed) as: the plain slug, or `name-2` for a later duplicate.
+  displaySlug(card) {
+    const n = card?.id && this.ordinal.get(card.id);
+    return n ? `${card.slug}-${n}` : String(card?.slug || card?.name || '');
+  }
+  // `name-2` names the n-th agent of that name in creation order; nothing shadows a real agent called `name-2`.
+  duplicate(token) {
+    const m = /^(.+)-([0-9]+)$/.exec(token);
+    if (!m) return null;
+    const base = m[1], n = Number(m[2]);
+    if (n < 2 || (this.slugs.get(base) || 0) < 2) return null;
+    let seen = 0;
+    for (const card of this.ordered) {
+      if (String(card.slug).toLowerCase() !== base) continue;
+      if (++seen === n) return card;
+    }
+    return null;
   }
   get signature() { return JSON.stringify([this.me, this.projectID, this.humans, this.cards.map(card => [card.slug, card.role_key, this.qualifier(card)]), [...this.historical].sort()]); }
   // The qualifier that tells same-named agents apart, per agent: its project's name when that is a valid qualifier and no other agent of the
@@ -55,6 +90,7 @@ export class MentionIndex {
   opensProfile(token) {
     const at = token.indexOf('@'), slug = at < 0 ? token : token.slice(0, at);
     if (this.historical.has(token)) return true;
+    if (at < 0 && this.duplicate(token)) return true;
     if (at >= 0) return this.qualified(slug, token.slice(at + 1));
     return this.agentSlugs.has(slug) && (this.slugs.get(slug) === 1 || this.soleAgent(slug));
   }
@@ -67,6 +103,7 @@ export class MentionIndex {
     const matches = this.slugs.get(token) || 0;
     if (matches === 1 || (matches > 1 && this.soleAgent(token))) return 'mention';
     if (matches === 0 && this.roles.has(token)) return 'role';
+    if (matches === 0 && this.duplicate(token)) return 'mention';
     return matches === 0 && this.historical.has(token) ? 'mention' : null;
   }
   candidates(prefix) {
@@ -76,7 +113,12 @@ export class MentionIndex {
       if (GROUPS.has(key) || this.slugs.has(key) || !match(key)) continue;
       items.push({ insertText: `@${key}`, preview: `${role.emoji} role · ${role.slugs.join(', ')}`.trim() });
     }
-    const members = this.cards.map(card => ({ slug: String(card.slug), insertText: this.slugs.get(String(card.slug).toLowerCase()) > 1 && this.qualifier(card) ? `@${card.slug}@${this.qualifier(card)}` : `@${card.slug}`, preview: `${card.role_emoji || ''} ${card.model || 'unknown'} · ${card.tool || 'unknown'}`.trim(), project: agentLabel(card).split('@')[1] || '' }));
+    const members = this.cards.map(card => {
+      const n = card.id && this.ordinal.get(card.id);
+      // A later duplicate is addressed by its ordinal suffix; the first keeps the plain name.
+      const insert = n ? `@${card.slug}-${n}` : this.slugs.get(String(card.slug).toLowerCase()) > 1 && this.qualifier(card) ? `@${card.slug}@${this.qualifier(card)}` : `@${card.slug}`;
+      return { slug: String(card.slug), insertText: insert, preview: `${card.role_emoji || ''} ${card.model || 'unknown'} · ${card.tool || 'unknown'}`.trim(), project: agentLabel(card).split('@')[1] || '' };
+    });
     // A human login that collides with another member has no unambiguous form, so it is not offered.
     for (const login of this.humans) if (this.slugs.get(login.toLowerCase()) === 1) members.push({ slug: login, insertText: `@${login}`, preview: 'human' });
     members.sort((a, b) => a.slug.localeCompare(b.slug));

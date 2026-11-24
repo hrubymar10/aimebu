@@ -522,17 +522,40 @@ export class Chat {
     if (message.author_kind === 'system') return 'System';
     if (message.author_kind === 'user') return message.author_name || (message.author_id === currentUser && currentLogin) || (String(message.author_id).startsWith('usr_') ? 'Someone' : message.author_id); // your own messages carry your name like anyone's, not "You" // never the raw account id
     const agent = this.authorAgent(message);
-    if (agent?.name || agent?.slug) return agentLabel(agent);
+    if (agent?.name || agent?.slug) {
+      // Two agents of one room that share a name (a reused one): the later one is shown as name-2, like its mentions are.
+      const shown = this.duplicateSlug(agent);
+      return agentLabel(shown ? { ...agent, slug: shown } : agent);
+    }
     // An agent that was removed: the server sends the name it had (and its project), and the row says so.
     if (message.author_kind === 'agent' && message.author_name) return `${agentLabel({ slug: message.author_name, project_id: message.author_project_id })} (removed)`;
     // A native agent whose record is gone has only an opaque id; an imported v1 author's id is already the readable name.
     return message.author_id.startsWith('agt_') ? `Agent ${message.author_id.slice(-6)}` : message.author_id;
+  }
+  // The name of the room's agent as it is shown: the plain slug, or `name-2` for the later of two agents that share the name
+  // (the room's agents arrive in creation order, so order in the list is the display order). Null when the name is unambiguous.
+  duplicateSlug(agent) {
+    const slug = String(agent?.slug || agent?.name || '').toLowerCase();
+    if (!slug || !this.room) return null;
+    const peers = [...this.agents.values()].filter(member => member.room_id === this.room.id && String(member.slug || member.name || '').toLowerCase() === slug);
+    if (peers.length < 2) return null;
+    const at = peers.findIndex(member => member.id === agent.id);
+    return at > 0 ? `${peers[at].slug}-${at + 1}` : null;
   }
   // A mention of an agent opens its profile: the live one in this room, or else an author of the history that has left.
   openMention(text) {
     const token = String(text).replace(/^@/, '').toLowerCase(), slug = token.split('@')[0];
     const live = [...this.agents.values()].filter(agent => agent.room_id === this.room?.id && String(agent.slug).toLowerCase() === slug);
     if (live.length === 1) { this.legacyOpener?.(live[0].id); return; }
+    if (live.length > 1) {
+      // `name-2` names the later duplicate, in the same creation order the display uses.
+      const m = /^(.+)-([0-9]+)$/.exec(slug);
+      if (m) {
+        const n = Number(m[2]);
+        const peers = live.filter(agent => String(agent.slug).toLowerCase() === m[1]);
+        if (n >= 2 && n <= peers.length) { this.legacyOpener?.(peers[n - 1].id); return; }
+      }
+    }
     const written = [...this.messages.values()].find(message => message.author_kind === 'agent' && !this.agents.has(message.author_id)
       && [this.authorName(message), this.authorName(message).split('@')[0]].some(name => name.toLowerCase() === token));
     if (written) this.openSender(written);

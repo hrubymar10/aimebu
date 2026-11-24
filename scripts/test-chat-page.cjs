@@ -2936,6 +2936,28 @@ async function main() {
     assert.deepEqual(result, { wren: 'mention', ada: null, profile: true }, 'one agent sharing its slug with a login is a mention; two agents are not');
     await page.close();
   }
+  // Two agents that share a name in one room (a reused name): the later one is shown and addressed as name-2, a bare
+  // @name of both stays unhighlighted, and a stored agent-ID mention is shown as the text it carries.
+  {
+    const page = await mount({ rooms: { rm_a: 1 } });
+    const result = await page.evaluate(async () => {
+      const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
+      const card = (id, slug) => ({ id, slug, project_id: 'prj_a', role_key: 'worker', tool: 'codex', model: 'm' });
+      const index = new MentionIndex([card('agt_1', 'robin'), card('agt_2', 'robin'), card('agt_3', 'zed-2')], 'prj_a', [], []);
+      const row = document.createElement('div');
+      row.textContent = '@robin-2 take the panel, @robin stays put, @zed-2 ships, @agt_agt_9 stays text';
+      highlightMentions(row, index);
+      const chips = [...row.querySelectorAll('.mention')].map(node => node.textContent);
+      const candidates = index.candidates('').filter(item => /@robin/.test(item.insertText)).map(item => item.insertText);
+      return { chips, later: index.displaySlug(index.ordered[1]), first: index.displaySlug(index.ordered[0]), profile: index.opensProfile('robin-2'), candidates };
+    });
+    assert.deepEqual(result.chips, ['@robin-2', '@zed-2'], 'the ordinal mention and the real agent called zed-2 are highlighted; a bare name of two agents and a stored ID text are not');
+    assert.equal(result.later, 'robin-2', 'the later duplicate is displayed as name-2');
+    assert.equal(result.first, 'robin', 'the first duplicate keeps the plain name');
+    assert.equal(result.profile, true, 'a name-2 mention opens the later duplicate\'s profile');
+    assert.deepEqual(result.candidates, ['@robin@prj_a', '@robin-2'], 'the composer offers the qualifier for the first agent and the ordinal form for the later duplicate');
+    await page.close();
+  }
   // A message's context menu (pages/chat/message-menu.js): a right-click or Shift+F10 inside a row opens it on that message; Mark unread from here hands
   // the app the message's seq; the toolbar's actions follow (reply, the conversation, react, copy) and the debug inspector while it is on; the thread panel
   // offers neither reply nor the conversation, a system notice only the read mark, the copies and the inspector; Escape gives the focus back.
