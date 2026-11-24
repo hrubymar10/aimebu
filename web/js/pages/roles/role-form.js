@@ -40,8 +40,8 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
         <textarea class="settings-text-input settings-textarea" ...${text('body_extension')} rows="4" readOnly=${!owner} placeholder=${owner ? '' : 'Only the owner edits the extension.'}></textarea>
       <//>
       <div class="settings-row settings-row-stack" id="role-effective-row" hidden=${!role}>
-        <div class="settings-row-info"><span class="settings-label" id="role-effective-label">Final prompt</span><span class="settings-desc" id="role-effective-desc">What an agent with this role is told, the extension included, as last saved.</span></div>
-        <div class="settings-control"><details><summary aria-describedby="role-effective-desc">Show final prompt</summary><textarea class="settings-text-input settings-textarea" id="role-effective" aria-labelledby="role-effective-label" aria-describedby="role-effective-desc" rows="8" readOnly value=${role?.effective_body ?? ''}></textarea></details></div>
+        <div class="settings-row-info"><label class="settings-label" for="role-effective">Final prompt</label><span class="settings-desc" id="role-effective-desc">What an agent with this role is told, the extension included, as last saved.</span></div>
+        <div class="settings-control"><details><summary aria-describedby="role-effective-desc">Show final prompt</summary><textarea class="settings-text-input settings-textarea" id="role-effective" aria-describedby="role-effective-desc" rows="8" readOnly value=${role?.effective_body ?? ''}></textarea></details></div>
       </div>
       <${SettingsRow} label="Extends" desc="Adds to another role: agents get that role's instructions first, then these. Leave on None for a complete role. A project role may extend the global role with the same key." id="role-extends">
         <select class="settings-select" name="extends" value=${form.extends} onChange=${event => set('extends', event.currentTarget.value)}>
