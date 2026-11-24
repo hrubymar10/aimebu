@@ -1054,3 +1054,250 @@ func TestPaceAlertFirstReadingRecoversBeforeHysteresis(t *testing.T) {
 		t.Fatalf("a recovered first reading must not alert: %+v", got)
 	}
 }
+
+func rejectedProfile(name string, active bool, status string) Profile {
+	// A switcher-managed profile: the overlay gives every configured profile
+	// its opaque alert identity before the tracker sees it.
+	return Profile{ProfileName: name, Active: active, Status: status, AlertIdentity: "ident\x00" + name,
+		Error: "Codex usage request failed with HTTP 401."}
+}
+
+func observeLogin(t *testing.T, tracker *AlertTracker, response Response, want bool) {
+	t.Helper()
+	got, err := tracker.Observe(response)
+	if err != nil || got != want {
+		t.Fatalf("observe: created=%v error=%v, want %v", got, err, want)
+	}
+}
+
+func drainedLogins(t *testing.T, tracker *AlertTracker) []RejectedLogin {
+	t.Helper()
+	got := tracker.DrainRejectedLogins()
+	if len(got) == 0 {
+		return nil
+	}
+	again := tracker.DrainRejectedLogins()
+	if len(again) != 0 {
+		t.Fatalf("a drain must empty the queue: %+v", again)
+	}
+	return got
+}
+
+func TestLoginRejectedAlertOncePerEpisode(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("work", true, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	alerts := tracker.OpenAlerts()
+	if len(alerts) != 1 || alerts[0].Tier != "login_rejected" || alerts[0].Profile != "work" || alerts[0].Hint != "Run codex login." {
+		t.Fatalf("first rejection: %+v", alerts)
+	}
+	logins := drainedLogins(t, tracker)
+	if len(logins) != 1 || logins[0].Tool != "codex" || logins[0].Profile != "work" || logins[0].Hint != "Run codex login." {
+		t.Fatalf("one bell event per episode: %+v", logins)
+	}
+	first := alerts[0].ID
+	// Further rejected polls raise nothing new.
+	observeLogin(t, tracker, response, false)
+	observeLogin(t, tracker, response, false)
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("once per episode, not per poll: %+v", logins)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != first {
+		t.Fatalf("the episode's item stays open: %+v", got)
+	}
+	// Recovery closes the item; a fresh rejection is a new episode with a new item and event.
+	response.Providers[0].Profiles[0] = Profile{ProfileName: "work", Active: true, Status: "ok", AlertIdentity: "ident\x00work"}
+	observeLogin(t, tracker, response, true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("recovery resolves the item: %+v", got)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("recovery raises nothing: %+v", logins)
+	}
+	now = now.Add(time.Minute)
+	response.Providers[0].Profiles[0] = rejectedProfile("work", true, "scope_missing")
+	observeLogin(t, tracker, response, true)
+	alerts = tracker.OpenAlerts()
+	if len(alerts) != 1 || alerts[0].ID == first || alerts[0].Tier != "login_rejected" {
+		t.Fatalf("a new episode raises a new item: %+v", alerts)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 1 {
+		t.Fatalf("a new episode rings the bell again: %+v", logins)
+	}
+}
+
+func TestLoginRejectedHintPerTool(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := rejectedProfile("main", true, "auth_missing")
+	claude.Error = "Claude usage request failed with HTTP 401."
+	mistral := rejectedProfile("local", true, "auth_missing")
+	mistral.Error = "Mistral session has expired. Sign in again and paste a fresh Cookie request header."
+	response := Response{Providers: []Provider{
+		{ProviderName: "claude-code", Enabled: true, Available: true, Profiles: []Profile{claude}},
+		{ProviderName: "mistral", Enabled: true, Available: true, Profiles: []Profile{mistral}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	alerts := tracker.OpenAlerts()
+	byProvider := map[string]string{}
+	for _, alert := range alerts {
+		byProvider[alert.Provider] = alert.Hint
+	}
+	if byProvider["claude-code"] != "Run claude /login." || byProvider["mistral"] != mistral.Error {
+		t.Fatalf("hints: %+v", byProvider)
+	}
+	logins := drainedLogins(t, tracker)
+	tools := map[string]string{}
+	for _, login := range logins {
+		tools[login.Tool] = login.Hint
+	}
+	if tools["claude"] != "Run claude /login." || tools["mistral"] != mistral.Error {
+		t.Fatalf("event tools and hints: %+v", logins)
+	}
+}
+
+func TestLoginRejectedInactiveProfileGetsTheBellOnly(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("spare", false, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	// A bell without an Inbox item is no visible change.
+	observeLogin(t, tracker, response, false)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("an inactive profile gets no Inbox item: %+v", got)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 1 || logins[0].Profile != "spare" {
+		t.Fatalf("an inactive profile still rings the bell: %+v", logins)
+	}
+	// The same rejection, now on the active profile, raises the item once.
+	response.Providers[0].Profiles[0] = rejectedProfile("spare", true, "auth_missing")
+	observeLogin(t, tracker, response, true)
+	if got := tracker.OpenAlerts(); len(got) != 1 {
+		t.Fatalf("activation during the episode raises the item: %+v", got)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("activation does not ring the bell again: %+v", logins)
+	}
+	observeLogin(t, tracker, response, false)
+	if got := tracker.OpenAlerts(); len(got) != 1 {
+		t.Fatalf("once per episode: %+v", got)
+	}
+}
+
+func TestLoginRejectedEpisodeSurvivesRestartAndDismissal(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("work", true, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	drainedLogins(t, tracker)
+	first := tracker.OpenAlerts()[0].ID
+	// A restart in the middle of the episode raises nothing new.
+	tracker, err = NewAlertTracker(root, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	observeLogin(t, tracker, response, false)
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("no second bell after a restart: %+v", logins)
+	}
+	if got := tracker.OpenAlerts(); len(got) != 1 || got[0].ID != first {
+		t.Fatalf("the item survives the restart: %+v", got)
+	}
+	// A dismissal stays closed for the rest of the episode.
+	if err := tracker.Dismiss(first); err != nil {
+		t.Fatal(err)
+	}
+	observeLogin(t, tracker, response, false)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a dismissed episode stays dismissed: %+v", got)
+	}
+	// Recovery, then a new rejection: a new item.
+	response.Providers[0].Profiles[0] = Profile{ProfileName: "work", Active: true, Status: "ok", AlertIdentity: "ident\x00work"}
+	observeLogin(t, tracker, response, true)
+	now = now.Add(time.Minute)
+	response.Providers[0].Profiles[0] = rejectedProfile("work", true, "auth_missing")
+	observeLogin(t, tracker, response, true)
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].ID == first {
+		t.Fatalf("a new episode after recovery: %+v", got)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 1 {
+		t.Fatalf("a new episode after recovery rings once: %+v", logins)
+	}
+}
+
+func TestLoginRejectedEndsWithTheAccount(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{rejectedProfile("work", true, "auth_missing")}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, true)
+	drainedLogins(t, tracker)
+	// The profile disappears (removed, or its provider disabled): the item closes.
+	response.Providers[0].Profiles = nil
+	observeLogin(t, tracker, response, true)
+	if got := tracker.OpenAlerts(); len(got) != 0 {
+		t.Fatalf("a disappeared account closes its alert: %+v", got)
+	}
+	// A reappeared account starts a fresh episode, with a fresh item and bell.
+	now = now.Add(time.Minute)
+	response.Providers[0].Profiles = []Profile{rejectedProfile("work", true, "auth_missing")}
+	observeLogin(t, tracker, response, true)
+	if got := tracker.OpenAlerts(); len(got) != 1 {
+		t.Fatalf("a reappeared account raises again: %+v", got)
+	}
+	if logins := drainedLogins(t, tracker); len(logins) != 1 {
+		t.Fatalf("a reappeared account rings again: %+v", logins)
+	}
+}
+
+func TestLoginRejectedRenameKeepsTheEpisode(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker, err := NewAlertTracker(t.TempDir(), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := rejectedProfile("old", false, "auth_missing")
+	response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []Profile{profile}}}}
+	response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+	observeLogin(t, tracker, response, false) // the bell only: no visible change
+	drainedLogins(t, tracker)
+	profile.ProfileName = "renamed"
+	response.Providers[0].Profiles[0] = profile
+	observeLogin(t, tracker, response, false)
+	if logins := drainedLogins(t, tracker); len(logins) != 0 {
+		t.Fatalf("a rename is not a new episode: %+v", logins)
+	}
+	// The profile becomes active under its new name: the item carries it.
+	profile.Active = true
+	response.Providers[0].Profiles[0] = profile
+	observeLogin(t, tracker, response, true)
+	got := tracker.OpenAlerts()
+	if len(got) != 1 || got[0].Profile != "renamed" {
+		t.Fatalf("the item follows the name: %+v", got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/quota"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/usages"
 	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
@@ -518,5 +519,90 @@ func TestUsageResetNoticeIsNoOpenInboxItem(t *testing.T) {
 	}
 	if notices != 1 || open["warning"] != 1 || open["pace"] != 1 {
 		t.Fatalf("one reset notice outside the Inbox, the warning and pace alerts in it: %+v", items)
+	}
+}
+
+func TestLoginRejectedBellEventAndInboxItem(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	var err error
+	f.srv.Usages, err = usages.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := usages.NewAlertTracker(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.usageAlerts = tracker
+	snapshot := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []usages.Profile{{ProfileName: "work", Active: true, AlertIdentity: "ident\x00work", Status: "auth_missing",
+			Error: "Codex usage request failed with HTTP 401."}}}}}
+	if _, err := tracker.Observe(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.recordRejectedLogins(tracker)
+	events := func() []store.Event {
+		t.Helper()
+		resp := f.requestAs(t, f.cookie, f.csrf, http.MethodGet, "/api/system-events?notable=1", nil)
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("system events status: %d", resp.StatusCode)
+		}
+		var page struct {
+			Events []store.Event `json:"events"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		return page.Events
+	}
+	var rejected []store.Event
+	for _, event := range events() {
+		if event.Kind == "usage_login_rejected" {
+			rejected = append(rejected, event)
+		}
+	}
+	if len(rejected) != 1 || !rejected[0].Notable {
+		t.Fatalf("one notable bell event: %+v", rejected)
+	}
+	var payload struct {
+		Tool    string `json:"tool"`
+		Profile string `json:"profile"`
+		Hint    string `json:"hint"`
+	}
+	if err := json.Unmarshal([]byte(rejected[0].PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Tool != "codex" || payload.Profile != "work" || payload.Hint != "Run codex login." {
+		t.Fatalf("event payload: %+v", payload)
+	}
+	// A second drain records nothing: once per episode.
+	f.srv.recordRejectedLogins(tracker)
+	rejected = nil
+	for _, event := range events() {
+		if event.Kind == "usage_login_rejected" {
+			rejected = append(rejected, event)
+		}
+	}
+	if len(rejected) != 1 {
+		t.Fatalf("a second drain must not add an event: %+v", rejected)
+	}
+	// The Inbox item rides with the alert, with the fixed wording and the hint.
+	resp := f.requestAs(t, f.cookie, f.csrf, http.MethodGet, "/api/inbox", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("inbox status: %d", resp.StatusCode)
+	}
+	var items []struct {
+		Kind     string `json:"kind"`
+		Question string `json:"question"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Kind != "usage_alert" ||
+		items[0].Question != "Codex · work: login rejected: log in again. Run codex login." {
+		t.Fatalf("inbox item: %+v", items)
 	}
 }

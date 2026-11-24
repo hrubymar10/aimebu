@@ -99,6 +99,14 @@ assert.equal(describe(quota('limit_guard_hard', { tool: 'codex', profile: 'b', p
 assert.equal(describe(quota('limit_guard_hard', { tool: 'claude', profile: 'main', percent: '100', window: 'session', next: 'dry_run' })).details, 'claude · main · 100% session · the quota switcher would move off it, but it is in dry run');
 assert.equal(describe(quota('limit_guard_clear', { tool: 'codex', profile: 'b', percent: '5', window: 'weekly' })).text, 'Usage back under the limit: new turns resume');
 
+// The rejected-login event names the tool, the profile and the way back in.
+view = describe(quota('usage_login_rejected', { tool: 'codex', profile: 'work', hint: 'Run codex login.' }));
+assert.equal(view.text, 'Usage login rejected: codex work');
+assert.equal(view.details, 'Run codex login.');
+assert.equal(describe(quota('usage_login_rejected', {})).text, 'Usage login rejected', 'a payload without its pieces still renders');
+assert.equal(describe(quota('usage_login_rejected', { tool: 'claude', profile: 'main', hint: 'Run claude /login.' })).text, 'Usage login rejected: claude main');
+assert.equal(describe({ kind: 'agent_stopped', payload_json: JSON.stringify({ tool: 'codex', profile: 'work', hint: 'x' }) }).details, '', 'login-rejected keys must not leak into other events');
+
 // Who an id is: the server names the ids of an event (an agent as slug@project, a user by login), so the feed does not show agt_… or usr_…. The server's name
 // is used for an agent of a room that is not open; what the open room knows is the fallback; the id is the last resort.
 const named = (kind, payload, names, extra = {}) => ({ kind, payload_json: JSON.stringify(payload), names, ...extra });

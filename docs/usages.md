@@ -172,6 +172,27 @@ Inbox items with the same dismissal. An active limit
 guard hides the threshold and pace notices of its tool, but never the reset
 notice or the expiry alert.
 
+## Rejected-login alerts
+
+A usage poll answered with HTTP 401 or 403 (`auth_missing`, or the rejected
+`scope_missing`) means the account stopped working, so the server raises the
+owner's bell event (`usage_login_rejected`) and, for the **active** profile,
+opens one Inbox alert: "`<tool>` `<profile>` login rejected: log in again",
+with the per-tool way back in (`codex login` for Codex, `claude /login` for
+Claude Code; the other providers repeat their own rejection message, which
+names the fix in Settings → Server → Accounts & usage). An inactive stored
+profile gets the bell event only, no Inbox item; if it becomes active while
+still rejected, the item opens then. The episode raises once: further
+rejected polls add nothing, also after a server restart while the episode is
+still going (the episode state lives in `usages/alerts.json` beside the other
+alert state), and it resolves itself when the profile reads `ok` again; a
+later rejection is a new episode with a new event and item. The alert can be
+dismissed like the other usage alerts and stays dismissed for the rest of the
+episode. A profile that disappears (removed, or its provider disabled or
+unavailable) closes the alert and ends the episode, so a reappearing account
+raises again. An active limit guard does not hide this alert: a rejected
+login is not quota pressure. This alert is not behind a toggle.
+
 The Usages view also draws usage and cost figures with fixed-width digits
 (`font-variant-numeric: tabular-nums`), has a privacy toggle in its header
 actions that masks account emails and profile names (kept in this browser, like

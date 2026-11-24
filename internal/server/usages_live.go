@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 	"github.com/hrubymar10/aimebu/v2/internal/usages"
@@ -45,9 +47,12 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 				if err != nil {
 					log.Printf("usage alerts: %v", err)
 					telemetry.ReportCause(context.Background(), "usages", "usage alerts")
-				} else if changed {
-					s.usageAlertRevision.Add(1)
-					s.nudgeUsageWatchers()
+				} else {
+					s.recordRejectedLogins(tracker)
+					if changed {
+						s.usageAlertRevision.Add(1)
+						s.nudgeUsageWatchers()
+					}
 				}
 			}
 		}
@@ -63,6 +68,27 @@ func (s *Server) signalUsageAlerts() {
 	select {
 	case s.usageAlertWake <- struct{}{}:
 	default:
+	}
+}
+
+// usageLoginRejectedEvent is the owner's bell event for a login-rejection
+// episode: a usage poll answered 401 or 403 and the account stopped working.
+const usageLoginRejectedEvent = "usage_login_rejected"
+
+// recordRejectedLogins writes the login-rejection episodes the last usage
+// observation started as project-less owner events (the bell). The Inbox
+// item of an episode is the tracker's own; this is only the event.
+func (s *Server) recordRejectedLogins(tracker *usages.AlertTracker) {
+	logins := tracker.DrainRejectedLogins()
+	for _, login := range logins {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := s.Store.RecordQuotaEvent(ctx, usageLoginRejectedEvent, map[string]string{
+			"tool": login.Tool, "profile": login.Profile, "hint": login.Hint})
+		cancel()
+		if err != nil {
+			log.Printf("usage alerts: record %s event: %v", usageLoginRejectedEvent, err)
+			telemetry.ReportError(context.Background(), "usages", fmt.Errorf("recording a %s event: %w", usageLoginRejectedEvent, err))
+		}
 	}
 }
 

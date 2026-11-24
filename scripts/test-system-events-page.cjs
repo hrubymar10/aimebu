@@ -27,6 +27,7 @@ const event = (seq, kind, payload = {}, extra = {}) => ({ id: `evt_${seq}`, seq,
 // names its actor `actor`.
 const history = [
   event(9, 'agent_control_requested', { desired: 'stopped', actor_kind: 'user', actor_id: 'usr_1' }),
+  event(8, 'usage_login_rejected', { tool: 'codex', profile: 'work', hint: 'Run codex login.' }),
   event(7, 'agent_spawn_failed', { error: 'folder not found' }),
   event(6, 'turn_process_exit', { exit_code: '137', evidence: 'Process exited with code 137.' }),
   event(5, 'agent_control_requested', { desired: 'active', actor: 'usr_1' }),
@@ -57,15 +58,15 @@ async function main() {
     // The page asks the server for the notable events (and nothing else decides), newest first: the two controls (one from a recovery decision) and the failures.
     assert.deepEqual(await page.evaluate(() => window.__urls), ['/api/system-events?limit=100&notable=1'], 'the history is the server\'s notable feed');
     assert.deepEqual((await rows()).map(row => [row.kind, row.text]), [
-      ['agent_control_requested', 'owen@test: stopped by wren'], ['agent_spawn_failed', 'Agent spawn failed'], ['turn_process_exit', 'Turn process exited'], ['agent_control_requested', 'owen@test: started by wren'],
+      ['agent_control_requested', 'owen@test: stopped by wren'], ['usage_login_rejected', 'Usage login rejected: codex work'], ['agent_spawn_failed', 'Agent spawn failed'], ['turn_process_exit', 'Turn process exited'], ['agent_control_requested', 'owen@test: started by wren'],
     ], 'what the server sent, one row each');
     // One line each: the line holds what happened, the agent and room, and the time, and its height is one text line; the detail is behind the row.
     const shape = await page.evaluate(() => [...document.querySelectorAll('#system-events-popover .system-event-row')].map(row => { const line = row.querySelector('.system-event-line'), style = getComputedStyle(line), text = row.querySelector('.system-event-main'); return { lines: Math.round(line.getBoundingClientRect().height / parseFloat(getComputedStyle(row).lineHeight)), nowrap: getComputedStyle(text).whiteSpace, hasTime: !!row.querySelector('time'), where: row.querySelector('.system-event-where')?.textContent, flex: style.display }; }));
     assert.ok(shape.every(row => row.lines <= 1 && row.nowrap === 'nowrap' && row.hasTime && row.flex === 'flex'), `each row is one line: ${JSON.stringify(shape)}`);
-    assert.deepEqual(shape.map(row => row.where), ['general', 'owen@test · general', 'owen@test · general', 'general'], 'the agent and the room, after the title');
+    assert.deepEqual(shape.map(row => row.where), ['general', 'owen@test · general', 'owen@test · general', 'owen@test · general', 'general'], 'the agent and the room, after the title');
     // The detail is hidden until the row is clicked (or Enter / Space on it); a row with no detail is not a button.
     const before = await rows();
-    assert.deepEqual(before.map(row => [row.expandable, row.detailsShown]), [[false, false], [true, false], [true, false], [false, false]], 'details start folded');
+    assert.deepEqual(before.map(row => [row.expandable, row.detailsShown]), [[false, false], [true, false], [true, false], [true, false], [false, false]], 'details start folded');
     await page.click('.system-event-row[data-kind=turn_process_exit]');
     const clicked = await page.evaluate(() => { const row = document.querySelector('.system-event-row[data-kind=turn_process_exit]'); return { open: !row.querySelector('.system-event-details').hidden, expanded: row.getAttribute('aria-expanded'), text: row.querySelector('.system-event-details').textContent }; });
     assert.deepEqual(clicked, { open: true, expanded: 'true', text: 'exit code: 137' }, 'a click shows the exit code');

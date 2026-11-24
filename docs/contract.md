@@ -780,6 +780,14 @@ Inbox, usage, events, settings
   A usage window reset is not an alert: it is listed as a virtual
   `usage_notice` row in state `notice` for an hour, which the Inbox list and
   count leave out and the browser shows once as a toast.
+  A rejected usage login is a virtual `usage_alert` row too, one per
+  rejection episode of a profile whose poll got HTTP 401 or 403: its
+  question names the tool, the profile and how to log in again, it closes
+  when the profile reads `ok` again or its account disappears, an inactive
+  profile gets only the notable `usage_login_rejected` system event, and the
+  episode state is stored in `usages/alerts.json`, so a restart inside an
+  episode raises nothing; it is not behind a toggle and no limit guard hides
+  it.
   An open agent `ask` question or approval becomes `superseded` when a later
   message from a person or that asking agent commits in the same room; system
   messages and messages in other rooms do not supersede it. Any open

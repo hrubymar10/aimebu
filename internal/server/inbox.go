@@ -89,6 +89,14 @@ func usageAlertQuestion(alert usages.UsageAlert) string {
 			return fmt.Sprintf("%s: the access token has expired. Run %s to renew it.", who, tool)
 		}
 		return fmt.Sprintf("%s: the access token expires %s. Run %s to renew it.", who, expires, tool)
+	case "login_rejected":
+		// Hint is a full sentence naming the CLI (codex login, claude /login)
+		// or the provider's own redacted fix; an older record without one
+		// still reads complete.
+		if alert.Hint == "" {
+			return fmt.Sprintf("%s: login rejected: log in again.", who)
+		}
+		return fmt.Sprintf("%s: login rejected: log in again. %s", who, alert.Hint)
 	default:
 		return fmt.Sprintf("%s · %s: %.1f%% remaining; %s.", who, alert.Window, alert.Remaining, reset)
 	}

@@ -748,7 +748,7 @@ the same way: the
 System events bell (on by default; a feed of what needs a look, with an unread count
 that counts only what the feed shows: agents spawned, started, stopped or removed, failures, a
 process that exited with a code other than 0, lost or unstarted turns, the loop guard,
-credential alerts, usage limits and their clears, automatic account switches, a session reset, an admin changed or a user deactivated. Routine events (an exit with
+credential alerts, usage limits and their clears, a rejected usage login, automatic account switches, a session reset, an admin changed or a user deactivated. Routine events (an exit with
 code 0, a key rotated, a rename, someone joining, a machine approved) are left out, with no
 "show all". A start, stop or pause is one row, "owen@test: started by wren". Each row is one
 line, event, agent and room, time; a click or Enter on it opens the detail, such as an exit

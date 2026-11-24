@@ -32,6 +32,7 @@ var systemEventKinds = []string{
 	"recovery_decision", "recovery_override", "recovery_overlap_override", "recovery_quiescent",
 	"recovery_continuation_cancelled", "recovery_continuation_requeued",
 	"usage_limit_threshold", "usage_limit_reset", "usage_limit_decided",
+	"usage_login_rejected",
 	"scope_control_requested", "notes_dropped",
 	"machine_created", "machine_approved", "machine_revoked", "machine_key_rotated", "machine_pairing_created",
 	"user_created", "user_deactivated", "user_admin_changed", "user_invite_created", "user_invite_redeemed",

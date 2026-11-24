@@ -26,6 +26,7 @@ const labels = {
   turn_interrupted_continuation: 'Turn interrupted: continuing on its own',
   turn_interrupt_requested: 'Turn interrupt requested',
   usage_limit_threshold: 'Usage limit threshold reached', usage_limit_reset: 'Usage limit reset', usage_limit_decided: 'Usage limit decision',
+  usage_login_rejected: 'Usage login rejected',
   scope_control_requested: 'Scope control requested', notes_dropped: 'Queued notes dropped',
   machine_created: 'Machine added', machine_approved: 'Machine approved', machine_revoked: 'Machine revoked', machine_key_rotated: 'Machine key rotated', machine_pairing_created: 'Machine pairing created',
   user_created: 'User created', user_deactivated: 'User deactivated', user_admin_changed: 'Admin changed', user_invite_created: 'Invite created', user_invite_redeemed: 'Invite redeemed',
@@ -83,6 +84,13 @@ export function describeEvent(event, names = {}) {
     const detail = String(payload.detail ?? '');
     const split = detail.indexOf(': '), subject = split > 0 && split <= 40 ? detail.slice(0, split) : '';
     return { text: what ? `${parts[0]}: ${what}` : parts[0], where: where || subject, details: subject ? detail.slice(split + 2) : detail };
+  }
+  if (event.kind === 'usage_login_rejected') {
+    // {tool, profile, hint}: the tool whose usage poll was rejected, the
+    // profile name, and how to log in again (a server sentence, plain text).
+    // A branch, not detailKeys, so these keys never leak into other events.
+    const who = [payload.tool, payload.profile].filter(Boolean).join(' ');
+    return { text: who ? `${parts[0]}: ${who}` : parts[0], where, details: payload.hint ? String(payload.hint) : '' };
   }
   if (event.kind === 'update_status') {
     // {state, version}: what the server's own update check found. An empty state means a later check found nothing and the notice cleared. Rendered with textContent by the caller.

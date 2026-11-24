@@ -38,9 +38,14 @@ type UsageAlert struct {
 	// apart from ResetAt, whose passing closes an alert: an expired credential
 	// is exactly when its alert must stay visible.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	Open      bool       `json:"open"`
-	BaseKey   string     `json:"base_key"`
+	// Hint is how to log in again on a login_rejected alert: the CLI
+	// command for Codex and Claude Code, the provider's own redacted
+	// rejection message for the configured-credential providers. It is a
+	// full sentence, shown as is.
+	Hint      string    `json:"hint,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	Open      bool      `json:"open"`
+	BaseKey   string    `json:"base_key"`
 }
 
 type alertWindow struct {
@@ -90,7 +95,36 @@ type alertState struct {
 	// expiry time raises a fresh notice. It is cleared when the credential
 	// is renewed or the alert setting goes off.
 	Expiry map[string]string `json:"expiry,omitempty"`
+	// Auth remembers the login-rejection episode of each account: how many
+	// episodes it has had (so each raises its own alert id) and whether one
+	// is open (further rejected polls raise nothing until the profile reads
+	// ok again). It survives a restart with the rest of the file, so an
+	// ongoing episode does not raise a second notice.
+	Auth map[string]authEpisode `json:"auth,omitempty"`
 }
+
+// authEpisode is one account's login-rejection episode state. Inbox records
+// that the episode's Inbox item was raised, so a dismissal or a close keeps
+// it closed for the rest of the episode; only a recovery and a fresh
+// rejection raise the next one.
+type authEpisode struct {
+	Episode int  `json:"episode"`
+	Open    bool `json:"open,omitempty"`
+	Inbox   bool `json:"inbox,omitempty"`
+}
+
+// RejectedLogin is one login-rejection episode the last Observe started, for
+// the server to record as the owner's bell event.
+type RejectedLogin struct {
+	Provider string
+	Tool     string
+	Profile  string
+	Hint     string
+}
+
+// loginRejectedTier marks a login-rejected alert. It is not behind a toggle:
+// a login that stopped working is a task, not a preference.
+const loginRejectedTier = "login_rejected"
 
 // AlertTracker records a threshold once per account, window and reset cycle.
 // The state is written before a new notice is exposed to the Inbox.
@@ -99,6 +133,9 @@ type AlertTracker struct {
 	path  string
 	state alertState
 	clock func() time.Time
+	// pendingRejected collects the episodes Observe started; the server
+	// drains them to record the owner's bell events.
+	pendingRejected []RejectedLogin
 }
 
 // NewAlertTracker uses the wall clock unless now is supplied by a caller that
@@ -109,7 +146,7 @@ func NewAlertTracker(root string, now ...func() time.Time) (*AlertTracker, error
 		clock = now[0]
 	}
 	t := &AlertTracker{path: filepath.Join(root, "alerts.json"), clock: clock,
-		state: alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}}}
+		state: alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}, Auth: map[string]authEpisode{}}}
 	data, err := os.ReadFile(t.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return t, nil
@@ -121,7 +158,7 @@ func NewAlertTracker(root string, now ...func() time.Time) (*AlertTracker, error
 		t.recoverCorrupt(err)
 		return t, nil
 	}
-	if t.state.Windows == nil || t.state.Alerts == nil || t.state.Expiry == nil {
+	if t.state.Windows == nil || t.state.Alerts == nil || t.state.Expiry == nil || t.state.Auth == nil {
 		t.recoverCorrupt(errors.New("missing state"))
 	}
 	return t, nil
@@ -136,7 +173,7 @@ func (t *AlertTracker) recoverCorrupt(reason error) {
 		log.Printf("usage alerts: corrupt state (%v); moved aside to %s", reason, backup)
 		telemetry.WarnCause(context.Background(), "credentials", "usage alerts: the corrupt state file was moved aside")
 	}
-	t.state = alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}}
+	t.state = alertState{Windows: map[string]alertWindow{}, Alerts: map[string]UsageAlert{}, Expiry: map[string]string{}, Auth: map[string]authEpisode{}}
 }
 
 func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
@@ -152,6 +189,10 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 	for key, stamp := range t.state.Expiry {
 		before.Expiry[key] = stamp
 	}
+	before.Auth = make(map[string]authEpisode, len(t.state.Auth))
+	for key, episode := range t.state.Auth {
+		before.Auth[key] = episode
+	}
 	warn, critical := snapshot.Settings.AlertWarningRemaining, snapshot.Settings.AlertCriticalRemaining
 	if warn == 0 && critical == 0 {
 		warn, critical = 20, 10
@@ -160,10 +201,12 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		return false, errors.New("invalid usage alert thresholds")
 	}
 	changed, visibleChanged := false, false
+	pendingFrom := len(t.pendingRejected)
 	liveBases := map[string]string{}
 	liveAccounts := map[string]string{}
 	paceOn, resetOn, expiryOn := snapshot.Settings.AlertPaceEnabled, snapshot.Settings.AlertResetNoticeEnabled, snapshot.Settings.AlertExpiryEnabled
 	keptExpiry := map[string]string{}
+	liveAuth := map[string]string{}
 	for _, provider := range snapshot.Providers {
 		if !provider.Enabled || !provider.Available {
 			continue
@@ -229,6 +272,44 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 			}
 			if s, seen := t.state.Expiry[expiryBase]; seen {
 				keptExpiry[expiryBase] = s
+			}
+			// The login-rejected episode: a usage poll answered with HTTP 401
+			// or 403 (auth_missing, or the rejected scope_missing) means the
+			// account stopped working. An episode starts at the first
+			// rejection and ends when the profile reads ok again; further
+			// rejected polls raise nothing, and the state is persisted, so a
+			// restart in the middle of an episode does not raise again either.
+			// Every episode start rings the owner's bell; only an active
+			// profile also gets the Inbox item (an inactive one is polled
+			// read-only and its fix is not urgent). The alert resolves itself
+			// on recovery, and a later rejection is a new episode with a new
+			// item.
+			authBase := authBaseKey(provider.ProviderName, account)
+			liveAuth[authBase] = profile.ProfileName
+			switch profile.Status {
+			case string(providers.StatusAuthMissing), string(providers.StatusScopeMissing):
+				hint := loginHint(provider.ProviderName, profile)
+				episode := t.state.Auth[authBase]
+				if !episode.Open {
+					episode = authEpisode{Episode: episode.Episode + 1, Open: true}
+					t.pendingRejected = append(t.pendingRejected, RejectedLogin{
+						Provider: provider.ProviderName, Tool: authTool(provider.ProviderName),
+						Profile: profile.ProfileName, Hint: hint})
+					changed = true
+				}
+				if profile.Active && !episode.Inbox {
+					episode.Inbox = true
+					t.addRejectedAlert(authBase, episode.Episode, provider.ProviderName, profile.ProfileName, hint)
+					visibleChanged, changed = true, true
+				}
+				t.state.Auth[authBase] = episode
+			case string(providers.StatusOK):
+				if episode, seen := t.state.Auth[authBase]; seen && episode.Open {
+					episode.Open, episode.Inbox = false, false
+					t.state.Auth[authBase] = episode
+					t.closeTier(authBase, loginRejectedTier)
+					visibleChanged, changed = true, true
+				}
 			}
 			if profile.Stale || profile.Status != "ok" || profile.LastRefreshAt == nil {
 				continue
@@ -391,6 +472,20 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		}
 	}
 	t.state.Expiry = keptExpiry
+	// An account that is no longer observed (its profile was removed, or its
+	// provider was disabled or became unavailable) ends its episode: the open
+	// alert closes and the record is dropped, so a later reappearance starts
+	// a fresh episode and raises again.
+	for base, episode := range t.state.Auth {
+		if _, live := liveAuth[base]; live {
+			continue
+		}
+		if episode.Open {
+			t.closeTier(base, loginRejectedTier)
+			visibleChanged, changed = true, true
+		}
+		delete(t.state.Auth, base)
+	}
 	for id, alert := range t.state.Alerts {
 		if !alert.Open {
 			continue
@@ -407,6 +502,8 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		name, present := "", false
 		if alert.Tier == "expiry" || alert.Tier == "expiring" || alert.Tier == "expired" {
 			name, present = liveAccounts[alert.BaseKey]
+		} else if alert.Tier == loginRejectedTier {
+			name, present = liveAuth[alert.BaseKey]
 		} else {
 			name, present = liveBases[alert.BaseKey]
 		}
@@ -427,6 +524,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 		}
 		if err := t.save(); err != nil {
 			t.state = before
+			t.pendingRejected = t.pendingRejected[:pendingFrom]
 			if t.state.Expiry == nil { // before.Expiry is always a map, but a state restored from disk without one stays nil
 				t.state.Expiry = map[string]string{}
 			}
@@ -519,6 +617,62 @@ func paceAlertWindow(provider, key string) bool {
 
 func expiryBaseKey(provider, account string) string {
 	return "expiry\x00" + alertHash("account\x00"+provider+"\x00"+account)
+}
+
+// authBaseKey keys a login-rejection episode by the hashed provider and
+// account, the same identity the other alerts use, so a rename keeps the
+// episode and a reused name does not inherit one.
+func authBaseKey(provider, account string) string {
+	return "auth\x00" + alertHash("account\x00"+provider+"\x00"+account)
+}
+
+// authTool names the tool an event payload speaks of: the switcher's tool
+// name for the two local-login tools, the provider name for the rest.
+func authTool(provider string) string {
+	if provider == providers.ProviderClaudeCode {
+		return "claude"
+	}
+	return provider
+}
+
+// loginHint is how the owner logs the account back in, one sentence. Codex
+// and Claude Code are CLI logins; the configured-credential providers name
+// their own fix in the redacted rejection message they produced.
+func loginHint(provider string, profile Profile) string {
+	switch provider {
+	case providers.ProviderCodex:
+		return "Run codex login."
+	case providers.ProviderClaudeCode:
+		return "Run claude /login."
+	}
+	if hint := strings.TrimSpace(profile.Error); hint != "" {
+		return hint
+	}
+	return "Sign in again in Settings → Server → Accounts & usage."
+}
+
+// addRejectedAlert raises the episode's Inbox item. Its id carries the
+// episode number, so the next episode raises a fresh item even though the
+// window-less base key is the same.
+func (t *AlertTracker) addRejectedAlert(base string, episode int, provider, profile, hint string) {
+	id := "usage_alert_" + alertHash(base + "\x00" + fmt.Sprint(episode) + "\x00" + loginRejectedTier)[:24]
+	t.state.Alerts[id] = UsageAlert{ID: id, Provider: provider, Profile: profile, Tier: loginRejectedTier,
+		Hint: hint, CreatedAt: t.clock().UTC(), Open: true, BaseKey: base}
+}
+
+// DrainRejectedLogins returns the login-rejection episodes the last Observe
+// started and clears them, so the server can record one bell event per
+// episode. A drain is not required for correctness: an undrained episode is
+// dropped on the next Observe's rollback or stays queued harmlessly.
+func (t *AlertTracker) DrainRejectedLogins() []RejectedLogin {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.pendingRejected) == 0 {
+		return nil
+	}
+	out := t.pendingRejected
+	t.pendingRejected = nil
+	return out
 }
 
 // The Expiry record is `<expiry>@<announced level>`: the notice's expiry and
