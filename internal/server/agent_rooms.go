@@ -35,6 +35,20 @@ func toolDigest(value any) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// agentCreateRoomRequest is the body of POST /api/agent/rooms, the create_room tool.
+type agentCreateRoomRequest struct {
+	Title    string          `json:"title"`
+	ParentID string          `json:"parent_id"`
+	Purpose  string          `json:"purpose,omitempty"`
+	Worktree worktreeRequest `json:"worktree"`
+}
+
+// agentCloseRoomRequest is the body of POST /api/agent/rooms/{room}/close, the close_room tool.
+type agentCloseRoomRequest struct {
+	LifecycleRev int64 `json:"lifecycle_rev"`
+	Cascade      bool  `json:"cascade"`
+}
+
 func (s *Server) agentToolCreateRoom(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	if !activeLead(w, caller) {
@@ -44,12 +58,7 @@ func (s *Server) agentToolCreateRoom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Title    string          `json:"title"`
-		ParentID string          `json:"parent_id"`
-		Purpose  string          `json:"purpose,omitempty"`
-		Worktree worktreeRequest `json:"worktree"`
-	}
+	var req agentCreateRoomRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -104,10 +113,7 @@ func (s *Server) agentToolCloseRoom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		LifecycleRev int64 `json:"lifecycle_rev"`
-		Cascade      bool  `json:"cascade"`
-	}
+	var req agentCloseRoomRequest
 	if !readJSON(w, r, &req) {
 		return
 	}

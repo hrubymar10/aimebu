@@ -136,16 +136,19 @@ func (s *Server) agentToolRoomHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, page)
 }
 
+// agentSetRoleRequest is the body of POST /api/agent/agents/{id}/role, the set_role tool.
+type agentSetRoleRequest struct {
+	RoleKey string `json:"role_key"`
+	Rev     int64  `json:"rev"`
+}
+
 func (s *Server) agentToolSetRole(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
 		apiError(w, 403, "forbidden", "active lead role required")
 		return
 	}
-	var req struct {
-		RoleKey string `json:"role_key"`
-		Rev     int64  `json:"rev"`
-	}
+	var req agentSetRoleRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -254,26 +257,35 @@ func (s *Server) agentProviderQuota(caller store.AgentToolIdentity) agentProvide
 	return quota
 }
 
+// agentSpawnRequest is the body of POST /api/agent/agents, the spawn_agent tool. It is decoded strictly, so a field the tool sends must be
+// here (TestAgentToolBodiesDecodeStrictly checks every tool's body against its route's type).
+type agentSpawnRequest struct {
+	RoomID    string `json:"room_id"`
+	RoleKey   string `json:"role_key"`
+	Tool      string `json:"tool"`
+	Variant   string `json:"variant"`
+	Model     string `json:"model"`
+	Reason    string `json:"reason"`
+	Provider  string `json:"provider"`
+	MachineID string `json:"machine_id"`
+	Worktree  bool   `json:"worktree"`
+	BaseRef   string `json:"base_ref"`
+	// JoinParent is spawn_agent's join_parent: the store allows it to a lead or the flow's dispatcher only (store.SpawnInput.JoinParent).
+	JoinParent bool `json:"join_parent"`
+}
+
+// agentStopRequest is the body of POST /api/agent/agents/{id}/stop, the stop_agent tool.
+type agentStopRequest struct {
+	Rev int64 `json:"rev"`
+}
+
 func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
 		apiError(w, http.StatusForbidden, "forbidden", "active lead role required")
 		return
 	}
-	var req struct {
-		RoomID    string `json:"room_id"`
-		RoleKey   string `json:"role_key"`
-		Tool      string `json:"tool"`
-		Variant   string `json:"variant"`
-		Model     string `json:"model"`
-		Reason    string `json:"reason"`
-		Provider  string `json:"provider"`
-		MachineID string `json:"machine_id"`
-		Worktree  bool   `json:"worktree"`
-		BaseRef   string `json:"base_ref"`
-		// JoinParent is spawn_agent's join_parent: the store allows it to a lead or the flow's dispatcher only (store.SpawnInput.JoinParent).
-		JoinParent bool `json:"join_parent"`
-	}
+	var req agentSpawnRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -296,9 +308,7 @@ func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusForbidden, "forbidden", "active lead role required")
 		return
 	}
-	var req struct {
-		Rev int64 `json:"rev"`
-	}
+	var req agentStopRequest
 	if !readJSON(w, r, &req) {
 		return
 	}

@@ -89,6 +89,14 @@ func (s *Server) projectHandbookSnapshot(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, doc)
 }
 
+// agentHandbookUpdateRequest is the body of PUT /api/agent/handbook, the handbook_update tool.
+type agentHandbookUpdateRequest struct {
+	Section string  `json:"section"`
+	Content *string `json:"content"`
+	Patch   *string `json:"patch"`
+	Rev     *int64  `json:"rev"`
+}
+
 func (s *Server) agentHandbook(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	access, err := s.Store.HandbookAgentAccess(r.Context(), caller.ProjectID, caller.ID)
@@ -113,12 +121,7 @@ func (s *Server) agentHandbook(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 403, "forbidden", "only the project lead may update the handbook")
 		return
 	}
-	var req struct {
-		Section string  `json:"section"`
-		Content *string `json:"content"`
-		Patch   *string `json:"patch"`
-		Rev     *int64  `json:"rev"`
-	}
+	var req agentHandbookUpdateRequest
 	if !readJSON(w, r, &req) {
 		return
 	}

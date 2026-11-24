@@ -12,6 +12,18 @@ import (
 // agentToolDM is the dm_agent tool: an active lead starts (or continues) a private chat with any agent of its own project or with the lead of a
 // project it may reach; the dispatcher with an agent of its project it manages; any other active agent with its own project's lead or dispatcher.
 // Authorization is the store's, checked in the same transaction as the write.
+// agentDMRequest is the body of POST /api/agent/dms, the dm_agent tool.
+type agentDMRequest struct {
+	TargetAgentID string `json:"target_agent_id"`
+	Body          string `json:"body"`
+}
+
+// agentHumanDMRequest is the body of POST /api/agent/human-dms, the dm_human tool.
+type agentHumanDMRequest struct {
+	TargetUser string `json:"target_user"`
+	Body       string `json:"body"`
+}
+
 func (s *Server) agentToolDM(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	// Any active agent may call; the store decides whom it may message from its role (lead, coordinator, or any other).
@@ -23,10 +35,7 @@ func (s *Server) agentToolDM(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		TargetAgentID string `json:"target_agent_id"`
-		Body          string `json:"body"`
-	}
+	var req agentDMRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -67,10 +76,7 @@ func (s *Server) agentToolDMHuman(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		TargetUser string `json:"target_user"`
-		Body       string `json:"body"`
-	}
+	var req agentHumanDMRequest
 	if !readJSON(w, r, &req) {
 		return
 	}

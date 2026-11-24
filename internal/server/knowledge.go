@@ -302,15 +302,18 @@ func (s *Server) taskNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, item)
 }
 
+// agentMemoryAddRequest is the body of POST /api/agent/memory, the memory_add tool.
+type agentMemoryAddRequest struct {
+	Scope           string `json:"scope"`
+	ScopeKey        string `json:"scope_key"`
+	RoomID          string `json:"room_id"`
+	Body            string `json:"body"`
+	SourceMessageID string `json:"source_message_id"`
+}
+
 func (s *Server) agentToolMemoryAdd(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	var req struct {
-		Scope           string `json:"scope"`
-		ScopeKey        string `json:"scope_key"`
-		RoomID          string `json:"room_id"`
-		Body            string `json:"body"`
-		SourceMessageID string `json:"source_message_id"`
-	}
+	var req agentMemoryAddRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -428,6 +431,13 @@ func (s *Server) agentToolMemoryList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"records": active, "cap_bytes": cap})
 }
 
+// agentMemoryRecordRequest is the body of PUT /api/agent/memory/{id}, the memory_update tool; memory_remove (DELETE) sends its rev in the
+// query instead.
+type agentMemoryRecordRequest struct {
+	Body string `json:"body"`
+	Rev  int64  `json:"rev"`
+}
+
 func (s *Server) agentToolMemoryRecord(w http.ResponseWriter, r *http.Request) {
 	scope, key, err := agentMemoryScope(r)
 	if err != nil {
@@ -435,10 +445,7 @@ func (s *Server) agentToolMemoryRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller := agentToolCaller(r)
-	var req struct {
-		Body string `json:"body"`
-		Rev  int64  `json:"rev"`
-	}
+	var req agentMemoryRecordRequest
 	if r.Method == http.MethodDelete {
 		req.Rev, err = strconv.ParseInt(r.URL.Query().Get("rev"), 10, 64)
 		if err != nil {

@@ -34,6 +34,12 @@ func (s *Server) agentToolRecoveries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"recoveries": items})
 }
 
+// agentResolveRecoveryRequest is the body of POST /api/agent/recoveries/{item}/decision, the resolve_recovery tool.
+type agentResolveRecoveryRequest struct {
+	Choice string `json:"choice"`
+	Note   string `json:"note"`
+}
+
 func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	if !activeLead(w, caller) {
@@ -47,10 +53,7 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	var req struct {
-		Choice string `json:"choice"`
-		Note   string `json:"note"`
-	}
+	var req agentResolveRecoveryRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
