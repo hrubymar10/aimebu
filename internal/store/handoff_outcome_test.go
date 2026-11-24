@@ -360,7 +360,7 @@ func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 		t.Fatal("an upgraded turn requires an outcome")
 	}
 	var version int
-	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 134 {
+	if err := s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != 135 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

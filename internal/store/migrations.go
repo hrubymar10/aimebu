@@ -2105,7 +2105,7 @@ ALTER TABLE turn ADD COLUMN handoff_outcome_required INTEGER NOT NULL DEFAULT 0 
 -- The message of a person that approved an agent-initiated spawn's exact harness and model choice outside the role's default pool
 -- (model_not_approved otherwise). NULL is every agent spawned by a person, from a pool choice, or before this.
 ALTER TABLE agent ADD COLUMN approved_by TEXT;
-`}, {134, roleSpawnApprovalMigration()}}
+`}, {134, roleSpawnApprovalMigration()}, {135, roleResearcherMigration()}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.
@@ -2232,7 +2232,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 			leaderFacts, err = migrateLeaderRole(ctx, tx)
 		}
 		var approvalFacts []string
-		if err == nil && m.version == 134 {
+		if err == nil && m.version == 135 {
 			approvalFacts, err = spawnApprovalRoleFacts(ctx, tx)
 		}
 		if err == nil && m.version == 112 {
@@ -2279,9 +2279,9 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 				log.Printf("migration 102: %s", line)
 			}
 		}
-		if m.version == 134 {
+		if m.version == 135 {
 			for _, line := range approvalFacts {
-				log.Printf("migration 134: %s", line)
+				log.Printf("migration 135: %s", line)
 			}
 		}
 	}

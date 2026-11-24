@@ -168,7 +168,7 @@ type builtinRole struct {
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
 		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: currentLeadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
-		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: currentDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
+		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: finalDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
 		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
@@ -190,12 +190,26 @@ const spawnApprovalRuleDispatcher = `Spawn agents with role_key only, so they co
 
 const spawnApprovalRuleLead = `Never ask for a model, tool or variant outside the role's pool unless a person approved it for that task; cite their message (its number, as #N) as approved_by.`
 
+// researcherRules are the who-spawns-researcher sentences (the A10-2
+// addition): in the leader-dispatcher flow the leader spawns its own
+// researchers for research and planning questions, and the dispatcher spawns
+// the workers a specification calls for.
+const researcherRuleLead = `Implementation work goes through the dispatcher. Research and planning questions you may give directly to a researcher: spawn it yourself with role_key only (from the role's pool), read its report and decide.`
+
+const researcherRuleDispatcher = `Spawn workers for specifications; the leader spawns its own researchers.`
+
 // currentLeadRoleBody and currentDispatcherRoleBody are the shipped bodies with
-// the approval rules. leadRoleBody and dispatcherRoleBody stay as the earlier
-// migrations wrote them: they are what migration 107 looks for, and the frozen
-// pieces of the lead body are pinned (TestFrozenLeadBody).
+// the approval rules, exactly what migration 134 writes. finalDispatcherRoleBody
+// adds the dispatcher's who-spawns-what sentence and is what a fresh project
+// starts with. The researcher sentence about the dispatcher lives only in the
+// leader-dispatcher flow's leader text (team_flows.go): the base leader body is
+// what a leader gets in flows with no dispatcher, where it would be wrong.
+// leadRoleBody and dispatcherRoleBody stay as the earlier migrations wrote
+// them: they are what migration 107 looks for, and the frozen pieces of the
+// lead body are pinned (TestFrozenLeadBody).
 var currentLeadRoleBody = leadRoleBody + "\n\n" + spawnApprovalRuleLead
 var currentDispatcherRoleBody = dispatcherRoleBody + "\n\n" + spawnApprovalRuleDispatcher
+var finalDispatcherRoleBody = currentDispatcherRoleBody + "\n\n" + researcherRuleDispatcher
 
 const advisorRoleBody = `You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.`
 

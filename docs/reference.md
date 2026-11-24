@@ -460,7 +460,10 @@ and agent record. Archived projects cannot change flow. Choosing Custom keeps
 the one-step apply; no agents change. Viewers see the current flow read-only.
 In B, a private routing room connects the leader with the
 singleton dispatcher. The leader writes specs there; the dispatcher manages
-task rooms, workers, and reviewers. A task-room message can reference a
+task rooms, workers, and reviewers. Research and planning questions the leader
+may hand to a researcher directly: the leader spawns its own researchers (from
+the role's pool) and reads their reports, while the dispatcher spawns the
+workers a specification calls for. A task-room message can reference a
 routing brief by `#N`; the worker-room chat shows the one granted message
 inline, without exposing the routing conversation.
 In A and B, `general` is the project-wide room for announcements and
