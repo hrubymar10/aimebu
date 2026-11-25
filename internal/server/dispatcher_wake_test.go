@@ -14,12 +14,17 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
-// A committed change that can create dispatch work wakes the pass, so a new
-// message to an idle agent is dispatched without waiting for the fallback
-// tick: the tick here is an hour, so only the wake can deliver inside 100 ms.
-// Keep this timing assertion serial within the server package: unrelated
-// parallel fixtures can delay its goroutine under the race detector.
-func TestWakeDispatchesANewMessageInside100ms(t *testing.T) {
+// wakeScene is an idle agent with a live fake supervisor and a running
+// dispatcher whose fallback tick is an hour: after the startup passes, only a
+// wake can make the dispatcher deliver a new message.
+type wakeScene struct {
+	f       *fixture
+	agentID string
+	cancel  context.CancelFunc
+	stop    func()
+}
+
+func startWakeScene(t *testing.T, removeWake bool) *wakeScene {
 	f := newFixture(t)
 	f.seed()
 	ctx := context.Background()
@@ -49,14 +54,12 @@ func TestWakeDispatchesANewMessageInside100ms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
 	fake := adapter.NewFake()
 	fake.ScriptDefault(adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(`{"messages":[]}`)}}, adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{TerminalEvent: true}})
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- client.RunOnce(runCtx) }()
 	select {
@@ -70,11 +73,25 @@ func TestWakeDispatchesANewMessageInside100ms(t *testing.T) {
 		defer close(dispatchDone)
 		dispatcher.Run(runCtx, time.Hour, nil)
 	}()
-	// Let the startup sweeps and their passes finish, so the message below is
-	// the only thing left to do and nothing else can wake the pass.
+	// Let the startup sweeps and their passes finish, so the message the test
+	// posts is the only thing left to do and nothing else can wake the pass.
 	time.Sleep(300 * time.Millisecond)
-	start := time.Now()
-	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "please wake"}, true)
+	if removeWake {
+		f.db.SetDispatchWake(nil)
+		f.srv.setDispatchWake(nil)
+	}
+	return &wakeScene{f: f, agentID: agent.ID, cancel: cancel, stop: func() {
+		cancel()
+		<-dispatchDone
+		<-done
+		journal.Close()
+	}}
+}
+
+// post sends a message to the room and returns its id.
+func (w *wakeScene) post(t *testing.T) string {
+	response := w.f.request("POST", "/api/rooms/"+w.f.room.ID+"/messages", map[string]string{"body": "please wake"}, true)
+	defer response.Body.Close()
 	if response.StatusCode != 201 {
 		t.Fatalf("post status=%d", response.StatusCode)
 	}
@@ -84,23 +101,52 @@ func TestWakeDispatchesANewMessageInside100ms(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&message); err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	return message.ID
+}
+
+// A committed change that can create dispatch work wakes the pass, so a new
+// message to an idle agent is dispatched without waiting for the fallback
+// tick. The tick here is an hour, so only the wake can deliver the message:
+// the test proves the dispatch was caused by the wake (see the counter-test
+// below, where the wake is removed and the message stays queued), not that it
+// was fast. The bound is a generous failure cutoff, not a latency claim.
+func TestWakeDispatchesANewMessageWithoutTheFallbackTick(t *testing.T) {
+	scene := startWakeScene(t, false)
+	defer scene.stop()
+	ctx := context.Background()
+	id := scene.post(t)
+	start := time.Now()
 	for {
-		note, err := f.db.NoteForAgentMessage(ctx, agent.ID, message.ID)
+		note, err := scene.f.db.NoteForAgentMessage(ctx, scene.agentID, id)
 		if err != nil {
 			t.Fatalf("note for message: %v", err)
 		}
 		if note.State != "queued" {
-			break
+			return
 		}
-		if time.Since(start) > 100*time.Millisecond {
+		if time.Since(start) > 10*time.Second {
 			t.Fatalf("message still queued after %s (note state %q): the wake did not dispatch it", time.Since(start), note.State)
 		}
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
-	cancel()
-	<-dispatchDone
-	<-done
+}
+
+// The counter-test: with the wake removed and the fallback tick an hour away,
+// nothing dispatches the message, so it stays queued. Together with the test
+// above this shows the wake is what delivers it.
+func TestWithoutTheWakeANewMessageStaysQueued(t *testing.T) {
+	scene := startWakeScene(t, true)
+	defer scene.stop()
+	ctx := context.Background()
+	id := scene.post(t)
+	time.Sleep(1500 * time.Millisecond)
+	note, err := scene.f.db.NoteForAgentMessage(ctx, scene.agentID, id)
+	if err != nil {
+		t.Fatalf("note for message: %v", err)
+	}
+	if note.State != "queued" {
+		t.Fatalf("message left the queue without a wake or a tick (note state %q): something else dispatches it", note.State)
+	}
 }
 
 // An idle server passes at most about once per fallback interval: writes wake
