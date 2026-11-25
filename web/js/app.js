@@ -88,6 +88,7 @@ const chat = new Chat(async room => {
 const receipts = new ReadReceipts(chat);
 const sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => selectByPerson(room, messageID));
 sidebar.watchPreview();
+chat.onOpenRoomRef = id => openReferencedRoom(id, true);
 // Pin and hide are set from the room settings; the room lists keep the per-user state.
 chat.roomView = id => sidebar.rooms.get(id);
 chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, field, value);
@@ -432,7 +433,12 @@ function ownsAddress(room = chat.room) {
 window.addEventListener('popstate', () => {
   if (settingsAddress(location.hash) && chat.room && !ownsAddress(chat.room)) {
     history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(chat.room.id)}`);
+    return;
   }
+  if (ownsAddress()) return;
+  const id = roomInAddress();
+  if (id && id !== chat.room?.id) void openReferencedRoom(id, false);
+  else if (!id && chat.room) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(chat.room.id)}`);
 });
 function roomInAddress() {
   const room = settingsAddress(location.hash);
@@ -444,6 +450,22 @@ function addressProjectHome() {
   return address?.kind === 'project' ? [...sidebar.rooms.values()].find(room => room.project_id === address.id && room.kind === 'home') : undefined;
 }
 function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
+async function openReferencedRoom(id, push) {
+  const target = sidebar.rooms.get(id);
+  if (!target) { chat.error.textContent = 'That room is no longer available.'; if (!push && chat.room) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(chat.room.id)}`); return false; }
+  const previous = chat.room;
+  if (push) history.pushState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(id)}`);
+  try {
+    if (await selectByPerson(target)) return true;
+  } catch (error) { captureError(error, 'room reference'); }
+  if (previous && chat.room?.id !== previous.id) {
+    try { await selectByPerson(previous); } catch (error) { captureError(error, 'room reference restore'); }
+  }
+  if (!previous || chat.room?.id !== previous.id) closeOpenRoom();
+  else { sidebar.setActive(previous.id); history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(previous.id)}`); }
+  chat.error.textContent = 'That room could not be opened. Try again.';
+  return false;
+}
 // A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
 // chat's error line, in words, and the person tries again; left to reject, it would be an unhandled error and no message at all.
 function selectByPerson(room, messageID) {

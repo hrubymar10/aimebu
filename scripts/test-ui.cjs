@@ -2563,6 +2563,37 @@ async function main() {
 
       await first.evaluate(title => [...document.querySelectorAll('.room-item-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
+      await post(`Open #${other.roomID}`);
+      await first.waitForFunction(id => [...document.querySelectorAll('#messages a.room-ref')].some(link => link.getAttribute('href') === `#${id}`), {}, other.roomID);
+      const originalRoomID = await first.evaluate(() => location.hash.slice(1));
+      await first.evaluate(id => [...document.querySelectorAll('#messages a.room-ref')].find(link => link.getAttribute('href') === `#${id}`).click(), other.roomID);
+      await first.waitForFunction(id => document.querySelector('#room-title').textContent === id.title && location.hash === `#${id.roomID}`, {}, other);
+      assert.equal(await first.evaluate(() => localStorage.getItem('aimebu2.lastRoom')), other.roomID, 'room reference selection remembers the target room');
+      await first.evaluate(() => history.back());
+      await first.waitForFunction(state => location.hash === `#${state.id}` && document.querySelector('#room-title').textContent === state.title, {}, { id: originalRoomID, title: originalTitle });
+      await first.evaluate(() => history.forward());
+      await first.waitForFunction(state => location.hash === `#${state.id}` && document.querySelector('#room-title').textContent === state.title, {}, { id: other.roomID, title: other.title });
+      const linkedContext = await browser.createBrowserContext(), linked = await linkedContext.newPage();
+      try {
+        await login(linked, `${origin}/#${other.roomID}`); await appReady(linked);
+        await linked.waitForFunction(id => location.hash === `#${id.roomID}` && document.querySelector('#room-title').textContent === id.title, {}, other);
+      } finally { await linkedContext.close(); }
+      await first.evaluate(() => history.back());
+      await first.waitForFunction(state => location.hash === `#${state.id}` && document.querySelector('#room-title').textContent === state.title && [...document.querySelectorAll('#messages a.room-ref')].some(link => link.getAttribute('href') === `#${state.target}`), {}, { id: originalRoomID, title: originalTitle, target: other.roomID });
+      await first.evaluate(id => {
+        const real = window.fetch; window.__roomRefFetch = real;
+        window.fetch = (input, options) => String(input).includes(`/api/rooms/${id}/messages?limit=`)
+          ? Promise.resolve(new Response(JSON.stringify({ message: 'gone' }), { status: 404, headers: { 'Content-Type': 'application/json' } }))
+          : real(input, options);
+      }, other.roomID);
+      try {
+        await first.evaluate(id => [...document.querySelectorAll('#messages a.room-ref')].find(link => link.getAttribute('href') === `#${id}`).click(), other.roomID);
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        const failedLink = await first.evaluate(() => ({ hash: location.hash, title: document.querySelector('#room-title').textContent, error: document.querySelector('#chat-error').textContent, toast: document.querySelector('#app-toast').textContent }));
+        assert.equal(failedLink.hash, `#${originalRoomID}`, `the failed link restores the address: ${JSON.stringify(failedLink)}`);
+        assert.match(failedLink.error, /could not be opened/, `the failed link reports an error: ${JSON.stringify(failedLink)}`);
+        assert.equal(await first.$eval('#room-title', node => node.textContent), originalTitle, 'a room reference that loses access keeps the shown room and restores its address');
+      } finally { await first.evaluate(() => { window.fetch = window.__roomRefFetch; }); }
       // With reduced motion the highlight does not animate: the same class is a plain outline.
       await first.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
       await post(`again #${other.no}`);

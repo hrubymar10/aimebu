@@ -75,6 +75,12 @@ export class Chat {
     this.threadAttachmentInput.onchange = () => { this.store.addThreadFiles([...this.threadAttachmentInput.files]); this.threadAttachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
     document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.no)); });
+    document.addEventListener('click', event => {
+      const ref = event.target.closest?.('a.room-ref');
+      if (!ref || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void this.onOpenRoomRef?.(ref.getAttribute('href').slice(1));
+    });
     this.draft.addEventListener('paste', event => { const files = [...event.clipboardData?.files || []]; if (files.length) { event.preventDefault(); this.addFiles(files); } });
     this.sendBar = this.form.closest('.send-bar');
     this.sendBar.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); this.sendBar.classList.add('drag-attachment'); } });

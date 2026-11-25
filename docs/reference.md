@@ -783,7 +783,7 @@ login is unique. Rooms are
 referenced by id the same way: an agent writes `#room_<id>`, and a person may
 type `#<title>`, which the composer on send (and the save itself) resolves to
 the id when exactly one room the author can see has that title. The web
-renders `#room_<id>` as `#<room title>` and a link to the room (`#<title>-2`
+renders `#room_<id>` as `#<room title>` and a link that opens the room (`#<title>-2`
 when two visible rooms share a title in the view); a room the reader has no
 access to renders as plain `#private-room` with no title, and an unknown or
 deleted id as `#unknown-room` — nothing a reader may not see is ever named,

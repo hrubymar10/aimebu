@@ -652,6 +652,42 @@ async function main() {
     await page.evaluate(() => { window.__chat.jumpToMessage = no => { window.__jumpFromDialog = [no, document.querySelector('[data-message-id=rm_a_long_system] dialog').open]; }; });
     await page.$eval('[data-message-id=rm_a_long_system] dialog a.msg-ref', node => node.click());
     assert.deepEqual(await page.evaluate(() => window.__jumpFromDialog), [42, false], 'message references close the dialog before navigating');
+    if (process.env.A13_ROOM_REF_CASE !== 'error') {
+      await page.evaluate(() => {
+        window.__seed('room_rmb', 1);
+        window.__roomRefCalls = [];
+        window.__chat.onOpenRoomRef = id => { window.__roomRefCalls.push(id); return window.__chat.open({ id, project_id: 'prj_b', title: 'Second room', kind: 'task', lifecycle: 'open', member_count: 0 }); };
+      });
+      await page.$eval('[data-message-id=rm_a_long_system] dialog a.room-ref', node => {
+        const allowed = [];
+        for (const options of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+          const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...options });
+          node.dispatchEvent(event); allowed.push(!event.defaultPrevented);
+        }
+        window.__defaultRoomRefClicks = allowed;
+      });
+      await page.$eval('[data-message-id=rm_a_long_system] dialog a.room-ref', node => node.click());
+      await page.waitForFunction(() => window.__chat.room?.id === 'room_rmb' && document.querySelector('#messages [data-message-id=room_rmb_m1]'));
+      assert.deepEqual(await page.evaluate(() => [window.__chat.room.id, document.querySelector('#room-title').textContent, window.__roomRefCalls, window.__defaultRoomRefClicks]), ['room_rmb', 'Second room', ['room_rmb'], [true, true, true, true, true]], 'a room reference opens another project through room navigation while modified and middle clicks keep the browser default');
+    }
+    await page.close();
+  }
+
+  // A stale link still invokes room navigation, which can show a readable error without leaving the old room.
+  if (process.env.A13_ROOM_REF_CASE !== 'success') {
+    const page = await mount({ rooms: { rm_a: 1 } });
+    await page.evaluate(() => {
+      window.__data.rooms.rm_a.messages[0].body = 'See #room_gone';
+      window.__data.rooms.rm_a.messages[0].entities = [{ id: 'room_gone', name: 'Gone room', kind: 'room' }];
+      window.__chat.onOpenRoomRef = async id => {
+        const response = await fetch(`/api/rooms/${id}/messages?limit=100`);
+        if (!response.ok) window.__chat.error.textContent = 'That room could not be opened. Try again.';
+      };
+    });
+    await openRoom(page, 'rm_a'); await opened(page);
+    await page.$eval('[data-message-id=rm_a_m1] a.room-ref', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#chat-error').textContent.includes('could not be opened'));
+    assert.deepEqual(await page.evaluate(() => [window.__chat.room.id, document.querySelector('#chat-error').textContent]), ['rm_a', 'That room could not be opened. Try again.'], 'an inaccessible room reference reports an error and keeps the shown room');
     await page.close();
   }
 

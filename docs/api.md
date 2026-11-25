@@ -382,7 +382,7 @@ room the author can see (exact, case-insensitive) is resolved to that id — an
 ambiguous title, a room the author cannot see, a bare `#<number>` message
 reference and an id typed directly stay as written. A drawn row renders each
 stored `#room_<id>` from the message's `entities` table: a named room as
-`#<title>` linking to the room (`#<title>-2` when two visible rooms share a
+`#<title>` linking to and opening the room (`#<title>-2` when two visible rooms share a
 title in the view), an unnamed entry as plain `#private-room`, a missing entry
 as plain `#unknown-room`; code and the raw Markdown view keep the ids.
 
