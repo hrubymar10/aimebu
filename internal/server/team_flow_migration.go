@@ -241,15 +241,8 @@ func (s *Server) teamFlowMigrationInterrupt(w http.ResponseWriter, r *http.Reque
 		teamFlowMigrationError(w, err)
 		return
 	}
-	if machine, err := s.machineForID(card.MachineID); err != nil {
+	if err := s.sendMachineControl(card.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: card.ID, Generation: card.Generation, DesiredRev: card.DesiredRev, DesiredState: card.Desired}); err != nil {
 		log.Printf("team flow migration interrupt: stop for agent %s not sent: %v", card.ID, err)
-	} else {
-		machine.boundMu.Lock()
-		machine.bound[card.ID] = card.Generation
-		machine.boundMu.Unlock()
-		if err := machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: card.ID, Generation: card.Generation, DesiredRev: card.DesiredRev, DesiredState: card.Desired}); err != nil {
-			log.Printf("team flow migration interrupt: stop for agent %s not sent: %v", card.ID, err)
-		}
 	}
 	progress, err := s.Store.TeamFlowMigrationProgress(r.Context(), projectID, userID(r))
 	if err != nil {

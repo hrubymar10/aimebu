@@ -33,11 +33,47 @@ func (s *Server) grantAgentKeys(ctx context.Context, machine *machineConn, held 
 		if have[candidate.AgentID] || s.spawnKeys[fmt.Sprintf("%s/%d", candidate.AgentID, candidate.Generation)] != "" {
 			continue
 		}
+		if machine.retiring {
+			continue
+		}
+		blocked, err := s.handoverBlocked(ctx, machine.id, candidate.AgentID)
+		if err != nil {
+			return nil, err
+		}
+		if blocked {
+			continue
+		}
 		key, err := s.Auth.IssueAgentKey(ctx, candidate.AgentID)
 		if err != nil {
 			return nil, err
 		}
 		grants = append(grants, protocol.AgentKeyGrant{AgentID: candidate.AgentID, Generation: candidate.Generation, Key: key})
+		machine.keysMu.Lock()
+		machine.keys[candidate.AgentID] = true
+		machine.keysMu.Unlock()
 	}
 	return grants, nil
+}
+
+// grantHandoverKey sends a key on the active connection before its first delivery for an agent released by retiring instances.
+func (s *Server) grantHandoverKey(ctx context.Context, machine *machineConn, agentID string, generation int) error {
+	if !machine.supportsAgentKeys {
+		return nil
+	}
+	s.spawnMu.Lock()
+	defer s.spawnMu.Unlock()
+	machine.keysMu.Lock()
+	defer machine.keysMu.Unlock()
+	if machine.keys[agentID] || s.spawnKeys[fmt.Sprintf("%s/%d", agentID, generation)] != "" {
+		return nil
+	}
+	key, err := s.Auth.IssueAgentKey(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	if err := machine.send(protocol.Frame{V: protocol.Version, Type: protocol.AgentKeys, AgentKeys: []protocol.AgentKeyGrant{{AgentID: agentID, Generation: generation, Key: key}}}); err != nil {
+		return err
+	}
+	machine.keys[agentID] = true
+	return nil
 }

@@ -184,6 +184,13 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		if err != nil {
 			continue
 		}
+		blocked, err := d.Server.handoverBlocked(ctx, agent.MachineID, id)
+		if err != nil {
+			return count, err
+		}
+		if blocked {
+			continue
+		}
 		// A turn that forks a Claude Code session waits for a supervisor that can: asked before the turn is prepared, so the wait does not
 		// churn turns, and said once in the agent's room.
 		// The same wait for a turn that must start Claude in the spelling its session was saved under.

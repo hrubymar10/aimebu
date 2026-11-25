@@ -173,8 +173,7 @@ func (s *Server) warmIdleToSend(ctx context.Context) (*int, error) {
 }
 
 // agentIsolation answers GET and PUT /api/agent-isolation: any signed-in person reads it, an admin writes it. The same document carries the warm
-// window of the agents (`warm_idle_minutes`: the owner's saved value, else the default of 5; `warm_idle_saved` says which; 0 is off), which only the owner changes: it decides how much memory the machines hold between turns. So does the drain grace
-// (`supervisor_drain_grace_minutes`, 5 unless saved, 0 waits without limit; see local_supervisor.go), owner only as well.
+// window of the agents (`warm_idle_minutes`: the owner's saved value, else the default of 5; `warm_idle_saved` says which; 0 is off), which only the owner changes: it decides how much memory the machines hold between turns.
 func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut {
 		if !s.adminMachine(w, r) {
@@ -184,7 +183,6 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 			DockerOnly            *bool `json:"docker_only"`
 			ReviewerAgentsEnabled *bool `json:"reviewer_agents_enabled"`
 			WarmIdleMinutes       *int  `json:"warm_idle_minutes"`
-			DrainGraceMinutes     *int  `json:"supervisor_drain_grace_minutes"`
 			CodexWarmEnabled      *bool `json:"codex_warm_enabled"`
 			KeepAlive             *struct {
 				Enabled       *bool `json:"enabled"`
@@ -196,8 +194,8 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		if body.DockerOnly == nil && body.ReviewerAgentsEnabled == nil && body.WarmIdleMinutes == nil && body.DrainGraceMinutes == nil && body.CodexWarmEnabled == nil && body.KeepAlive == nil {
-			apiError(w, 400, "invalid_request", "docker_only, reviewer_agents_enabled, warm_idle_minutes, supervisor_drain_grace_minutes, codex_warm_enabled or keep_alive is required")
+		if body.DockerOnly == nil && body.ReviewerAgentsEnabled == nil && body.WarmIdleMinutes == nil && body.CodexWarmEnabled == nil && body.KeepAlive == nil {
+			apiError(w, 400, "invalid_request", "docker_only, reviewer_agents_enabled, warm_idle_minutes, codex_warm_enabled or keep_alive is required")
 			return
 		}
 		if body.KeepAlive != nil {
@@ -212,30 +210,20 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if body.WarmIdleMinutes != nil || body.DrainGraceMinutes != nil || body.CodexWarmEnabled != nil || body.KeepAlive != nil {
+		if body.WarmIdleMinutes != nil || body.CodexWarmEnabled != nil || body.KeepAlive != nil {
 			isOwner, err := s.Store.IsGlobalOwner(r.Context(), userID(r))
 			if err != nil {
 				fail(w, err)
 				return
 			}
 			if !isOwner {
-				apiError(w, 403, "forbidden", "only the owner can change how agents are kept warm or how long a supervisor's turns are waited for")
+				apiError(w, 403, "forbidden", "only the owner can change how agents are kept warm")
 				return
 			}
 		}
 		if body.WarmIdleMinutes != nil {
 			if *body.WarmIdleMinutes < 0 || *body.WarmIdleMinutes > maxWarmIdleSeconds/60 {
 				apiError(w, 400, "invalid_request", "warm_idle_minutes must be between 0 (off) and 1440")
-				return
-			}
-		}
-		if body.DrainGraceMinutes != nil {
-			if *body.DrainGraceMinutes < 0 || *body.DrainGraceMinutes > maxDrainGraceSeconds/60 { // compared in minutes: a huge value must not wrap around in the multiplication
-				apiError(w, 400, "invalid_request", supervisorDrainGraceMinutes+" must be between 0 (wait without limit) and 1440")
-				return
-			}
-			if err := s.Store.SetGlobalSettingValue(r.Context(), supervisorDrainGraceKey, strconv.Itoa(*body.DrainGraceMinutes*60)); err != nil {
-				fail(w, err)
 				return
 			}
 		}
@@ -336,10 +324,5 @@ func (s *Server) agentIsolation(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	drainGrace, err := s.drainGraceSeconds(r.Context())
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{supervisorDrainGraceMinutes: drainGrace / 60, "reviewer_agents_enabled": reviewers != "0", "docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "codex_warm_enabled": s.codexWarmOn.Load(), "keep_alive": keep})
+	writeJSON(w, 200, map[string]any{"reviewer_agents_enabled": reviewers != "0", "docker_only": on, "can_edit": canEdit, "warm_idle_minutes": warm / 60, "warm_idle_saved": warmSaved, "can_edit_warm": canEditWarm, "codex_warm_enabled": s.codexWarmOn.Load(), "keep_alive": keep})
 }

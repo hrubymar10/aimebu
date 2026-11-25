@@ -23,6 +23,7 @@ const MaxMachineFrameBytes = 4 << 20
 const (
 	Hello                = "hello"
 	HelloAck             = "hello_ack"
+	AgentKeys            = "agent_keys"
 	RetireAtIdle         = "retire_at_idle"
 	Ping                 = "ping"
 	Pong                 = "pong"
@@ -147,6 +148,7 @@ type Frame struct {
 	Type                  string `json:"type"`
 	MachineID             string `json:"machine_id,omitempty"`
 	JournalID             string `json:"journal_id,omitempty"`
+	DrainOnly             bool   `json:"drain_only,omitempty"`
 	SupervisorVersion     string `json:"supervisor_version,omitempty"`
 	SupervisorEnvironment string `json:"supervisor_environment,omitempty"`
 	SupportsRetireAtIdle  bool   `json:"supports_retire_at_idle,omitempty"`

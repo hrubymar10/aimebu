@@ -118,8 +118,6 @@ type Server struct {
 	localSupervisorLoggedBuild       atomic.Value // the build of the last local supervisor connection that was logged
 	localSupervisorUpgradeRequired   atomic.Bool
 	localSupervisorCanInterrupt      atomic.Bool
-	localDrainMu                     sync.Mutex
-	localDrainDeadline               time.Time // when the drain of a mismatched local supervisor stops waiting for its turns; zero while none drains
 	localRestartMu                   sync.Mutex
 	localRestartTurns                map[string]time.Time
 	telemetryTransport               sentry.Transport // tests replace the network transport; nil is the real one
@@ -153,14 +151,16 @@ type Server struct {
 	AllowedHosts         []string       // AIMEBU_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
 	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	machineMu            sync.Mutex
-	kaScopeMu            sync.Mutex                                         // guards kaScope
-	kaScope              map[string]keepAliveScopeLease                     // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
-	warmSeenMu           sync.Mutex                                         // guards warmSeen
-	warmSeen             map[string]warmSeenEntry                           // each machine's last count of warm processes, kept after it disconnects (see hostMayHaveWarm)
+	kaScopeMu            sync.Mutex                     // guards kaScope
+	kaScope              map[string]keepAliveScopeLease // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
+	warmSeenMu           sync.Mutex                     // guards warmSeen
+	warmSeen             map[string]warmSeenEntry       // each machine's last count of warm processes, kept after it disconnects (see hostMayHaveWarm)
+	warmByInstance       map[string]map[string]warmSeenEntry
 	saveWarmSeen         func(ctx context.Context, key, value string) error // tests replace the write of a machine's last warm report
 	kaSwitchMu           sync.Mutex                                         // guards kaSwitching
 	kaSwitching          map[string]int                                     // tools whose account is being switched right now: their cache pings are held back
 	machines             map[string]*machineConn
+	retiringMachines     map[string]map[string]*machineConn
 	spawnMu              sync.Mutex
 	spawnKeys            map[string]string
 	usageWatchMu         sync.Mutex
@@ -176,7 +176,7 @@ type Server struct {
 func New(db *store.Store) *Server {
 	socketCtx, socketCancel := context.WithCancel(context.Background())
 	s := &Server{Store: db, Auth: auth.NewService(db), PollInterval: 50 * time.Millisecond, WriteTimeout: 5 * time.Second, QueueSize: 32, MachinePingInterval: 15 * time.Second, SessionCheckInterval: 30 * time.Second,
-		Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, machines: make(map[string]*machineConn), spawnKeys: make(map[string]string), CopilotFlow: providers.NewCopilotFlow(), socketCtx: socketCtx, socketCancel: socketCancel, sockets: make(map[*websocket.Conn]struct{})}
+		Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}, machines: make(map[string]*machineConn), retiringMachines: make(map[string]map[string]*machineConn), spawnKeys: make(map[string]string), CopilotFlow: providers.NewCopilotFlow(), socketCtx: socketCtx, socketCancel: socketCancel, sockets: make(map[*websocket.Conn]struct{})}
 	s.Auth.UserHook = s.noteTelemetryUser
 	s.Presence = newHumanPresence()
 	s.Auth.ActivityHook = s.Presence.Touch

@@ -8,7 +8,6 @@ export const agentIsolation = {
   canEdit: false,
   warmIdleMinutes: 5, // how long agents are kept warm after a turn (5 until the owner saves another, 0 is off); only the owner changes it
   canEditWarm: false,
-  drainGraceMinutes: 5, // how long a local supervisor that must be replaced is waited for before its turns are interrupted (0 waits without limit); owner only
   codexWarmEnabled: false, // experimental opt-in; absent on an older server means off
   keepAlive: { enabled: true, claude_minutes: 50, codex_minutes: 10, stop_after_hours: 24 }, // the cache keep-alive: pings that keep an idle agent's prompt cache
   listeners: new Set(),
@@ -22,7 +21,6 @@ export const agentIsolation = {
     this.canEdit = !!body?.can_edit;
     if (typeof body?.warm_idle_minutes === 'number' && Number.isFinite(body.warm_idle_minutes)) this.warmIdleMinutes = body.warm_idle_minutes; // a server that says none leaves the default
     this.canEditWarm = !!body?.can_edit_warm;
-    if (typeof body?.supervisor_drain_grace_minutes === 'number' && Number.isFinite(body.supervisor_drain_grace_minutes)) this.drainGraceMinutes = body.supervisor_drain_grace_minutes; // an older server says none
     this.codexWarmEnabled = !!body?.codex_warm_enabled;
     if (body?.keep_alive) this.keepAlive = { ...this.keepAlive, ...body.keep_alive };
     for (const listener of this.listeners) listener(this);
@@ -44,11 +42,6 @@ export const agentIsolation = {
   },
   async saveWarm(minutes) {
     const body = await request('/api/agent-isolation', { method: 'PUT', body: { warm_idle_minutes: Number(minutes) } });
-    this.apply(body);
-    return body;
-  },
-  async saveDrainGrace(minutes) {
-    const body = await request('/api/agent-isolation', { method: 'PUT', body: { supervisor_drain_grace_minutes: Number(minutes) } });
     this.apply(body);
     return body;
   },

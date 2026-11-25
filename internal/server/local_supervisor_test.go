@@ -109,7 +109,7 @@ func TestLocalSupervisorMismatchPausesDispatchAndOffersRestart(t *testing.T) {
 	}
 }
 
-func TestUpgradedSupervisorKeepsDispatchUntilServerRestart(t *testing.T) {
+func TestUpgradedSupervisorWaitsForMatchingServerBuild(t *testing.T) {
 	f := newFixture(t)
 	f.srv.SetLocalSupervisorID(f.machineID)
 	var cancelled atomic.Int32
@@ -143,15 +143,15 @@ func TestUpgradedSupervisorKeepsDispatchUntilServerRestart(t *testing.T) {
 	if cancelled.Load() != 1 {
 		t.Fatal("new supervisor did not cancel the legacy drain")
 	}
-	if _, err := f.srv.machineForDispatch(f.machineID); err != nil {
-		t.Fatalf("dispatch paused for upgraded supervisor: %v", err)
+	if _, err := f.srv.machineForDispatch(f.machineID); err != ErrMachineUnavailable {
+		t.Fatalf("dispatch accepted a mismatched build: %v", err)
 	}
 	machine, err := f.db.MachineByID(t.Context(), f.machineID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	row := f.srv.machineRow(machine)
-	if !row.UpgradeRequired || row.RestartPending {
+	if !row.UpgradeRequired || !row.RestartPending {
 		t.Fatalf("upgrade status: %+v", row)
 	}
 	response := f.request("POST", "/api/machines/"+f.machineID+"/supervisor/restart", nil, true)

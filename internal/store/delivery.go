@@ -106,6 +106,23 @@ func (s *Store) TurnBinding(ctx context.Context, turnID string) (agentID string,
 	return
 }
 
+// TurnOwner identifies the supervisor instance that accepted a turn.
+func (s *Store) TurnOwner(ctx context.Context, turnID string) (string, error) {
+	var owner sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT journal_id FROM turn WHERE id=?`, turnID).Scan(&owner)
+	return owner.String, err
+}
+
+// AgentOpenTurnOwner is the journal holding an agent's dispatched open turn.
+func (s *Store) AgentOpenTurnOwner(ctx context.Context, agentID string) (string, error) {
+	var owner sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT journal_id FROM turn WHERE agent_id=? AND exec IN ('pending','running') AND journal_id IS NOT NULL LIMIT 1`, agentID).Scan(&owner)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return owner.String, err
+}
+
 func (s *Store) TurnMode(ctx context.Context, turnID string) (string, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return "", err

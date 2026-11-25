@@ -63,8 +63,9 @@ for you.
 - The **server** owns the truth: projects, rooms, messages, people, agents,
   turns, the inbox and every permission check.
 - A **supervisor** runs on each machine. It starts a harness process per turn,
-  keeps a durable journal of what ran, and reports back over one multiplexed
-  WebSocket. The server starts one for its own machine; other machines pair
+  keeps a durable journal of what ran, and reports back over a multiplexed
+  WebSocket. During replacement, old and new instances use separate journals
+  and connections so current work can finish while new work starts. The server starts one for its own machine; other machines pair
   with `aimebu supervisor`.
 - A **harness** adapter knows how to drive one tool (start, resume, parse the
   structured answer, report usage). A managed agent talks to aimebu only

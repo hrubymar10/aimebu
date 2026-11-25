@@ -24,6 +24,11 @@ type ReceiptRecord struct {
 // of non-start. A journaled but unfinished turn remains uncertain, never
 // silently requeued after a lost accepted ack.
 func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID string, capabilitiesJSON []byte, open map[string]JournalTurn) ([]ReceiptRecord, error) {
+	return s.ReconcileMachineHelloWithRole(ctx, machineID, journalID, capabilitiesJSON, open, true)
+}
+
+// ReconcileMachineHelloWithRole leaves machine-wide discovery to the active instance.
+func (s *Store) ReconcileMachineHelloWithRole(ctx context.Context, machineID, journalID string, capabilitiesJSON []byte, open map[string]JournalTurn, active bool) ([]ReceiptRecord, error) {
 	if journalID == "" {
 		return nil, errors.New("missing supervisor journal identity")
 	}
@@ -178,8 +183,10 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 				}
 			}
 		}
-		if _, err := tx.Exec(`UPDATE machine SET journal_id=?,capabilities_json=? WHERE id=?`, journalID, string(capabilitiesJSON), machineID); err != nil {
-			return err
+		if active {
+			if _, err := tx.Exec(`UPDATE machine SET journal_id=?,capabilities_json=? WHERE id=?`, journalID, string(capabilitiesJSON), machineID); err != nil {
+				return err
+			}
 		}
 		for _, journaled := range open {
 			var resultJSON, digest string

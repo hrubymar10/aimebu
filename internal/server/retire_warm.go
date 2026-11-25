@@ -37,14 +37,11 @@ func (s *Server) retireHostWarm(ctx context.Context, tool string) (release func(
 	if err != nil {
 		return release, err
 	}
-	machine, err := s.machineForID(host.ID)
-	if err != nil {
+	machines := s.machineConnections(host.ID)
+	if len(machines) == 0 {
 		if s.hostMayHaveWarm(ctx, host) {
 			return release, errors.New("the host's supervisor is not connected, so whether it keeps agents warm cannot be checked: reconnect it, then try again")
 		}
-		return release, nil
-	}
-	if !machine.supportsWarm {
 		return release, nil
 	}
 	s.kaSwitchMu.Lock()
@@ -63,14 +60,27 @@ func (s *Server) retireHostWarm(ctx context.Context, tool string) (release func(
 			s.kaSwitchMu.Unlock()
 			pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			s.sendKeepAlivePause(pushCtx, machine)
+			for _, machine := range machines {
+				if machine.supportsWarm {
+					s.sendKeepAlivePause(pushCtx, machine)
+				}
+			}
 		})
 	}
 	// The hold goes out before the request, on the same connection, so the supervisor applies it before it looks for a ping to end.
-	s.sendKeepAlivePause(ctx, machine)
-	if err := s.askRetireWarm(ctx, machine, tool); err != nil {
-		release()
-		return func() {}, err
+	for _, machine := range machines {
+		if machine.supportsWarm {
+			s.sendKeepAlivePause(ctx, machine)
+		}
+	}
+	for _, machine := range machines {
+		if !machine.supportsWarm {
+			continue
+		}
+		if err := s.askRetireWarm(ctx, machine, tool); err != nil {
+			release()
+			return func() {}, err
+		}
 	}
 	return release, nil
 }
@@ -154,21 +164,34 @@ func (s *Server) noteWarmSeen(machineID string, count int) {
 func (s *Server) applyWarmCount(c *machineConn, seq uint64, count int, raiseOnly bool) bool {
 	s.warmSeenMu.Lock()
 	defer s.warmSeenMu.Unlock()
-	if current, err := s.machineForID(c.id); err != nil || current != c {
+	if current, err := s.machineForOwner(c.id, c.journalID); err != nil || current != c {
 		return false
 	}
-	held := s.warmSeen[c.id]
+	if s.warmByInstance == nil {
+		s.warmByInstance = make(map[string]map[string]warmSeenEntry)
+	}
+	if s.warmByInstance[c.id] == nil {
+		s.warmByInstance[c.id] = make(map[string]warmSeenEntry)
+	}
+	held := s.warmByInstance[c.id][c.journalID]
 	if held.conn == c && seq != 0 && seq <= held.seq {
 		return true // a newer number is already held
 	}
 	if raiseOnly && held.count > count {
 		count = held.count
 	}
-	if err := s.setWarmSeenLocked(c.id, warmSeenEntry{count: count, conn: c, seq: seq}); err != nil {
+	sum := count
+	for journalID, entry := range s.warmByInstance[c.id] {
+		if journalID != c.journalID {
+			sum += entry.count
+		}
+	}
+	if err := s.setWarmSeenLocked(c.id, warmSeenEntry{count: sum, conn: c, seq: seq}); err != nil {
 		log.Printf("machine %s: its last warm report was not saved: %v", c.id, err)
 		telemetry.ReportError(context.Background(), "machine", fmt.Errorf("its last warm report was not saved: %w", err))
 		return false
 	}
+	s.warmByInstance[c.id][c.journalID] = warmSeenEntry{count: count, conn: c, seq: seq}
 	return true
 }
 
@@ -258,6 +281,7 @@ func (s *Server) handleWarmClaim(c *machineConn, frame protocol.Frame) {
 func (s *Server) forgetWarmSeen(ctx context.Context, machineID string) {
 	s.warmSeenMu.Lock()
 	delete(s.warmSeen, machineID)
+	delete(s.warmByInstance, machineID)
 	s.warmSeenMu.Unlock()
 	if err := s.Store.DeleteGlobalSettingValue(ctx, warmSeenKeyPrefix+machineID); err != nil {
 		log.Printf("machine %s: its last warm report was not removed: %v", machineID, err)
@@ -388,6 +412,11 @@ func (s *Server) pushAgentSettings(ctx context.Context) {
 	machines := make([]*machineConn, 0, len(s.machines))
 	for _, c := range s.machines {
 		machines = append(machines, c)
+	}
+	for _, retiring := range s.retiringMachines {
+		for _, c := range retiring {
+			machines = append(machines, c)
+		}
 	}
 	s.machineMu.Unlock()
 	for _, c := range machines {

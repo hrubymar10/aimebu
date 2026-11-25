@@ -2219,6 +2219,10 @@ INSERT INTO supervisor_instance (machine_id,journal_id,state,first_seen_at,last_
   FROM machine WHERE journal_id IS NOT NULL AND journal_id<>'';
 CREATE INDEX turn_open_journal ON turn(journal_id) WHERE exec IN ('pending','running');
 CREATE INDEX command_job_open_journal ON command_job(machine_id,journal_id) WHERE state IN ('queued','running');
+`}, {141, `
+-- The replacement grace is no longer a setting: normal retirement waits for
+-- all work owned by the retiring instance.
+DELETE FROM global_setting WHERE key='supervisor_drain_grace_seconds';
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

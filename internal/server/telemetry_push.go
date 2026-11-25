@@ -53,6 +53,13 @@ func (s *Server) pushTelemetry(ctx context.Context) {
 			machines = append(machines, machine)
 		}
 	}
+	for _, retiring := range s.retiringMachines {
+		for _, machine := range retiring {
+			if machine.supportsTelemetryConfig {
+				machines = append(machines, machine)
+			}
+		}
+	}
 	s.machineMu.Unlock()
 	for _, machine := range machines {
 		_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.TelemetryConfig, Telemetry: settings})

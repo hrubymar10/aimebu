@@ -147,8 +147,6 @@ func (s *Server) agentSwitchAction(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if machine, err := s.machineForID(card.MachineID); err == nil {
-		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: card.Generation, DesiredRev: card.DesiredRev, DesiredState: card.Desired})
-	}
+	_ = s.sendMachineControl(card.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: card.Generation, DesiredRev: card.DesiredRev, DesiredState: card.Desired})
 	writeJSON(w, 200, card)
 }

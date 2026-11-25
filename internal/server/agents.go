@@ -1379,7 +1379,16 @@ func (s *Server) sendPendingSpawn(ctx context.Context, machine *machineConn, p s
 	if err != nil {
 		return err
 	}
-	return machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Spawn, ReqID: fmt.Sprintf("%s/%d", p.AgentID, p.Generation), AgentID: p.AgentID, Generation: p.Generation, DesiredRev: p.DesiredRev, AgentKey: key, DockerOnly: dockerOnly, CheckoutPath: p.CheckoutPath, Agent: &adapter.AgentSpec{ID: p.AgentID, Tool: p.Tool, Variant: p.Variant, LauncherID: p.LauncherID, Model: p.Model, Provider: p.Provider}})
+	machine.keysMu.Lock()
+	defer machine.keysMu.Unlock()
+	if err := machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Spawn, ReqID: fmt.Sprintf("%s/%d", p.AgentID, p.Generation), AgentID: p.AgentID, Generation: p.Generation, DesiredRev: p.DesiredRev, AgentKey: key, DockerOnly: dockerOnly, CheckoutPath: p.CheckoutPath, Agent: &adapter.AgentSpec{ID: p.AgentID, Tool: p.Tool, Variant: p.Variant, LauncherID: p.LauncherID, Model: p.Model, Provider: p.Provider}}); err != nil {
+		return err
+	}
+	if machine.keys == nil {
+		machine.keys = make(map[string]bool)
+	}
+	machine.keys[p.AgentID] = true
+	return nil
 }
 
 func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn) error {
@@ -1550,12 +1559,9 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	_ = s.sendMachineControl(card.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
 	machine, err := s.machineForID(card.MachineID)
 	if err == nil {
-		machine.boundMu.Lock()
-		machine.bound[id] = updated.Generation
-		machine.boundMu.Unlock()
-		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
 		if updated.Desired == "active" {
 			if pending, ok, err := s.Store.PendingSpawnByID(r.Context(), id); err == nil && ok {
 				_ = s.sendPendingSpawn(r.Context(), machine, pending)
@@ -1764,9 +1770,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, current)
 		return
 	}
-	if machine, err := s.machineForID(first.MachineID); err == nil {
-		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: first.Generation, DesiredRev: first.DesiredRev, DesiredState: first.Desired})
-	}
+	_ = s.sendMachineControl(first.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: first.Generation, DesiredRev: first.DesiredRev, DesiredState: first.Desired})
 	writeJSON(w, 202, first)
 }
 

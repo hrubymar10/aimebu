@@ -777,7 +777,7 @@ func TestHelloRequeuesTurnNeverJournaled(t *testing.T) {
 	}
 }
 
-func TestReplacedJournalNeverRequeuesOpenTurn(t *testing.T) {
+func TestNewJournalPreservesAnotherInstancesOpenTurn(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	agent, turn, note, _ := f.execution(t)
@@ -794,8 +794,8 @@ func TestReplacedJournalNeverRequeuesOpenTurn(t *testing.T) {
 	conn := f.dialMachineWithJournal(t, "replacement-journal", nil)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	state, err := f.db.DeliveryState(ctx, turn.ID)
-	if err != nil || state.Exec != "lost" || state.Outcome != "unknown" || state.NoteState != "unknown" || !state.RecoveryBlock {
-		t.Fatalf("replaced journal state=%+v %v", state, err)
+	if err != nil || state.Exec != "pending" || state.Outcome != "none" || state.NoteState != "dispatched" || state.RecoveryBlock {
+		t.Fatalf("other instance's turn changed: %+v %v", state, err)
 	}
 	owner, err := f.db.UserByLogin(ctx, "owner")
 	if err != nil {
@@ -811,8 +811,8 @@ func TestReplacedJournalNeverRequeuesOpenTurn(t *testing.T) {
 			visible = true
 		}
 	}
-	if !visible {
-		t.Fatal("journal replacement produced no visible event")
+	if visible {
+		t.Fatal("new instance marked another instance's turn lost")
 	}
 }
 

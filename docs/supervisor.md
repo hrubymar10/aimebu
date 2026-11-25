@@ -17,121 +17,23 @@ server is absent, the command starts a replacement from the CLI environment.
 If a server holds the config directory but does not answer the request, the
 command fails; retry it or restart the server. It never replaces that server's
 supervisor from the CLI environment.
-The running server compares the supervisor's build and a fingerprint of PATH,
-turn limits, credential variables, and harness config homes. A mismatch shows
-"restart pending" in Machines, Health and `doctor --live`, holds new local
-dispatch, and replaces the supervisor after its active turns and commands
-finish. That wait is bounded for turns: after the owner's **drain grace**
-(Settings → Agents → Agent isolation, "Supervisor replacement grace
-(minutes)", 5 until the owner saves another, at most 1440, 0 waits without
-limit; `supervisor_drain_grace_minutes` on `GET`/`PUT /api/agent-isolation`,
-owner only to change) the server interrupts every ordinary turn the old
-supervisor still runs, with a `turn_interrupt` frame and the `continue`
-disposition (see the turn interrupt below). Each of those turns ends
-interrupted, the supervisor goes idle and exits, and the turn is continued by
-itself on the new supervisor with the note `your previous turn was interrupted
-(the turn was interrupted on request); check state and continue`. That
-continuation does not count as the chain's one automatic continuation. The
-grace starts when the server first sees the mismatch (after a server restart,
-at the supervisor's first connection) and reconnects do not extend it. A
-correction, diagnostic or handoff turn is waited for as before. A supervisor
-that does not announce `supports_turn_interrupt` (a build from before the
-frame, which is what a newer server finds running right after an upgrade)
-cannot be told to cut one turn, so when the grace is over the server replaces
-it the way Restart now does: it remembers the turns the supervisor runs,
-signals the process to stop, and each of those turns ends interrupted and
-gets the ordinary one auto-continue on the new supervisor. This cuts every
-turn it runs, of whatever kind. A supervisor that was asked to retire, whose
-grace is over, and which has held its journal without a connection for 30
-seconds more is out of reach of any frame and is replaced the same way. A
-grace of 0 turns both off (and with them the whole bound: the supervisor is
-waited for). Every drain ends the same way once its turns were interrupted:
-the server asks the supervisor to exit (the stop signal of Restart now), so a
-running `run_command` job no longer holds the swap.
-**The bounded handover.** A supervisor that was asked to exit (by the drain,
-by Restart now, or by the manager) gets 30 seconds to release its journal;
-then the server sends it SIGTERM, and 15 seconds after that it is killed with
-SIGKILL, so that its replacement can start. Every signal goes only to the
-process the exit request went to: the pid must still hold the journal and
-still have the start time it had when the exit was requested, so a pid the
-system has given to another process since is never signalled (the handover
-then logs that and stops). This holds for whatever build the old supervisor
-is. It is killed
-together with what it started: every process group one of its child processes
-leads (each harness CLI and each `run_command` job runs in a group of its
-own) and its other child processes, except the detachable `run_command`
-jobs, which survive this kill too and are adopted by the replacement: a job
-is spared only when its group leader is verified (it runs the job's wrapper
-with the log path of a job the server counts as open on the machine, leads a
-session of its own and started no earlier than the job did), and one that
-cannot be verified is killed and ends `lost_in_swap`. On a host whose `ps`
-has no `lstart` (BusyBox), the tree is read from `pid`, `ppid` and `pgid`
-alone, no job can be verified and none is spared (every job is killed with
-the tree, as before jobs were spared), and the log says so. So nothing of the old supervisor on the
-host keeps writing in a checkout while a turn is continued on the new one. A
-process inside a container is not a child of the supervisor: killing the host
-side does not stop it, and its launcher ends it only when its session
-heartbeat sweeps it, about fifteen seconds after the host side is gone. For a
-container turn the no-overlap guarantee therefore holds only after that
-sweep: for up to about fifteen seconds the old process can still write in the
-checkout while the new supervisor continues the turn. The journal keeps what its turns reported, and
-the replacement delivers it. A supervisor asked to retire at idle counts a turn as work until its
-`process` frame is sent, not only until it frees its agent for the next delivery (which comes just
-before that frame), so a connected supervisor reports each turn's end itself before it exits.
-**`run_command` jobs survive a swap.** A native job runs in a session of its
-own and writes its log and exit marker without the supervisor (see "Long
-commands outside a turn" below), so a supervisor that retires or is replaced
-does not wait for it: it lets go of it and exits, the job keeps running, and
-the replacement adopts it from the journal and reports its real end (exit
-code, output) to the agent. Only a job that cannot be left behind holds or is
-ended by the exit: a job in a container (its output passes through the
-launcher the supervisor runs) and a job started by an older build (its output
-passes through that supervisor). Asked to exit for a replacement, a supervisor
-of this build ends such a job (SIGTERM to its group, SIGKILL after the grace)
-and records the end with exit code `-1` and the reason `supervisor_replaced`:
-the job is `cancelled` with the error `supervisor_replaced: the supervisor was
-replaced while the command ran; run it again if you still need it`, and the
-wake note reaches the agent (replayed by the replacement if the old connection
-was already gone). An older build ends its jobs as cancelled without the
-reason. A job whose process the replacement finds gone without an exit marker
-(it died with a supervisor that had to be killed and whose job could not be
-verified for the tree kill to spare it, or with one that crashed) is `lost` with exit code `-1` and the error
-`lost_in_swap: …`, and its agent is woken. Between the old supervisor's exit and the
-replacement's connection the machine is not connected: a `run_command` call in
-that window is refused (`command_refused`, machine unavailable) and can simply
-be made again once the replacement is up. Only `run_command` jobs are adopted:
-a process an agent started from its own shell (with `nohup`, in the
-background) belongs to its harness process group (or its harness container
-session) and can end with it when the swap interrupts its turn, with no note.
-While its server connection is down, the supervisor logs the failed sends
-(`machine socket disconnected`) once, with the reconnect interval, and one line
-with their count once the connection is back. The drain also leaves
-alone the turn of an agent that a team flow change in progress holds (the
-change interrupts it its own way), and it never replaces an interrupt somebody
-already asked for: that turn is only sent the frame again and is settled as
-the first request said. A long command started with
-`run_command` keeps the old supervisor up, and local dispatch held, only
-until the grace is over: the handover ends it (see above). The
-owner's Restart now action interrupts turns and commands at once and gets the
-ordinary one auto-continue. A crashed local supervisor is respawned with backoff.
-The server log tells how a swap goes, one line per step, each starting with
-`supervisor swap:`: `local supervisor restart pending` (the mismatch),
-`drain grace of Ns is over, M turn(s) still running`, `drain over; asking the
-supervisor to exit`, `retire requested: pid P, stop signal …, M open turn(s)`,
-`waiting for supervisor pid P to exit (30s)`, then `old supervisor pid P exited
-… after it was told to stop`, or `supervisor pid P did not exit within 30s; sent
-SIGTERM, waiting 15s` and `supervisor pid P did not exit 15s after SIGTERM;
-sending SIGKILL to it and its child processes` (or `pid P now belongs to another
-process …; not sending …` when its start time changed), `started supervisor
-pid P`, `supervisor pid P connected` and `local supervisor connected: build B`
-(the build is logged when it changes, not on every reconnect). The lines carry
-no paths or secrets.
-While the restart is pending, new local spawns wait for the replacement. If a
-retiring supervisor reconnects to a server that now matches it, it resumes
-accepting work after that server's acknowledgement.
-If the executable on disk is newer than the running server, the new supervisor
-keeps serving work. Machines, Health and `doctor --live` ask you to restart the
-server to finish the upgrade; repeated supervisor replacements would not help.
+The server compares a local supervisor instance's build and turn environment
+fingerprint with its own. On a remote machine the newest connected matching
+build is active, or the newest connected hello when no build matches; remote
+environment fingerprints are host-specific and are not compared. One machine may have several supervisor instances,
+each with its own journal and WebSocket connection. The matching instance takes
+new turns and commands. A mismatched or drain-only instance retires: it accepts
+no new work, retires idle warm processes, and keeps its current turns and all
+command jobs, including native jobs, until their results and acknowledgements
+are complete. A new matching instance can serve other agents immediately.
+For each agent, the server waits for the retiring instance's open turn and warm
+process to end before sending that agent's next turn to the new instance.
+There is no replacement grace or automatic interruption of a turn during a
+normal swap. Restart now remains an explicit interruption. A bounded handover
+is reserved for a disconnected or empty instance that does not exit. An
+instance that crashes with open work is recovered from its own journal.
+If the executable on disk is newer than the running server, restart the
+server to use that build; repeated supervisor replacements do not help.
 After 24 hours without
 a server connection and with no active turn or command, it exits by itself.
 Its output is in `supervisor/aimebu.log`.

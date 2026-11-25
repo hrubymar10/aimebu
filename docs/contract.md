@@ -613,17 +613,19 @@ Roles, agents
 Machines and workspace
 - **machine**(id, name, key_hash, approved, is_host, revoked_at?, last_seen?,
   supervisor_version?, journal_id?, capabilities_json, harnesses_json) — the host machine is
-  created approved at bootstrap; `journal_id` records the last accepted
-  supervisor journal identity. The capability reports from the most recent
-  `hello` are stored here and matched when admitting a turn. Only one machine
+  created approved at bootstrap; `journal_id` records the active supervisor
+  journal identity. Only the active instance's capability reports are stored
+  here and matched when admitting a turn. Only one machine
   is the host; remote machines start pending and require owner approval.
 - **supervisor_instance**(machine_id, journal_id, build, environment,
   state[active|retiring|gone], first_seen_at, last_seen_at, gone_at?) — PK
   (machine_id, journal_id) (migration 140). A machine can run several
   supervisor processes at once, local or remote, each with its own journal; an
   instance is named by its `journal_id` (the one `hello` carries). `build` and
-  `environment` are what its `hello` reported. A `hello` creates the instance
-  active or makes it active again; `retiring` is an instance that finishes the
+  `environment` are what its `hello` reported. A local hello matching the
+  server's build and environment becomes active. A remote hello becomes active
+  when its build matches, or when no connected build matches. A `drain_only`
+  hello never becomes active. `retiring` is an instance that finishes the
   work it holds; `gone` is one whose journal is finished or lost, and marking
   one gone loses only the open turns and jobs it owns. The migration creates one
   active instance per machine that has a `journal_id` and gives every open turn
@@ -1553,48 +1555,25 @@ connection when it has no active turn or command. `aimebu supervisor status`
 and `restart` inspect or replace it; `aimebu server stop --with-supervisor`
 stops it explicitly. Restart interrupts active turns and waits up to 40
 seconds for their journal writes. The supervisor's hello includes its build
-version and a digest of the environment that affects turns. A mismatch marks
-restart pending, holds new local dispatch, and retires the supervisor after
-its running turns and commands finish. The server starts the replacement from
-its own environment. The wait for turns is bounded by the owner's drain grace
-(global setting `supervisor_drain_grace_seconds`, default 300, `0` waits
-without limit; `supervisor_drain_grace_minutes` on `/api/agent-isolation`,
-0 to 1440). The grace starts when the mismatch is first seen and is not
-extended by the supervisor's reconnects. When it is over, a supervisor that
-announced `supports_turn_interrupt` is sent a turn interrupt (§3.4) with
-purpose `supervisor_drain` and disposition `continue` for every ordinary turn
-it still runs: the turn ends interrupted, the supervisor goes idle and exits,
-and the turn is continued by itself on the replacement, outside the one
-automatic continuation of its chain. A correction, diagnostic or handoff turn
-is left to finish. The drain yields to whoever already decided about a turn:
-the turn of an agent that is part of a team flow change in progress
-(`draining` or `applying`) is not touched, since the change has its own
-interrupt and disposition, and a turn that already has a
-`turn_interrupt_requested` event keeps it (the first recorded disposition
-wins; the drain only sends the frame again). A team flow change's own
-interrupt does not yield: its `requeue` replaces a `continue` the drain
-recorded before the change began. A supervisor that did not announce
-`supports_turn_interrupt` is stopped and started again when the grace is
-over. Either way the drain then ends with the bounded handover, whatever the
-old supervisor's build: the server asks it to exit (the stop signal of
-Restart now), waits 30 seconds for it to release the journal, sends SIGTERM,
-and 15 seconds later kills it and the processes it started with SIGKILL. A
-signal goes only to the process the exit was requested of, verified by pid
-and process start time; a reused pid is never signalled. A command outside a
-turn no longer holds the swap: a native one runs in a session of its own with
-its own log writer and exit marker, so the old supervisor lets go of it on
-that exit and the replacement adopts it from the journal and reports its real
-end. A command that cannot be left behind (one in a container, or started by
-an older build) is ended on that exit (or killed with the supervisor), and
-this build reports each such end with `exit_code` -1 and
-`reason: supervisor_replaced` (§4.1), which makes the job `cancelled` with that
-reason and wakes its agent. An adopted command whose process is gone without
-an exit marker ends `lost` with `exit_code` -1 and `reason: lost_in_swap`. A grace of `0` turns the
-bound off. A turn whose process in a
-container is not confirmed gone holds the supervisor for its quarantine
-(§4.2) first. The owner can choose Restart now to interrupt current
-work and trigger the ordinary auto-continue. A crashed detached supervisor is
-respawned while the server runs. If the executable on disk is newer than the
+version and a digest of the environment that affects turns. Each supervisor
+instance has its own journal and connection, identified by `journal_id`. A
+matching instance takes new work; a mismatched or `drain_only` instance retires.
+The newest matching hello becomes active and the previous active instance
+retires. On a remote machine, matching compares only the build: the newest
+connected matching hello wins, or the newest connected hello when no build
+matches. The environment fingerprint is host-specific and is not compared
+for remote machines. The local machine compares build and environment.
+Retiring instances keep their open turns and command jobs until they
+finish, including native jobs. They retire idle warm processes at once. A new
+turn for an agent waits until no retiring instance owns that agent's open turn
+or reports its warm process. New work for other agents proceeds on the active
+instance. There is no replacement grace or automatic turn interruption during
+normal retirement. The owner can choose Restart now to interrupt current work
+and trigger the ordinary auto-continue. The bounded handover remains for an
+instance that loses its connection or remains alive after becoming empty.
+A crashed instance is recovered from its own journal.
+Migration 141 removes the saved replacement grace value.
+If the executable on disk is newer than the
 running server, its supervisor keeps dispatching and the server reports that
 it must restart to finish the upgrade. A restart request from the CLI fails
 when that server holds the writer lock but does not answer; it never replaces
@@ -1612,7 +1591,7 @@ it never silently reruns a turn with uncertain effects.
 ## 4. Wire protocol (versioned, `v:2`)
 
 ### 4.1 Machine-level frames (machine key)
-- M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, supports_retire_at_idle?,
+- M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, drain_only?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, supports_handoff_outcome?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
@@ -1624,9 +1603,9 @@ it never silently reruns a turn with uncertain effects.
   are the long commands outside a turn this supervisor still runs and the ends
   it has not been acknowledged for.
 - S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
-  its running turns and the commands it cannot leave to its replacement, and
-  exit. The wait is bounded by the drain
-  grace and the handover (§3), not by the supervisor's work.
+  its running turns and all command jobs, retire idle warm processes, and
+  exit after its journaled acknowledgements are complete. Normal work has no
+  replacement deadline.
 - `supports_turn_interrupt=true` in `hello` says the supervisor cuts one
   running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
   running. The server sends the frame only to a supervisor that says so; for
@@ -1654,7 +1633,7 @@ it never silently reruns a turn with uncertain effects.
   environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over it.
 - `hello_ack` also carries `agent_keys[{agent_id, generation, key}]`: a new `aak_` key for each agent the supervisor should run and, per its
   `held_keys`, holds no key for (it keeps keys in memory only, so a restarted one holds none). Issuing one replaces the agent's stored key hash, so the
-  key the old process held stops authenticating. Only a supervisor that announced `supports_agent_keys=true` is sent any. `spawn` and `deliver`
+  key the old process held stops authenticating. A connecting instance is not granted a key for an agent still held by a retiring instance. Before that agent's first delivery on the active instance, S→M `agent_keys{v,agent_keys[{agent_id,generation,key}]}` grants its key. Only a supervisor that announced `supports_agent_keys=true` is sent any. `spawn` and `deliver`
   carry `docker_only` when the instance runs agents only in docker (see [the supervisor](supervisor.md)); a supervisor refuses a native launcher then.
 - S→M `harness_set{v, req_id, harness_setting:{tool,variant,enabled,override_path}}`;
   M→S `harness_result{v,req_id,harness?,code?,message?}` validates and applies

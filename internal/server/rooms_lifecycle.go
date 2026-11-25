@@ -95,18 +95,13 @@ func (s *Server) sendRoomControls(ctx context.Context, controls []store.AgentCar
 		if err != nil {
 			continue
 		}
-		machine, err := s.machineForID(card.MachineID)
-		if err != nil {
-			continue
-		}
-		machine.boundMu.Lock()
-		machine.bound[control.ID] = control.Generation
-		machine.boundMu.Unlock()
-		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: control.ID,
+		_ = s.sendMachineControl(card.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: control.ID,
 			Generation: control.Generation, DesiredRev: control.DesiredRev, DesiredState: control.Desired})
 		if control.Desired != "stopped" {
-			if pending, ok, err := s.Store.PendingSpawnByID(ctx, control.ID); err == nil && ok {
-				_ = s.sendPendingSpawn(ctx, machine, pending)
+			if machine, err := s.machineForID(card.MachineID); err == nil {
+				if pending, ok, err := s.Store.PendingSpawnByID(ctx, control.ID); err == nil && ok {
+					_ = s.sendPendingSpawn(ctx, machine, pending)
+				}
 			}
 		}
 	}

@@ -6,7 +6,6 @@ import { agentIsolation } from '../../agent-isolation.js';
 const READ_ONLY = 'Only the owner or an admin can change this.';
 const WARM_DESC = 'After a turn, an agent\'s harness stays running for this many minutes, so a message that arrives in the window skips the start (a few seconds) and the agent answers faster. After the window it goes back to sleep and the next turn starts it again. Each warm agent holds memory (roughly 0.3 GB for Claude Code), and when the machine runs low the longest-idle one is put to sleep first. 5 minutes unless you set another; 0 turns it off. Claude Code uses this window, and Codex uses it when its experimental setting is enabled.';
 const CODEX_WARM_DESC = 'Keep a Codex process ready between turns during the warm window. Experimental and off by default. Works with a ChatGPT subscription once token auto-refresh is on (Settings → Usages), or with an API key; otherwise the agent runs cold. 0 warm minutes turns it off for every agent.';
-const DRAIN_DESC = 'After the server is updated or its environment changes, the supervisor on this machine has to be replaced, and no local agent gets a new turn until it is. It first waits for running turns to finish. After this many minutes the turns still running are interrupted and continue by themselves on the new supervisor, so one long turn does not hold everyone. Long commands started with run_command are never cut and still keep the old supervisor up until they end. 5 minutes unless you set another; 0 waits without limit.';
 const WARM_OWNER_ONLY = 'Only the owner can change this.';
 const DESC = 'Agents on a native launcher run as the person who runs the supervisor, with that person’s files within reach, including other agents’ working folders. With this on, a native launcher is refused: no new agent is started on one, and an agent already on one gets no turns until it is moved to a Docker launcher. Off by default.';
 
@@ -23,9 +22,6 @@ export function AgentIsolation() {
   const [codexError, setCodexError] = useState('');
   const [codexSaving, setCodexSaving] = useState(false);
   const [warmDraft, setWarmDraft] = useState(null);
-  const [drainError, setDrainError] = useState('');
-  const [drainSaving, setDrainSaving] = useState(false);
-  const [drainDraft, setDrainDraft] = useState(null);
   const writing = useRef(false);
   useLayoutEffect(() => agentIsolation.onChange(() => changed(count => count + 1)), []);
   const canEdit = agentIsolation.canEdit;
@@ -52,16 +48,6 @@ export function AgentIsolation() {
     setWarmSaving(true);
     try { await agentIsolation.saveWarm(minutes); if (alive()) setWarmDraft(null); } catch (failure) { if (alive()) setWarmError(failure.message || 'Could not save'); } finally { writing.current = false; if (alive()) { setWarmSaving(false); changed(count => count + 1); } }
   };
-  const saveDrain = async () => {
-    if (drainDraft === null || writing.current) return;
-    const minutes = Number(drainDraft);
-    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) { setDrainError('Enter a whole number of minutes from 0 to 1440.'); return; }
-    if (minutes === agentIsolation.drainGraceMinutes) { setDrainDraft(null); return; }
-    writing.current = true;
-    setDrainError('');
-    setDrainSaving(true);
-    try { await agentIsolation.saveDrainGrace(minutes); if (alive()) setDrainDraft(null); } catch (failure) { if (alive()) setDrainError(failure.message || 'Could not save'); } finally { writing.current = false; if (alive()) { setDrainSaving(false); changed(count => count + 1); } }
-  };
   const saveCodexWarm = async checked => {
     if (writing.current) return;
     writing.current = true;
@@ -87,11 +73,6 @@ export function AgentIsolation() {
         <input type="checkbox" checked=${agentIsolation.codexWarmEnabled} disabled=${!agentIsolation.canEditWarm || codexSaving}
           title=${agentIsolation.canEditWarm ? undefined : WARM_OWNER_ONLY} onChange=${event => saveCodexWarm(event.currentTarget.checked)} />
       <//>
-      <${SettingsRow} label="Supervisor replacement grace (minutes)" desc=${DRAIN_DESC} id="agent-drain-grace">
-        <input type="number" min="0" max="1440" step="1" value=${drainDraft ?? agentIsolation.drainGraceMinutes} disabled=${!agentIsolation.canEditWarm || drainSaving}
-          title=${agentIsolation.canEditWarm ? undefined : WARM_OWNER_ONLY}
-          onInput=${event => setDrainDraft(event.currentTarget.value)} onBlur=${saveDrain} onKeyDown=${event => { if (event.key === 'Enter') { event.preventDefault(); saveDrain(); } }} />
-      <//>
     <//>
     <p class="settings-intro" role="status">${canEdit ? '' : READ_ONLY}</p>
     <p id="agent-docker-only-error" class="error" role="alert">${error}</p>
@@ -99,6 +80,5 @@ export function AgentIsolation() {
     <p class="settings-intro" role="note" hidden=${agentIsolation.canEditWarm}>${WARM_OWNER_ONLY}</p>
     <p id="agent-warm-idle-error" class="error" role="alert">${warmError}</p>
     <p id="agent-codex-warm-error" class="error" role="alert">${codexError}</p>
-    <p id="agent-drain-grace-error" class="error" role="alert">${drainError}</p>
   `;
 }

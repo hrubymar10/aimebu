@@ -284,12 +284,9 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 		agentID, lookupErr := s.Store.BoundaryAgentID(r.Context(), r.PathValue("item"))
 		if lookupErr == nil {
 			if card, cardErr := s.Store.AgentCardByID(r.Context(), agentID); cardErr == nil {
+				_ = s.sendMachineControl(card.MachineID, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: agentID, Generation: card.Generation,
+					DesiredRev: card.DesiredRev, DesiredState: card.Desired})
 				if machine, machineErr := s.machineForID(card.MachineID); machineErr == nil {
-					machine.boundMu.Lock()
-					machine.bound[agentID] = card.Generation
-					machine.boundMu.Unlock()
-					_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: agentID, Generation: card.Generation,
-						DesiredRev: card.DesiredRev, DesiredState: card.Desired})
 					if pending, ready, spawnErr := s.Store.PendingSpawnByID(r.Context(), agentID); spawnErr == nil && ready {
 						_ = s.sendPendingSpawn(r.Context(), machine, pending)
 					}

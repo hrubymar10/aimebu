@@ -390,10 +390,7 @@ func (s *Server) machineRevocation(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.machineMu.Lock()
-	conn := s.machines[id]
-	s.machineMu.Unlock()
-	if conn != nil {
+	for _, conn := range s.machineConnections(id) {
 		conn.stop()
 	}
 	s.forgetWarmSeen(r.Context(), id)

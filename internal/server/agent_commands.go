@@ -82,7 +82,12 @@ func (s *Server) agentToolCommandRun(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	job := store.CommandJob{AgentID: caller.ID, Generation: agent.Generation, MachineID: agent.MachineID,
+	conn, err := s.machineForDispatch(agent.MachineID)
+	if err != nil {
+		apiError(w, 503, "machine_unavailable", err.Error())
+		return
+	}
+	job := store.CommandJob{AgentID: caller.ID, Generation: agent.Generation, MachineID: agent.MachineID, JournalID: conn.journalID,
 		ProjectID: caller.ProjectID, RoomID: roomID, Label: req.Label, Cmd: req.Cmd, Cwd: req.Cwd,
 		TimeoutSeconds: req.TimeoutSeconds, CheckoutPath: checkout}
 	raw, _ := json.Marshal(job)
@@ -166,7 +171,7 @@ func (s *Server) commandOwned(ctx context.Context, conn *machineConn, jobID, age
 	if err != nil {
 		return store.CommandJob{}, err
 	}
-	if job.MachineID != conn.id || agentID == "" || job.AgentID != agentID {
+	if job.MachineID != conn.id || job.JournalID != "" && job.JournalID != conn.journalID || agentID == "" || job.AgentID != agentID {
 		return store.CommandJob{}, store.ErrForbidden
 	}
 	return job, nil
@@ -231,7 +236,7 @@ func (s *Server) agentToolCommandLog(w http.ResponseWriter, r *http.Request) {
 		maxBytes = value
 	}
 	result, err := s.machineCommand(r.Context(), job.MachineID, protocol.Frame{V: protocol.Version,
-		Type: protocol.CommandLogRead, ReqID: newRequestNonce(), LogPath: job.LogPath, LogMaxBytes: maxBytes}, 30*time.Second)
+		Type: protocol.CommandLogRead, ReqID: newRequestNonce(), JobID: job.ID, LogPath: job.LogPath, LogMaxBytes: maxBytes}, 30*time.Second)
 	if err != nil {
 		apiError(w, 502, "command_log_unavailable", err.Error())
 		return
@@ -267,7 +272,7 @@ func (s *Server) agentToolCommandCancel(w http.ResponseWriter, r *http.Request) 
 		}
 		// Its start is unconfirmed, not refused: the machine may run it already, or be about to (a cancel sent now follows its run
 		// request on the same connection). Best effort: a late start kills it too, and so does the machine's next hello.
-		if conn, err := s.machineForID(job.MachineID); err == nil && conn.supportsCommands {
+		if conn, err := s.machineForOwner(job.MachineID, job.JournalID); err == nil && conn.supportsCommands {
 			_ = conn.send(protocol.Frame{V: protocol.Version, Type: protocol.CommandCancel, ReqID: newRequestNonce(), JobID: job.ID, AgentID: job.AgentID})
 		}
 		writeJSON(w, 200, cancelled)
@@ -388,10 +393,17 @@ func (c *machineConn) commandInContainer(spec protocol.CommandSpec) bool {
 
 // machineCommand asks the agent's machine one question and waits for its answer, like the worktree and agent-log requests do.
 func (s *Server) machineCommand(ctx context.Context, machineID string, frame protocol.Frame, timeout time.Duration) (protocol.Frame, error) {
-	if frame.Type == protocol.CommandRun && machineID == s.localSupervisorID() && s.localSupervisorPending.Load() {
-		return protocol.Frame{}, ErrMachineUnavailable
+	var conn *machineConn
+	var err error
+	if frame.JobID != "" && frame.Type != protocol.CommandRun {
+		job, lookupErr := s.Store.CommandJobByAnyAgent(ctx, frame.JobID)
+		if lookupErr != nil {
+			return protocol.Frame{}, lookupErr
+		}
+		conn, err = s.machineForOwner(machineID, job.JournalID)
+	} else {
+		conn, err = s.machineForDispatch(machineID)
 	}
-	conn, err := s.machineForID(machineID)
 	if err != nil {
 		return protocol.Frame{}, err
 	}
@@ -472,7 +484,7 @@ func (s *Server) sweepUnconfirmedCommands(ctx context.Context) error {
 			continue
 		}
 		replaced := false
-		if conn, err := s.machineForID(job.MachineID); err == nil {
+		if conn, err := s.machineForOwner(job.MachineID, job.JournalID); err == nil {
 			replaced = time.Unix(0, conn.connectedAt.Load()).After(created)
 		}
 		if !replaced && now.Sub(created) < store.CommandUnconfirmedMax {

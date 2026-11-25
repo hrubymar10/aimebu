@@ -29,12 +29,18 @@ var ErrSlowMachine = errors.New("slow machine")
 type machineConn struct {
 	id                         string
 	journalID                  string // the supervisor instance behind this connection
+	build                      string
+	retiring                   bool
+	warmCount                  int
 	keyHash                    string
+	keysMu                     sync.Mutex
+	keys                       map[string]bool
 	conn                       *websocket.Conn
 	sendQueue                  chan protocol.Frame
 	done                       chan struct{}
 	stopOnce                   sync.Once
-	connectedAt                atomic.Int64   // unix nanoseconds when this connection replaced the last one: a request older than it went out on another one
+	connectedAt                atomic.Int64 // unix nanoseconds when this connection replaced the last one: a request older than it went out on another one
+	helloAcked                 atomic.Bool
 	workers                    sync.WaitGroup // helpers may read the store after the socket handler exits
 	bound                      map[string]int
 	boundMu                    sync.RWMutex
@@ -232,14 +238,20 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	if localSupervisor && hello.SupportsRetireAtIdle && s.LocalSupervisorLegacyDrainCancel != nil {
 		s.LocalSupervisorLegacyDrainCancel()
 	}
-	restartPending := localSupervisor && (hello.SupervisorVersion != s.Version || hello.SupervisorEnvironment != s.LocalSupervisorEnvironment)
+	matchingBuild := hello.SupervisorVersion == s.Version
+	restartPending := hello.DrainOnly || localSupervisor && (!matchingBuild || hello.SupervisorEnvironment != s.LocalSupervisorEnvironment)
+	if !localSupervisor && !matchingBuild && !hello.DrainOnly {
+		s.machineMu.Lock()
+		current := s.machines[machineID]
+		restartPending = current != nil && current.build == s.Version
+		s.machineMu.Unlock()
+	}
 	upgradeRequired := false
-	if restartPending && hello.SupervisorVersion != s.Version && s.LocalSupervisorDiskVersion != nil {
+	if localSupervisor && restartPending && hello.SupervisorVersion != s.Version && s.LocalSupervisorDiskVersion != nil {
 		if diskVersion, probeErr := s.LocalSupervisorDiskVersion(); probeErr != nil {
 			log.Printf("local supervisor disk version check: %v", probeErr)
 		} else if diskVersion != s.Version && diskVersion == hello.SupervisorVersion {
 			upgradeRequired = true
-			restartPending = false
 		}
 	}
 	if localSupervisor {
@@ -297,6 +309,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				conn.Close(websocket.StatusPolicyViolation, "invalid journal turn binding")
 				return
 			}
+			owner, err := s.Store.TurnOwner(ctx, turn.TurnID)
+			if err != nil || owner != "" && owner != hello.JournalID {
+				conn.Close(websocket.StatusPolicyViolation, "invalid journal turn owner")
+				return
+			}
 			if _, duplicate := journaled[turn.TurnID]; duplicate {
 				conn.Close(websocket.StatusPolicyViolation, "duplicate journal turn")
 				return
@@ -304,10 +321,12 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			journaled[turn.TurnID] = turnBinding{item.AgentID, item.Generation}
 		}
 	}
-	if err := s.Store.RecordMachineHello(ctx, machineID, hello.SupervisorVersion); err != nil {
-		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the hello: %w", err))
-		conn.Close(websocket.StatusInternalError, "machine state error")
-		return
+	if !restartPending {
+		if err := s.Store.RecordMachineHello(ctx, machineID, hello.SupervisorVersion); err != nil {
+			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the hello: %w", err))
+			conn.Close(websocket.StatusInternalError, "machine state error")
+			return
+		}
 	}
 	open := map[string]store.JournalTurn{}
 	for _, agent := range hello.Agents {
@@ -320,21 +339,18 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "invalid capabilities")
 		return
 	}
-	// The server still runs one supervisor instance per machine: a hello with a journal other than the one accepted before replaces that
-	// instance, so what the earlier one held is lost now, as a journal change always did.
-	if previous, err := s.Store.MachineJournalID(ctx, machineID); err == nil && previous != "" && previous != hello.JournalID {
-		if _, _, err := s.Store.MarkSupervisorInstanceGone(ctx, machineID, previous); err != nil {
-			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: retiring the previous supervisor instance: %w", err))
-			conn.Close(websocket.StatusInternalError, "reconciliation error")
-			return
-		}
-	}
 	if err := s.Store.RecordSupervisorInstance(ctx, machineID, hello.JournalID, hello.SupervisorVersion, hello.SupervisorEnvironment); err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the supervisor instance: %w", err))
 		conn.Close(websocket.StatusInternalError, "machine state error")
 		return
 	}
-	records, err := s.Store.ReconcileMachineHello(ctx, machineID, hello.JournalID, capabilities, open)
+	if restartPending {
+		if err := s.Store.SetSupervisorInstanceState(ctx, machineID, hello.JournalID, "retiring"); err != nil {
+			conn.Close(websocket.StatusInternalError, "instance state error")
+			return
+		}
+	}
+	records, err := s.Store.ReconcileMachineHelloWithRole(ctx, machineID, hello.JournalID, capabilities, open, !restartPending)
 	if err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: reconciliation error: %w", err))
 		conn.Close(websocket.StatusInternalError, "reconciliation error")
@@ -382,32 +398,95 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	if len(probeDirs) > 0 {
 		probeDir = probeDirs[0]
 	}
-	if len(hello.Harnesses) > 0 {
+	if !restartPending && len(hello.Harnesses) > 0 {
 		if err := s.Store.RecordMachineHarnesses(ctx, machineID, hello.Harnesses); err != nil {
 			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the harnesses: %w", err))
 			conn.Close(websocket.StatusInternalError, "harness state error")
 			return
 		}
 	}
-	c := &machineConn{id: machineID, journalID: hello.JournalID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsAgentConversation: hello.SupportsAgentConversationLog, supportsStopReplay: hello.SupportsStopReplay, supportsTurnInterrupt: hello.SupportsTurnInterrupt, supportsAttachmentSave: hello.SupportsAttachmentSave, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsHandoffOutcome: hello.SupportsHandoffOutcome, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
-	c.lastSeen.Store(time.Now().UnixNano())
-	if !c.supportsWarm {
-		s.noteWarmSeen(machineID, 0) // a supervisor that cannot keep anything warm has nothing left running when it drops
+	c := &machineConn{id: machineID, journalID: hello.JournalID, build: hello.SupervisorVersion, retiring: restartPending, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsAgentConversation: hello.SupportsAgentConversationLog, supportsStopReplay: hello.SupportsStopReplay, supportsTurnInterrupt: hello.SupportsTurnInterrupt, supportsAttachmentSave: hello.SupportsAttachmentSave, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsHandoffOutcome: hello.SupportsHandoffOutcome, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c.keys = make(map[string]bool, len(hello.HeldKeys))
+	for _, id := range hello.HeldKeys {
+		c.keys[id] = true
 	}
+	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
-	old := s.machines[machineID]
+	var replaced, retiring *machineConn
+	if existing := s.machines[machineID]; existing != nil && existing.journalID == c.journalID {
+		replaced = existing
+	}
+	if others := s.retiringMachines[machineID]; others != nil {
+		if existing := others[c.journalID]; existing != nil {
+			replaced = existing
+			delete(others, c.journalID)
+		}
+	}
+	if replaced != nil {
+		replaced.warmMu.Lock()
+		c.warm = replaced.warm
+		replaced.warmMu.Unlock()
+	}
 	c.connectedAt.Store(time.Now().UnixNano())
-	s.machines[machineID] = c
+	if c.retiring {
+		if replaced != nil && s.machines[machineID] == replaced {
+			delete(s.machines, machineID)
+		}
+		if s.retiringMachines[machineID] == nil {
+			s.retiringMachines[machineID] = make(map[string]*machineConn)
+		}
+		s.retiringMachines[machineID][c.journalID] = c
+	} else {
+		if previous := s.machines[machineID]; previous != nil && previous != c && previous != replaced {
+			if s.retiringMachines[machineID] == nil {
+				s.retiringMachines[machineID] = make(map[string]*machineConn)
+			}
+			previous.retiring = true
+			s.retiringMachines[machineID][previous.journalID] = previous
+			retiring = previous
+		}
+		s.machines[machineID] = c
+	}
+	active := s.machines[machineID] != nil
 	s.machineMu.Unlock()
-	if old != nil {
-		old.stop()
+	if replaced != nil {
+		replaced.stop()
+	}
+	if retiring != nil {
+		_ = s.Store.SetSupervisorInstanceState(ctx, machineID, retiring.journalID, "retiring")
+		_ = retiring.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle})
+	}
+	if localSupervisor {
+		s.localSupervisorPending.Store(!active)
+	}
+	if !c.supportsWarm {
+		s.applyWarmCount(c, 0, 0, false)
 	}
 	defer func() {
 		c.stop()
 		c.workers.Wait()
 		s.machineMu.Lock()
+		c.warmMu.Lock()
+		hasWarm := c.warm != nil && len(c.warm.Agents) > 0
+		c.warmMu.Unlock()
 		if s.machines[machineID] == c {
 			delete(s.machines, machineID)
+			if hasWarm {
+				if s.retiringMachines[machineID] == nil {
+					s.retiringMachines[machineID] = make(map[string]*machineConn)
+				}
+				if s.retiringMachines[machineID][c.journalID] == nil {
+					s.retiringMachines[machineID][c.journalID] = c
+				}
+			}
+		}
+		if others := s.retiringMachines[machineID]; others != nil && others[c.journalID] == c {
+			if !hasWarm {
+				delete(others, c.journalID)
+			}
+			if len(others) == 0 {
+				delete(s.retiringMachines, machineID)
+			}
 		}
 		s.machineMu.Unlock()
 	}()
@@ -440,11 +519,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		// Before the ack, as a pending restart is set before it: a supervisor that sees its hello_ack is told it can work, so local dispatch
 		// must not still be held then (a dispatch pass in between would skip it, and a replacement's first turn would wait for the next).
 		s.localSupervisorPending.Store(false)
-		s.clearLocalDrain()
 	}
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Telemetry: s.telemetryForMachine(ctx, c), AgentKeys: grants, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
+	c.helloAcked.Store(true)
 	if localSupervisor {
 		// Once per build, so the swap shows in the log and the supervisor's regular reconnects do not.
 		if previous, _ := s.localSupervisorLoggedBuild.Load().(string); previous != hello.SupervisorVersion {
@@ -457,10 +536,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle}); err != nil {
 				return
 			}
-		} else if s.LocalSupervisorLegacyDrain != nil {
-			s.LocalSupervisorLegacyDrain()
 		}
-		s.startLocalDrainGrace(ctx, c) // the wait for its turns is bounded by the owner's drain grace, whatever the supervisor's build knows
 	}
 	for _, job := range killCommands {
 		// Cancelled before its start was confirmed, yet the machine runs it: it must not outlive the cancel.
@@ -507,16 +583,20 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				c.harnessMu.Lock()
 				c.harnesses = frame.Harnesses
 				c.harnessMu.Unlock()
-				if err := s.Store.RecordMachineHarnesses(ctx, machineID, frame.Harnesses); err != nil {
-					telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's harnesses: %w", err))
+				if s.activeConnection(c) {
+					if err := s.Store.RecordMachineHarnesses(ctx, machineID, frame.Harnesses); err != nil {
+						telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's harnesses: %w", err))
+					}
 				}
 			}
 			if len(frame.Capabilities) > 0 {
 				c.harnessMu.Lock()
 				c.capabilities = frame.Capabilities
 				c.harnessMu.Unlock()
-				if err := s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities); err != nil {
-					telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's capabilities: %w", err))
+				if s.activeConnection(c) {
+					if err := s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities); err != nil {
+						telemetry.ReportError(ctx, "machine", fmt.Errorf("recording the machine's capabilities: %w", err))
+					}
 				}
 			}
 			continue
@@ -540,7 +620,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				c.capabilities = frame.Capabilities
 			}
 			c.harnessMu.Unlock()
-			if len(frame.Capabilities) > 0 {
+			if s.activeConnection(c) && len(frame.Capabilities) > 0 {
 				_ = s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities)
 			}
 			continue
@@ -723,7 +803,7 @@ func (s *Server) machinePinger(ctx context.Context, c *machineConn) {
 				c.stop()
 				return
 			}
-			if _, err := s.machineForDispatch(c.id); err == nil {
+			if s.activeConnection(c) {
 				if err := s.enqueuePendingSpawns(ctx, c); err != nil {
 					c.stop()
 					return
@@ -758,6 +838,12 @@ func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame 
 		// A late frame (the supervisor's ack of a stop it applied) for an agent that is already stopped or removed is the protocol
 		// racing itself, not a fault: expected, so it is refused without a report. Any other unauthorized frame still reports.
 		return "unauthorized", agent.Revoked && agent.MachineID == c.id
+	}
+	if frame.TurnID != "" && (frame.Type == protocol.Ack || frame.Type == protocol.Activity || frame.Type == protocol.Usage || frame.Type == protocol.Compaction || frame.Type == protocol.NativeSessionStarted || frame.Type == protocol.Answer || frame.Type == protocol.Process) {
+		owner, err := s.Store.TurnOwner(ctx, frame.TurnID)
+		if err != nil || owner != "" && owner != c.journalID {
+			return "forbidden", false
+		}
 	}
 	if frame.Generation != generation || agent.Generation != generation {
 		if frame.Type == protocol.Answer || frame.Type == protocol.NativeSessionStarted {
@@ -796,6 +882,9 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		return nil
 	case protocol.Ack:
 		if frame.Level == "control" {
+			if !s.controlAckOwner(ctx, c, frame.AgentID) {
+				return nil
+			}
 			rev, err := strconv.ParseInt(frame.Ref, 10, 64)
 			if err != nil || !c.sentControlRevision(frame.AgentID, rev) {
 				return nil
@@ -920,6 +1009,36 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 	}
 }
 
+func (s *Server) controlAckOwner(ctx context.Context, c *machineConn, agentID string) bool {
+	owner, err := s.Store.AgentOpenTurnOwner(ctx, agentID)
+	if err != nil {
+		return false
+	}
+	if owner != "" {
+		return owner == c.journalID
+	}
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	for _, retiring := range s.retiringMachines[c.id] {
+		retiring.warmMu.Lock()
+		warm := retiring.warm
+		holds := false
+		if warm != nil {
+			for _, agent := range warm.Agents {
+				if agent.AgentID == agentID {
+					holds = true
+					break
+				}
+			}
+		}
+		retiring.warmMu.Unlock()
+		if holds {
+			return retiring == c
+		}
+	}
+	return s.machines[c.id] == c
+}
+
 func answerReceiptFrame(receipt store.AnswerReceipt) protocol.Frame {
 	details, _ := json.Marshal(map[string]any{"held_reason": receipt.HeldReason, "error": receipt.Error, "message_ids": receipt.MessageIDs, "warnings": receipt.Warnings})
 	return protocol.Frame{V: protocol.Version, Type: protocol.Receipt, TurnID: receipt.TurnID, AnswerRev: receipt.AnswerRev,
@@ -940,6 +1059,13 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	c, err := s.machineForID(agent.MachineID)
 	if err != nil {
 		return err
+	}
+	blocked, err := s.handoverBlocked(ctx, agent.MachineID, delivery.AgentID)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrMachineUnavailable
 	}
 	if agent.Tool == "codex" && s.codexWatch.Load() != nil {
 		// Before a Codex turn starts on the host, the live login is looked at again: one a running session wrote back after a switch is put right
@@ -995,6 +1121,9 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	c.boundMu.RUnlock()
 	if !ok || generation != delivery.Generation {
 		return store.ErrStaleGeneration
+	}
+	if err := s.grantHandoverKey(ctx, c, delivery.AgentID, delivery.Generation); err != nil {
+		return err
 	}
 	for _, note := range delivery.Notes {
 		if len(note.Attachments) == 0 {
@@ -1066,9 +1195,111 @@ func (s *Server) machineForID(id string) (*machineConn, error) {
 	return c, nil
 }
 
+func (s *Server) machineConnections(id string) []*machineConn {
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	var out []*machineConn
+	if c := s.machines[id]; c != nil && !connectionClosed(c) {
+		out = append(out, c)
+	}
+	for _, c := range s.retiringMachines[id] {
+		if !connectionClosed(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (s *Server) sendMachineControl(id string, frame protocol.Frame) error {
+	connections := s.machineConnections(id)
+	if len(connections) == 0 {
+		return ErrMachineUnavailable
+	}
+	var first error
+	for _, c := range connections {
+		c.boundMu.Lock()
+		if c.bound == nil {
+			c.bound = make(map[string]int)
+		}
+		c.bound[frame.AgentID] = frame.Generation
+		c.boundMu.Unlock()
+		if err := c.sendControl(frame); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (s *Server) machineForOwner(id, journalID string) (*machineConn, error) {
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	if c := s.machines[id]; c != nil && !connectionClosed(c) && (journalID == "" || c.journalID == journalID) {
+		return c, nil
+	}
+	if c := s.retiringMachines[id][journalID]; c != nil && !connectionClosed(c) {
+		return c, nil
+	}
+	return nil, ErrMachineUnavailable
+}
+
+func connectionClosed(c *machineConn) bool {
+	if c.done == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) activeConnection(c *machineConn) bool {
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	return s.machines[c.id] == c
+}
+
+// handoverBlocked prevents a second process for an agent while an old instance still owns its turn or warm process.
+func (s *Server) handoverBlocked(ctx context.Context, machineID, agentID string) (bool, error) {
+	owner, err := s.Store.AgentOpenTurnOwner(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	if owner != "" && (s.machines[machineID] == nil || owner != s.machines[machineID].journalID) {
+		return true, nil
+	}
+	for journalID, c := range s.retiringMachines[machineID] {
+		if owner == journalID {
+			return true, nil
+		}
+		c.warmMu.Lock()
+		warm := c.warm
+		if warm != nil {
+			for _, agent := range warm.Agents {
+				if agent.AgentID == agentID {
+					c.warmMu.Unlock()
+					return true, nil
+				}
+			}
+		}
+		c.warmMu.Unlock()
+	}
+	return false, nil
+}
+
 func (s *Server) machineForDispatch(id string) (*machineConn, error) {
-	if id == s.localSupervisorID() && s.localSupervisorPending.Load() {
+	c, err := s.machineForID(id)
+	if err != nil {
+		return nil, err
+	}
+	if connectionClosed(c) {
 		return nil, ErrMachineUnavailable
 	}
-	return s.machineForID(id)
+	if c.conn != nil && !c.helloAcked.Load() {
+		return nil, ErrMachineUnavailable
+	}
+	return c, nil
 }

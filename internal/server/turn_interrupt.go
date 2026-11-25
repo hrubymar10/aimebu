@@ -27,7 +27,11 @@ func (s *Server) machineInterruptsTurns(machineID string) bool {
 // supervisor's answer: "ok", "not_running" or "unsupported_mode". An error says the frame could not be sent or was not answered; the
 // supervisor may still have applied it. The turn's end arrives as its process frame either way.
 func (s *Server) interruptTurn(ctx context.Context, target store.TurnInterruptTarget, reason string) (string, error) {
-	conn, err := s.machineForID(target.MachineID)
+	owner, err := s.Store.TurnOwner(ctx, target.TurnID)
+	if err != nil {
+		return "", err
+	}
+	conn, err := s.machineForOwner(target.MachineID, owner)
 	if err != nil {
 		return "", err
 	}
