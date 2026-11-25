@@ -51,6 +51,33 @@ func TestProseSpansPointAtTheirTokenInMultiLineBodies(t *testing.T) {
 	}
 }
 
+func TestFencedCodeDoesNotExposeMentionsOrRoomRefs(t *testing.T) {
+	cases := []struct {
+		name, body string
+	}{
+		{"triple", "```\n@hidden #hidden\n````\n@live #live"},
+		{"four with inner triple", "````\n```\n@hidden #hidden\n```\n````\n@live #live"},
+		{"five with inner four", "`````\n````\n@hidden #hidden\n`````\n@live #live"},
+		{"tilde", "~~~~\n~~~\n@hidden #hidden\n~~~~~\n@live #live"},
+		{"unclosed", "````\n@live #live"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, check := range []struct {
+				kind  string
+				spans []MentionSpan
+			}{
+				{"mention", proseMentionSpans(tc.body)},
+				{"room", proseRoomTitleSpans(tc.body)},
+			} {
+				if len(check.spans) != 1 || check.spans[0].Token != "live" {
+					t.Errorf("%s spans = %+v, want only live", check.kind, check.spans)
+				}
+			}
+		})
+	}
+}
+
 func TestMultiLineMentionWakesAndStores(t *testing.T) {
 	s, _ := testStore(t, Options{})
 	mentionSeed(t, s)

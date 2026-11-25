@@ -66,12 +66,18 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
 
   // [end group a]
   // [group b]
-  // Fences: closed ones are blocks; an unterminated one is its opening line as typed, then the rest as Markdown.
+  // Fences close on a run of the same character at least as long as the opener.
   const block = body => `<div class="md-codeblock"><button class="row-btn md-copy-btn" title="Copy code block" type=button><span class="icon-mask icon-mask-copy"></span></button><pre><code>${body}</code></pre></div>`;
   assert.equal(html('```\ncode\n```'), block('code'));
   assert.equal(html('~~~\nin tilde\n~~~'), block('in tilde'));
-  assert.equal(html('```js\nlet a;\nmore **bold**'), '<p>```js</p><p>let a;<br>more <strong>bold</strong></p>', 'an unterminated fence is shown literally and the rest is Markdown');
+  assert.equal(html('```\ncode\n````'), block('code'), 'a longer closer closes a triple fence');
+  assert.equal(html('````\n```\ninner\n```\n````\nafter'), block('```\ninner\n```') + '<p>after</p>', 'shorter inner fences stay text');
+  assert.equal(html('`````\n````\ninner\n`````'), block('````\ninner'), 'five backticks need five to close');
+  assert.equal(html('~~~~\n~~~\ninner\n~~~~~'), block('~~~\ninner'), 'tilde fences obey the same length rule');
+  assert.equal(html('```js\nlet a;\nmore **bold**'), '<p>```js</p><p>let a;<br>more <strong>bold</strong></p>', 'an unclosed fence leaves following Markdown live');
   assert.equal(html('before\n\n```\nnever closed\n\n- item'), '<p>before</p><p>```</p><p>never closed</p><ul><li>item</li></ul>');
+  assert.equal(html('~~~\ncode\n```\nmore\n~~~'), block('code\n```\nmore'), 'a different fence character stays text');
+  assert.equal(html('```\ncode\n``` extra\nmore\n```'), block('code\n``` extra\nmore'), 'a closer has only trailing spaces');
   assert.equal(html('````\ninner ```\n````'), block('inner ```'), 'a longer fence closes only on a fence as long');
 
   // Blocks inside list items stay in the item, so numbering and nesting survive (the agent-style "step, indented fence, next step").
@@ -81,7 +87,8 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
   assert.equal(html('Steps:\n1. First\n   continues here\n2. Second'), '<p>Steps:</p><ol start="1"><li>First<br>continues here</li><li>Second</li></ol>', 'a continuation line joins its item');
   assert.equal(html('- a\n  - b\n    ```\n    x\n    ```\n  - c'), `<ul><li>a<ul><li>b${block('x')}</li><li>c</li></ul></li></ul>`, 'a fence belongs to the item it is indented under');
   assert.equal(html('1. a\n   ```\n   if x:\n       y\n   ```'), `<ol start="1"><li>a${block('if x:\n    y')}</li></ol>`, 'the fence indent is stripped and deeper indent inside the code is kept');
-  assert.equal(html('- a\n  ```js\n  never closed'), '<ul><li>a<p>```js</p><p>never closed</p></li></ul>', 'an unterminated fence inside an item is text');
+  assert.equal(html('- a\n  ```js\n  never closed'), '<ul><li>a<p>```js</p><p>never closed</p></li></ul>', 'an unclosed fence inside an item is text');
+  assert.equal(html('- a\n  ```js\n  never closed\n- b'), '<ul><li>a<p>```js</p><p>never closed</p></li><li>b</li></ul>', 'an unclosed fence does not swallow the next item');
   assert.equal(html('- a\ntext at column 0'), '<ul><li>a</li></ul><p>text at column 0</p>', 'an unindented line ends the list');
   // Pathological input: nesting is capped and nothing throws.
   const nesting = text => (text.match(/<ul>/g) || []).length;

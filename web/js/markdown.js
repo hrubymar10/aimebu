@@ -116,6 +116,14 @@ function copyButton(content) {
   return button;
 }
 const indented = line => /^(\t| {4})/.test(line) && line.trim() !== '';
+function fenceOpen(line) {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  return match && (match[1][0] === '~' || !match[2].includes('`')) ? { marker: match[1], info: match[2] } : null;
+}
+function fenceClose(line, marker) {
+  const match = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+  return !!match && match[1][0] === marker[0] && match[1].length >= marker.length;
+}
 function codeBlock(content, info = '') {
   const wrapper = document.createElement('div'); wrapper.className = 'md-codeblock';
   const button = copyButton(content);
@@ -158,11 +166,20 @@ function readList(lines, start, depth) {
           break;
         }
         if (!fence && (listItem(line) || leadingWidth(line) <= item.indent)) break;
-        if (fence) { if (line.trim().startsWith(fence)) fence = null; }
-        else { const open = line.match(/^\s*(`{3,}|~{3,})([^`]*)$/); if (open) fence = open[1]; }
+        const dedented = line.replace(/^ {0,3}/, '');
+        if (fence) { if (fenceClose(dedented, fence)) fence = null; }
+        else {
+          const open = fenceOpen(dedented);
+          if (open) {
+            for (let next = i + 1; next < lines.length; next++) {
+              if (lines[next].trim() && leadingWidth(lines[next]) <= item.indent) break;
+              if (fenceClose(lines[next].replace(/^ {0,3}/, ''), open.marker)) { fence = open.marker; break; }
+            }
+          }
+        }
         item.extra.push(line); i++;
       }
-      // A fence that never closed inside the item is just text there; trailing blank lines are not part of the item.
+      // An unclosed fence is text in the item; trailing blank lines are not part of it.
       while (item.extra.length && !item.extra[item.extra.length - 1].trim()) item.extra.pop();
       continue;
     }
@@ -221,12 +238,12 @@ function renderBlocks(source, depth) {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
-    const fence = line.match(/^\s*(`{3,}|~{3,})([^`]*)$/);
+    const fence = fenceOpen(line);
     if (fence) {
       let close = i + 1;
-      while (close < lines.length && !lines[close].trim().startsWith(fence[1])) close++;
-      if (close < lines.length) { fragment.append(codeBlock(lines.slice(i + 1, close).join('\n'), fence[2])); i = close + 1; continue; }
-      // A fence that never closes is not a code block: the opening line is shown as it was typed and the rest is read as Markdown.
+      while (close < lines.length && !fenceClose(lines[close], fence.marker)) close++;
+      if (close < lines.length) { fragment.append(codeBlock(lines.slice(i + 1, close).join('\n'), fence.info)); i = close + 1; continue; }
+      // An unclosed fence is shown as typed, and following lines are read as Markdown.
       const literal = document.createElement('p'); literal.append(text(line)); fragment.append(literal); i++; continue;
     }
     if (indented(line) && (i === 0 || !lines[i - 1].trim())) {
@@ -269,12 +286,12 @@ export function renderRaw(source) {
   let plain = [], i = 0;
   const flush = () => { if (!plain.length) return; const span = document.createElement('span'); span.className = 'raw-text'; span.textContent = plain.join('\n'); fragment.append(span); plain = []; };
   while (i < lines.length) {
-    const fence = lines[i].match(/^\s*(`{3,}|~{3,})([^`]*)$/);
+    const fence = fenceOpen(lines[i]);
     if (fence) {
-      const block = [lines[i++]], body = [];
-      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) { body.push(lines[i]); block.push(lines[i++]); }
-      if (i < lines.length) block.push(lines[i++]);
-      flush(); fragment.append(rawBlock(block.join('\n'), body.join('\n'))); continue;
+      let close = i + 1;
+      while (close < lines.length && !fenceClose(lines[close], fence.marker)) close++;
+      if (close === lines.length) { plain.push(lines[i++]); continue; }
+      flush(); fragment.append(rawBlock(lines.slice(i, close + 1).join('\n'), lines.slice(i + 1, close).join('\n'))); i = close + 1; continue;
     }
     if (indented(lines[i]) && (i === 0 || !lines[i - 1].trim())) {
       const block = [];

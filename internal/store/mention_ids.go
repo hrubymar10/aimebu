@@ -43,6 +43,46 @@ type MentionSpan struct {
 	Token      string
 }
 
+func proseFenceOpen(line string) string {
+	spaces := 0
+	for spaces < len(line) && spaces < 4 && line[spaces] == ' ' {
+		spaces++
+	}
+	if spaces > 3 {
+		return ""
+	}
+	line = line[spaces:]
+	if len(line) < 3 || line[0] != '`' && line[0] != '~' {
+		return ""
+	}
+	end := 0
+	for end < len(line) && line[end] == line[0] {
+		end++
+	}
+	if end < 3 || line[0] == '`' && strings.ContainsRune(line[end:], '`') {
+		return ""
+	}
+	return line[:end]
+}
+
+func proseFenceClose(line, marker string) bool {
+	if marker == "" {
+		return false
+	}
+	spaces := 0
+	for spaces < len(line) && spaces < 4 && line[spaces] == ' ' {
+		spaces++
+	}
+	if spaces > 3 || len(line)-spaces < len(marker) || line[spaces] != marker[0] {
+		return false
+	}
+	end := spaces
+	for end < len(line) && line[end] == marker[0] {
+		end++
+	}
+	return end-spaces >= len(marker) && strings.Trim(line[end:], " \t\r") == ""
+}
+
 // liveProseSpans returns the live prose of body (code and escaped @ blanked to
 // spaces, as liveProse renders them) and, for each byte of that string, the
 // byte offset in body it was rendered from (-1 for a newline the prober
@@ -71,23 +111,30 @@ func liveProseSpans(body string) (string, []int) {
 			lineStart += len(lines[n-1]) + 1
 		}
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			marker := trimmed[:3]
-			if !inFence {
-				inFence, fence = true, marker
-			} else if marker == fence {
+		if inFence {
+			if proseFenceClose(line, fence) {
 				inFence = false
+				fence = ""
 			}
 			live.WriteByte('\n')
 			pos = append(pos, -1)
 			previousBlank = false
 			continue
 		}
-		if inFence {
-			live.WriteByte('\n')
-			pos = append(pos, -1)
-			previousBlank = trimmed == ""
-			continue
+		if marker := proseFenceOpen(line); marker != "" {
+			for next := n + 1; next < len(lines); next++ {
+				if proseFenceClose(lines[next], marker) {
+					inFence = true
+					fence = marker
+					break
+				}
+			}
+			if inFence {
+				live.WriteByte('\n')
+				pos = append(pos, -1)
+				previousBlank = false
+				continue
+			}
 		}
 		if trimmed == "" {
 			indented = false
