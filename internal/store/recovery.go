@@ -335,9 +335,10 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	return err
 }
 
-// handRecoveryToLead routes a just-inserted worker recovery item to the project lead (see workerRecoveryLead) and wakes it with a note.
-// detail carries the reason a held answer could not be delivered (empty for the other reasons); it is stated in the note, so the lead
-// decides on evidence instead of retrying blind. It reports false when there is no lead to hand it to, and the item then stays with the people.
+// handRecoveryToLead routes a just-inserted worker recovery item to whoever manages the worker (see workerRecoveryLead) and wakes it with
+// a note. detail carries the reason a held answer could not be delivered (empty for the other reasons); it is stated in the note, so the
+// lead decides on evidence instead of retrying blind. It reports false when there is no manager to hand it to, and the item then stays
+// with the people.
 func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reason, detail string) (bool, error) {
 	leadID, leadRoom, due, err := tx.workerRecoveryLead(projectID, roomID, agentID)
 	if err != nil || leadID == "" {
@@ -347,9 +348,11 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 		return false, err
 	}
 	var evidence, exitCode sql.NullString
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.exit_code') FROM event WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&evidence, &exitCode)
-	if err != nil && err != sql.ErrNoRows {
-		return false, err
+	if originID != "" {
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.exit_code') FROM event WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, originID).Scan(&evidence, &exitCode)
+		if err != nil && err != sql.ErrNoRows {
+			return false, err
+		}
 	}
 	// Server-written notices name who they are about the same way agents do:
 	// `@agt_<id>` and `#room_<id>` tokens, so the entities table covers them
@@ -368,6 +371,8 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 			break
 		}
 		body = fmt.Sprintf("Agent @%s in room #%s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+	case turnBudgetReason:
+		body = fmt.Sprintf("Agent @%s in room #%s was paused after %d turns in %d minutes (loop budget). Item ID: %s. resolve_recovery with choice \"continue\" resets the budget and makes it active again; \"abandon\" aborts its queued notes. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, turnBudgetLimit, int(turnBudgetWindow.Minutes()), id, roomID, agentID)
 	}
 	if leadRoom != roomID {
 		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Recovery handed to the lead", OnlyTargets: []string{}}); err != nil {
@@ -401,19 +406,30 @@ func (tx *Tx) workerRecoveryLead(projectID, roomID, workerID string) (string, st
 	if !enabled {
 		return "", "", "", nil
 	}
-	var leadID string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.id<>? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL ORDER BY a.created_at,a.id LIMIT 1`, projectID, workerID).Scan(&leadID)
-	if err == sql.ErrNoRows {
-		return "", "", "", nil
-	}
-	if err != nil {
+	// Whoever manages the worker gets its recovery: the agent that spawned it (a lead, or a role that can spawn, such as a flow's
+	// dispatcher) while it can act, otherwise an active project lead. A person's spawn (created_by is a user, not an agent) matches no
+	// agent row and falls through to the lead.
+	var managerID string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id
+		WHERE a.id=(SELECT created_by FROM agent WHERE id=?) AND a.project_id=?
+		AND (r.cap_is_lead=1 OR r.cap_can_spawn=1) AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL`, workerID, projectID).Scan(&managerID)
+	if err != nil && err != sql.ErrNoRows {
 		return "", "", "", err
 	}
-	leadRoom, err := tx.leadRoomFor(projectID, roomID, leadID)
+	if err == sql.ErrNoRows {
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.id<>? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL ORDER BY a.created_at,a.id LIMIT 1`, projectID, workerID).Scan(&managerID)
+		if err == sql.ErrNoRows {
+			return "", "", "", nil
+		}
+		if err != nil {
+			return "", "", "", err
+		}
+	}
+	leadRoom, err := tx.leadRoomFor(projectID, roomID, managerID)
 	if err != nil || leadRoom == "" {
 		return "", "", "", err
 	}
-	return leadID, leadRoom, time.Now().UTC().Add(time.Duration(minutes) * time.Minute).Format(timestampLayout), nil
+	return managerID, leadRoom, time.Now().UTC().Add(time.Duration(minutes) * time.Minute).Format(timestampLayout), nil
 }
 
 // definiteFailure says whether the turn's process exit reported a failure before it did anything (see adapter.ExitInfo.DefiniteFailure),
@@ -607,10 +623,12 @@ func (tx *Tx) createRecoveryContinuation(originID, choice, actorID, diagnosticID
 const quiescenceWaitReason = "quiescence_wait"
 
 // answerHeldReason and brokenSessionReason name the recoveries raised for a worker's undeliverable answer and for a session that answers
-// with nothing; each has its own phase and choices (see decideAnswerRecovery).
+// with nothing; each has its own phase and choices (see decideAnswerRecovery). turnBudgetReason names a loop-budget pause routed to the
+// worker's manager; it has no turn (the guard stops before one is built), so the release is Continue, not Resume.
 const (
 	answerHeldReason    = "answer_held"
 	brokenSessionReason = "broken_session"
+	turnBudgetReason    = "turn_budget"
 )
 
 func (tx *Tx) createQuiescenceWaitingItem(originID, childID string) error {

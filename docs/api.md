@@ -729,7 +729,9 @@ user. A harness-reported compaction records notable `agent_context_compacted`.
 Both appear in the bell and post one system notice in the agent's room.
 Inbox entries include `agent_id` when present. Recovery rows include
 `turn_id` for uncertain turns and `diagnostic_report` when available. Rows
-without a `turn_id` are loop budget items.
+without a `turn_id` are loop budget items (reason `turn_budget`); a worker's
+is routed to its manager like any worker recovery, and only a wake caused by
+another agent's message counts toward the budget.
 Posting an inbox answer resolves an open question or approval and queues the
 requester in the same transaction. Project owners and operators may answer
 questions; only project owners may answer ordinary approvals outside private
@@ -819,7 +821,7 @@ an exit code (two unrelated failures that both exited with code 1 are not a repe
 decision endpoint refuses a choice the item was not stored with (`400 invalid_choice`),
 so Resume of a definite failure is refused through the API as well as not offered. `choice` is the lowercase form of the
 button label. A lead deciding an item that was resolved while it was unassigned (the sweep had handed it to people) gets `409 already_resolved`
-naming who resolved it and how, instead of a bare refusal. A worker recovery first goes to the active project lead when enabled; the lead gets a `worker_recovery` note (with the failed turn's `worker_output`, see the delivery note below) and may use `list_recoveries` and `resolve_recovery` (`restart` is the fresh-session choice of a broken session; a held answer takes `retry` or `abandon`). It stays out of the people's Inbox until the configured interval elapses or the lead becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. Project owners and operators may decide human-routed recovery in every room.
+naming who resolved it and how, instead of a bare refusal. A worker recovery first goes to whoever manages the worker — the agent that spawned it (a lead, or a role that can spawn, such as a flow's dispatcher) while it is active and healthy, otherwise an active project lead — when enabled; the manager gets a `worker_recovery` note (with the failed turn's `worker_output`, see the delivery note below) and may use `list_recoveries` and `resolve_recovery` (`restart` is the fresh-session choice of a broken session; a held answer takes `retry` or `abandon`; a loop-budget pause takes `continue` or `abandon`). It stays out of the people's Inbox until the configured interval elapses or the manager becomes unavailable, when a human card and notification appear. The lead's own recovery goes to people immediately. A worker paused by the loop budget (60 turns woken by another agent's message in one room within ten minutes; other wakes, including a finished `run_command` or a person's message, never count) raises the same kind of item (reason `turn_budget`, no `turn_id`) and is routed to its manager the same way, except in the project's home room, where it stays with people. Project owners and operators may decide human-routed recovery in every room.
 The human peer can view a private-chat recovery item, but only a project owner
 or operator may decide it. Owners and operators can see those recovery items
 without joining the private chat because recovery blocks the agent across

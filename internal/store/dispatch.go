@@ -15,6 +15,14 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
+// The loop budget pauses an agent woken too often by other agents' messages: turnBudgetLimit qualifying turns within turnBudgetWindow
+// in one room. Only a turn woken by another agent's message qualifies (see PrepareDispatch); a finished run_command, a scheduled or any
+// other system note, and a person's message never count.
+const (
+	turnBudgetLimit  = 60
+	turnBudgetWindow = 10 * time.Minute
+)
+
 // PrepareDispatch picks one eligible turn for an online agent and records the
 // normal turn and its note set atomically. A false result means no work is
 // currently dispatchable; queued notes stay queued through pauses and stops.
@@ -447,7 +455,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				return nil
 			}
 		}
-		window := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02T15:04:05.000000000Z")
+		window := time.Now().UTC().Add(-turnBudgetWindow).Format("2006-01-02T15:04:05.000000000Z")
 		var turnsInWindow int
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM event e JOIN turn t ON t.id=e.turn_id
 			WHERE e.kind='turn_recorded' AND e.agent_id=? AND e.room_id=? AND e.created_at>=? AND t.mode='normal'
@@ -455,10 +463,15 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			AND (t.exec IN ('running','exited','lost')
 			  OR EXISTS(SELECT 1 FROM event started WHERE started.turn_id=t.id AND started.kind='turn_ack_accepted')
 			  OR (EXISTS(SELECT 1 FROM event admitted WHERE admitted.turn_id=t.id AND admitted.kind='turn_dispatch_requested')
-			      AND NOT EXISTS(SELECT 1 FROM event unsent WHERE unsent.turn_id=t.id AND unsent.kind IN ('turn_never_started','turn_dispatch_cancelled'))))`, agentID, roomID, window, agentID).Scan(&turnsInWindow); err != nil {
+			      AND NOT EXISTS(SELECT 1 FROM event unsent WHERE unsent.turn_id=t.id AND unsent.kind IN ('turn_never_started','turn_dispatch_cancelled'))))
+			-- Only a wake caused by another agent's message counts toward the budget: a finished run_command, a scheduled note, any
+			-- other system note, and a person's message are not a reply loop. A turn with no notes has no wake cause and does not
+			-- count either.
+			AND EXISTS(SELECT 1 FROM turn_note cb JOIN note cn ON cn.id=cb.note_id JOIN message cm ON cm.id=cn.message_id
+				WHERE cb.turn_id=t.id AND cm.author_kind='agent')`, agentID, roomID, window, agentID).Scan(&turnsInWindow); err != nil {
 			return err
 		}
-		if turnsInWindow >= 20 {
+		if turnsInWindow >= turnBudgetLimit {
 			if _, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=? AND desired='active'`, agentID); err != nil {
 				return err
 			}
@@ -473,7 +486,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
-			options := `{"text":"Agent paused after 20 turns in 10 minutes to prevent an automatic reply loop.","options":["Continue","Abandon"]}`
+			options := fmt.Sprintf(`{"text":"Agent paused after %d turns in %d minutes to prevent an automatic reply loop.","options":["Continue","Abandon"]}`, turnBudgetLimit, int(turnBudgetWindow.Minutes()))
 			if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,agent_id,requester_kind,requester_id,kind,options_json,created_at) VALUES (?,?,?,?,'agent',?,'recovery',?,?)`, id, projectID, roomID, agentID, agentID, options, timestamp()); err != nil {
 				return err
 			}
@@ -483,8 +496,19 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if _, err := tx.AppendEvent(Event{Kind: "agent_turn_budget_exceeded", ProjectID: projectID, RoomID: roomID, AgentID: agentID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id})}); err != nil {
 				return err
 			}
-			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Agent paused after 20 turns in 10 minutes; review its queued work."}); err != nil {
+			if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: fmt.Sprintf("Agent paused after %d turns in %d minutes; review its queued work.", turnBudgetLimit, int(turnBudgetWindow.Minutes()))}); err != nil {
 				return err
+			}
+			// A worker's pause goes to whoever manages it, not to a person (the lead's own pause and a worker seated in the
+			// project's home room stay with people); the room keeps its system line above.
+			var roomKind string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, roomID).Scan(&roomKind); err != nil {
+				return err
+			}
+			if roomKind != "home" {
+				if _, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, "", turnBudgetReason, ""); err != nil {
+					return err
+				}
 			}
 			return nil
 		}

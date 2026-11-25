@@ -77,8 +77,10 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 			return "", err
 		}
 		if actorKind == "agent" {
+			// Whoever manages the worker may decide its recovery: a lead, or a role that can spawn (a flow's dispatcher). The item itself
+			// names the manager it was handed to.
 			var allowed bool
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND r.cap_is_lead=1 AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL)`, actorID, projectID).Scan(&allowed); err != nil {
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND (r.cap_is_lead=1 OR r.cap_can_spawn=1) AND a.desired='active' AND a.recovery_block=0 AND a.revoked_at IS NULL)`, actorID, projectID).Scan(&allowed); err != nil {
 				return "", err
 			}
 			if !allowed {

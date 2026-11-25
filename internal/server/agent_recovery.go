@@ -11,11 +11,9 @@ import (
 
 func (s *Server) agentToolRecoveries(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !activeLead(w, caller) {
-		return
-	}
-	if !caller.IsLead {
-		apiError(w, 403, "forbidden", "project lead required")
+	// A worker's recovery is decided by whoever manages it: a lead, a dispatcher of a managing flow, or any role that can spawn.
+	if !((caller.IsLead || caller.CanManage || caller.CanSpawn) && caller.Desired == "active") {
+		apiError(w, 403, "forbidden", "active lead role required")
 		return
 	}
 	items, err := s.Store.ListLeadRecoveries(r.Context(), caller.ID, caller.ProjectID)
@@ -42,11 +40,9 @@ type agentResolveRecoveryRequest struct {
 
 func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
-	if !activeLead(w, caller) {
-		return
-	}
-	if !caller.IsLead {
-		apiError(w, 403, "forbidden", "project lead required")
+	// The same gate as the list above: the store re-checks that the caller is the manager the item was assigned to.
+	if !((caller.IsLead || caller.CanManage || caller.CanSpawn) && caller.Desired == "active") {
+		apiError(w, 403, "forbidden", "active lead role required")
 		return
 	}
 	key, ok := toolRequestKey(w, r)
@@ -57,7 +53,7 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "restart" || len(req.Note) > 2000 {
+	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "restart" && req.Choice != "continue" || len(req.Note) > 2000 {
 		apiError(w, 400, "invalid_request", "choice or note invalid")
 		return
 	}

@@ -1342,9 +1342,11 @@ See [the API guide](api.md) for the toolbox routes.
 
 Spawned agents receive short names from a human-like pool, avoiding agent
 names and member logins in their project, with numeric suffixes if the pool
-is exhausted. The server pauses an agent that reaches 20 admitted or started
-turns in one room within ten minutes and raises a
-recovery inbox notice to prevent automatic reply loops.
+is exhausted. The server pauses an agent that reaches 60 turns in one room within ten minutes when the wake was caused by another agent's message (a finished `run_command`, a scheduled or any other system note, and a person's message never count) and raises a
+recovery inbox notice to prevent automatic reply loops. A worker's pause goes to
+whoever manages it (the agent that spawned it, or an active project lead)
+like any worker recovery, except in the project's home room, where it stays
+with people.
 Recovery decisions are available through the inbox API: uncertain turns can
 Resume, Retry, or Abandon, and loop-budget pauses can Continue or Abandon.
 Project settings can opt into automatic continuation after a clean verified

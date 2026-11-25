@@ -324,7 +324,7 @@ func TestRecoveryRetryDeliversRawNotes(t *testing.T) {
 
 func TestBudgetDecisionContinueResetsWindow(t *testing.T) {
 	t.Parallel()
-	s, _, room, one, _ := wakeFixture(t)
+	s, _, room, one, lead := wakeFixture(t)
 	ctx := context.Background()
 	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_budget','budget-owner','hash','{}',?)`, timestamp()); err != nil {
 		t.Fatal(err)
@@ -332,12 +332,24 @@ func TestBudgetDecisionContinueResetsWindow(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_budget','owner')`, one.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < turnBudgetLimit; i++ {
 		turn, err := s.RecordTurn(ctx, Turn{AgentID: one.ID, SessionID: "ses_one", Generation: 0, RoomID: room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.db.Exec(`UPDATE turn SET exec='exited',outcome='completed',settle='settled' WHERE id=?`, turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		// Agent wakes are the only kind that counts toward the budget; the message mentions the agent so a wake note is queued.
+		message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: "lead", Body: "@one ping"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		note, err := s.NoteForAgentMessage(ctx, one.ID, message.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -347,11 +359,24 @@ func TestBudgetDecisionContinueResetsWindow(t *testing.T) {
 	if _, ready, err := s.PrepareDispatch(ctx, one.ID, ""); err != nil || ready {
 		t.Fatalf("budget ready=%t %v", ready, err)
 	}
-	items, err := s.InboxForUser(ctx, "usr_budget")
-	if err != nil || len(items) != 1 || items[0].TurnID != "" || len(items[0].Options) != 2 || items[0].Options[0] != "Continue" {
-		t.Fatalf("budget item=%+v %v", items, err)
+	// The wake fixture's worker has a project lead, so the item is routed to it: hidden from the person's Inbox until escalation.
+	var itemID string
+	var leadDue string
+	if err := s.db.QueryRow(`SELECT id,COALESCE(lead_due_at,'') FROM inbox_item WHERE agent_id=? AND kind='recovery' AND state='open'`, one.ID).Scan(&itemID, &leadDue); err != nil {
+		t.Fatal(err)
 	}
-	decision, _, err := s.DecideRecovery(ctx, items[0].ID, "usr_budget", "budget-continue", "continue", 0)
+	if leadDue == "" {
+		t.Fatalf("budget item %s was not routed to the lead", itemID)
+	}
+	items, err := s.InboxForUser(ctx, "usr_budget")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("people's inbox=%+v %v (a worker's pause waits for its lead)", items, err)
+	}
+	rev, err := s.RecoveryItemRevision(ctx, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, _, err := s.DecideRecoveryAsAgent(ctx, itemID, lead.ID, "budget-continue", "continue", "", rev)
 	if err != nil || decision.TurnID != "" {
 		t.Fatalf("continue=%+v %v", decision, err)
 	}

@@ -733,9 +733,11 @@ At server startup, turns prepared but never admitted to a machine are
 cancelled and settled so their queued notes can be sent again; linked recovery
 continuations are retained with their evidence instead.
 
-For normal turns, each agent has a budget of 20 admitted or started turns per
-room in ten minutes, counted since its latest reactivation or continue.
-Cancelled turns proven never started do not count.
+For normal turns, each agent has a budget of 60 turns per room in ten minutes,
+counted since its latest reactivation or continue. Only a turn woken by
+another agent's message counts toward the budget: a finished `run_command`, a
+scheduled or any other system note, and a person's message never do, and
+cancelled turns proven never started do not count either.
 When reached, the server changes its desired state to `not_accepting`, posts
 a room notice, and creates a recovery inbox item. Agent-triggered wakes wait
 two seconds after that agent's previous turn in the room; human messages do
@@ -1198,13 +1200,15 @@ long but legitimate turn does not wait for a person. Only when that
 continuation turn is limit-killed too does the agent fall back to the
 ordinary failure path: the turn's notes become `unknown`, the agent is
 recovery-blocked, and a recovery item carries the evidence. A worker's item
-goes to the active project lead first, with a `worker_recovery` wake note and a
-room notice. The lead can choose Resume, Retry, or Abandon with
+goes to whoever manages the worker — the agent that spawned it (a lead or a
+dispatcher of a managing flow) while it is active and healthy, otherwise an
+active project lead — first, with a `worker_recovery` wake note and a
+room notice. The manager can choose Resume, Retry, or Abandon with
 `list_recoveries` and `resolve_recovery`. After 30 minutes by default, or when
-the lead stops or becomes recovery-blocked, the dispatcher raises the item to
+the manager stops or becomes recovery-blocked, the dispatcher raises the item to
 the people's Inbox and sends its ordinary notification. Project Settings can
 turn lead routing off or change that interval. The lead's own recovery goes
-straight to people, and so does a worker's when the lead is not in the
+straight to people, and so does a worker's when the manager is not in the
 worker's room and the project has no home room to wake it in. A turn that is **interrupted** is continued the same way. When the harness process ends
 without a final answer, by a signal, a non-zero status or silently, and says nothing about why
 (no error result, no stderr message with an ordinary non-zero status), it was cut off, not

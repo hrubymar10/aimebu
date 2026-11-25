@@ -34,14 +34,26 @@ func TestStartupSweepRestoresUndispatchedWork(t *testing.T) {
 
 func TestAgentTurnBudgetPausesAndRaisesInbox(t *testing.T) {
 	t.Parallel()
-	s, project, room, one, _ := wakeFixture(t)
+	s, project, room, one, lead := wakeFixture(t)
 	ctx := context.Background()
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 60; i++ {
 		turn, err := s.RecordTurn(ctx, Turn{AgentID: one.ID, SessionID: "ses_one", Generation: 0, RoomID: room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.db.Exec(`UPDATE turn SET exec='exited',outcome='completed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turn.ID); err != nil {
+		if _, err := s.db.Exec(`UPDATE turn SET exec='exited',outcome='completed',settle='settled',ended_at=? WHERE id=?`, time.Now().UTC().Add(-3*time.Second).Format(timestampLayout), turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: lead.ID, Body: "@one ping"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The mention already queued the wake note; reuse it instead of inserting a duplicate.
+		note, err := s.NoteForAgentMessage(ctx, one.ID, message.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,16 +79,28 @@ func TestAgentTurnBudgetPausesAndRaisesInbox(t *testing.T) {
 
 func TestTurnBudgetResetsOnContinueWithoutDuplicateRecovery(t *testing.T) {
 	t.Parallel()
-	s, project, room, one, _ := wakeFixture(t)
+	s, project, room, one, lead := wakeFixture(t)
 	ctx := context.Background()
 	seedCompletedTurns := func() {
 		t.Helper()
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 60; i++ {
 			turn, err := s.RecordTurn(ctx, Turn{AgentID: one.ID, SessionID: "ses_one", Generation: 0, RoomID: room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.db.Exec(`UPDATE turn SET exec='exited',outcome='completed',settle='settled',ended_at=? WHERE id=?`, timestamp(), turn.ID); err != nil {
+			if _, err := s.db.Exec(`UPDATE turn SET exec='exited',outcome='completed',settle='settled',ended_at=? WHERE id=?`, time.Now().UTC().Add(-3*time.Second).Format(timestampLayout), turn.ID); err != nil {
+				t.Fatal(err)
+			}
+			message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: lead.ID, Body: "@one ping"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The mention already queued the wake note; reuse it instead of inserting a duplicate.
+			note, err := s.NoteForAgentMessage(ctx, one.ID, message.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -116,14 +140,26 @@ func TestTurnBudgetResetsOnContinueWithoutDuplicateRecovery(t *testing.T) {
 
 func TestTurnBudgetIgnoresCancelledNeverStartedTurns(t *testing.T) {
 	t.Parallel()
-	s, _, room, one, _ := wakeFixture(t)
+	s, _, room, one, lead := wakeFixture(t)
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
 		turn, err := s.RecordTurn(ctx, Turn{AgentID: one.ID, SessionID: "ses_one", Generation: 0, RoomID: room.ID, Attempt: 1, Mode: "normal", Exec: "pending"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.db.Exec(`UPDATE turn SET exec='killed',outcome='cancelled',settle='settled',ended_at=? WHERE id=?`, timestamp(), turn.ID); err != nil {
+		if _, err := s.db.Exec(`UPDATE turn SET exec='killed',outcome='cancelled',settle='settled',ended_at=? WHERE id=?`, time.Now().UTC().Add(-3*time.Second).Format(timestampLayout), turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: lead.ID, Body: "@one ping"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The mention already queued the wake note; reuse it instead of inserting a duplicate.
+		note, err := s.NoteForAgentMessage(ctx, one.ID, message.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, turn.ID, note.ID); err != nil {
 			t.Fatal(err)
 		}
 		if i%2 == 0 {
