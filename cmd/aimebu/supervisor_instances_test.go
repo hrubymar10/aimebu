@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/server"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
@@ -291,5 +294,229 @@ func TestSupervisorTakesAFreshJournalWhenTheDefaultOneIsHeld(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "starting next to it") {
 		t.Fatalf("nothing logged: %q", stderr.String())
+	}
+}
+
+// newLogCapture collects what the package logs during a test, safe to read while a handover goroutine still writes.
+func newLogCapture(t *testing.T) *logCapture {
+	t.Helper()
+	c := &logCapture{}
+	previous := log.Writer()
+	log.SetOutput(c)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return c
+}
+
+type logCapture struct {
+	mu    sync.Mutex
+	lines bytes.Buffer
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lines.Write(p)
+}
+
+func (c *logCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lines.String()
+}
+
+// An older build writes only its pid into the lock file, so its holder has no journal ID. While it is connected, its is the one connection
+// whose journal no lock file names: it is that instance, and the same rules apply to it — busy is never cut, empty for a minute is.
+func TestIDLessRetiringHolderIsKnownByItsConnectionAndFollowsTheSameRules(t *testing.T) {
+	logged := newLogCapture(t)
+	r := newInstanceRig(t)
+	pid := sleeper(t)
+	// The connection named old is the ID-less holder's own: its hello carries its journal ID even though its lock file does not.
+	r.conns["old"] = true
+	r.views = []instanceView{{path: r.legacy(), held: true, pid: pid}}
+	r.states["old"] = "retiring"
+	r.busy["old"] = true
+	r.pass(t, 0) // the manager starts the current build next to the holder, as on a real upgrade
+	if len(r.spawns) != 1 || r.spawns[0].drain {
+		t.Fatalf("no instance was started next to the ID-less holder: %+v", r.spawns)
+	}
+	r.views = append(r.views, instanceView{path: r.spawns[0].journal, held: true, pid: 4244, journalID: "new"})
+	r.conns["new"] = true
+	for i := 0; i < 30; i++ { // half an hour of a long job
+		r.pass(t, time.Minute)
+	}
+	if gone(pid) {
+		t.Fatal("an ID-less holder that still runs work was cut")
+	}
+	if n := strings.Count(logged.String(), "leaving it alone"); n != 0 {
+		t.Fatalf("the holder was left unidentified although its connection named it (%d times): %s", n, logged.String())
+	}
+	r.busy["old"] = false
+	r.pass(t, 0)
+	r.pass(t, 50*time.Second)
+	if gone(pid) {
+		t.Fatal("cut before it had been empty for a minute")
+	}
+	r.pass(t, 20*time.Second)
+	if !processGone(pid, 5*time.Second) {
+		t.Fatalf("an empty ID-less holder that did not exit was not cut; log: %s", logged.String())
+	}
+}
+
+// The disconnect bound applies to an identified ID-less holder too: its own connection is the one that counts, not just any connection. The
+// current build's instance is connected and its lock names its ID, so nothing accounts for the holder: the server's retiring record is what
+// identifies it.
+func TestIDLessRetiringHolderWithoutItsOwnConnectionForTenMinutesIsHandedOver(t *testing.T) {
+	logged := newLogCapture(t)
+	r := newInstanceRig(t)
+	kill(t, r)
+	db := rigStore(t)
+	r.m.store, r.m.machineID = db, "mch_test"
+	recordInstance(t, db, "old", "an older build", "retiring")
+	pid := sleeper(t)
+	r.states["old"] = "retiring"
+	r.active, r.conns["new"] = true, true
+	r.views = []instanceView{
+		{path: r.legacy(), held: true, pid: pid},
+		{path: filepath.Join(r.dir, "journals", "new.sqlite"), held: true, pid: 4244, journalID: "new"},
+	}
+	r.pass(t, 0)
+	r.pass(t, 9*time.Minute)
+	if gone(pid) {
+		t.Fatal("cut before ten minutes")
+	}
+	r.pass(t, 2*time.Minute)
+	if !processGone(pid, 5*time.Second) {
+		t.Fatalf("an ID-less holder without its own connection for ten minutes was not cut; log: %s", logged.String())
+	}
+}
+
+// rigStore opens a store under a fresh temporary server directory, the way the manager reads the server's instance records in tests.
+// kill makes the handover of a unit-test rig end at once: a `sleep` child dies on the signal the stop sends, but the rig has no journal for
+// the handover to watch, so its real waits would end in a SIGKILL of a process that already went, logged through the default logger.
+func kill(t *testing.T, r *instanceRig) {
+	t.Helper()
+	r.m.kill = func(int) error { return nil }
+	// The handover polls who holds the journal; the rig has none, so it must not be asked (its probe would create a lock file the
+	// temporary directory's cleanup races with).
+	r.m.holder = func() (int, bool, error) { return 0, false, nil }
+	r.m.handover = server.SupervisorHandover{ExitWait: 50 * time.Millisecond, TermWait: 50 * time.Millisecond, Poll: 10 * time.Millisecond}
+}
+
+func rigStore(t *testing.T) *store.Store {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "server"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(context.Background(), filepath.Join(root, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Tx(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO machine(id,name,key_hash,approved) VALUES ('mch_test','rig','hash',1)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func recordInstance(t *testing.T, db *store.Store, id, build, state string) {
+	t.Helper()
+	if err := db.RecordSupervisorInstance(context.Background(), "mch_test", id, build, "env"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSupervisorInstanceState(context.Background(), "mch_test", id, state); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A holder that is not connected is matched to the server's records: the one retiring instance of an older build that no lock file claims
+// and no connection accounts for. A record of the current build is never a match: such a holder writes its ID, so the record belongs to an
+// instance whose journal is gone, and cutting the holder on it could cut the wrong one.
+func TestIDLessDisconnectedHolderIsKnownFromTheServersRetiringRecord(t *testing.T) {
+	logged := newLogCapture(t)
+	r := newInstanceRig(t)
+	kill(t, r)
+	db := rigStore(t)
+	r.m.store, r.m.machineID = db, "mch_test"
+	recordInstance(t, db, "old", "an older build", "retiring")
+	pid := sleeper(t)
+	r.states["old"] = "retiring"
+	r.views = []instanceView{{path: r.legacy(), held: true, pid: pid}}
+	r.pass(t, 0)
+	r.pass(t, 9*time.Minute)
+	if gone(pid) {
+		t.Fatal("cut before ten minutes")
+	}
+	r.pass(t, 2*time.Minute)
+	if !processGone(pid, 5*time.Second) {
+		t.Fatalf("a disconnected ID-less holder was not matched to its retiring record; log: %s", logged.String())
+	}
+	r2 := newInstanceRig(t)
+	db2 := rigStore(t)
+	r2.m.store, r2.m.machineID = db2, "mch_test"
+	recordInstance(t, db2, "phantom", version, "retiring")
+	pid2 := sleeper(t)
+	r2.views = []instanceView{{path: r2.legacy(), held: true, pid: pid2}}
+	for i := 0; i < 40; i++ { // over an hour of passes
+		r2.pass(t, 2*time.Minute)
+	}
+	if gone(pid2) {
+		t.Fatal("a holder was cut on a record of the current build")
+	}
+	if n := strings.Count(logged.String(), "leaving it alone"); n != 1 {
+		t.Fatalf("the refusal was logged %d times, want once: %s", n, logged.String())
+	}
+}
+
+// When the mapping is ambiguous the holder is left alone and told so once: two connections no lock names, two such records, two holders
+// without an ID. A guess could cut the wrong instance, and no rule here may.
+func TestAmbiguousIDLessHolderIsLeftAloneAndToldSoOnce(t *testing.T) {
+	for name, item := range map[string]struct {
+		arrange  func(t *testing.T, r *instanceRig)
+		wantLogs int
+	}{
+		"two connections no lock names": {
+			arrange: func(t *testing.T, r *instanceRig) {
+				r.conns["old1"], r.conns["old2"] = true, true
+			},
+			wantLogs: 1,
+		},
+		"two retiring records of older builds": {
+			arrange: func(t *testing.T, r *instanceRig) {
+				db := rigStore(t)
+				r.m.store, r.m.machineID = db, "mch_test"
+				recordInstance(t, db, "old1", "an older build", "retiring")
+				recordInstance(t, db, "old2", "an older build", "retiring")
+			},
+			wantLogs: 1,
+		},
+		"two holders without an ID": {
+			arrange: func(t *testing.T, r *instanceRig) {
+				r.views = append(r.views, instanceView{path: filepath.Join(r.dir, "journals", "other.sqlite"), held: true, pid: 4243})
+			},
+			wantLogs: 2, // one line per unidentified holder
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logged := newLogCapture(t)
+			r := newInstanceRig(t)
+			kill(t, r)
+			item.arrange(t, r)
+			pid := sleeper(t)
+			r.views = append([]instanceView{{path: r.legacy(), held: true, pid: pid}}, r.views...)
+			r.active = true
+			for i := 0; i < 40; i++ { // over an hour of passes
+				r.pass(t, 2*time.Minute)
+			}
+			if processGone(pid, 2*time.Second) {
+				t.Fatalf("an ambiguous holder was cut anyway; log: %s", logged.String())
+			}
+			if n := strings.Count(logged.String(), "leaving it alone"); n != item.wantLogs {
+				t.Fatalf("the refusal was logged %d times, want %d: %s", n, item.wantLogs, logged.String())
+			}
+		})
 	}
 }

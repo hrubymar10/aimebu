@@ -88,9 +88,20 @@ to the one that matches its build and environment (see above). The local manager
   there, so a crashed instance's journal is finished by starting `aimebu
   supervisor --journal <path> --drain` by hand.
 - **A pre-feature supervisor** (one on `journal.sqlite` that does not write its
-  journal ID in the lock file) is treated as retiring when another instance is
-  active and is waited for by the same rules; its native jobs are left in its
-  journal when it exits, and a drain instance adopts them. A retiring instance
+  journal ID in the lock file) is treated as retiring when the server holds it
+  so, and is waited for by the same rules. The manager works out which server
+  instance such a holder is without opening its journal: while it is connected,
+  its is the one connection whose journal no lock file on the machine claims
+  (a current build always writes its ID next to the pid); when it is not
+  connected, it is the one retiring record of an older build that is left once
+  every lock file's ID is accounted for. When the mapping is ambiguous (two
+  holders without an ID, two such connections or records), the manager leaves
+  the holder alone and says so once in the log, because cutting it on a guess
+  could cut the wrong instance. Once matched, its own connection is the one
+  that counts, and the liveness handover asks it to stop with SIGTERM, not the
+  SIGUSR1 an older build knows as its restart signal. An old build leaves its
+  journal behind when it exits, so what the journal still owes is finished by a
+  drain instance of the current build. A retiring instance
   that removed its journal and is started again on that path has a new
   `journal_id` and is a new instance. After each `hello_ack` to an instance it
   holds as retiring, the server sends `retire_at_idle` again, so one that

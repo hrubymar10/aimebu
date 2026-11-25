@@ -213,8 +213,9 @@ type detachedSupervisorManager struct {
 	spawn       func(journal string, drain bool) error
 	clock       func() time.Time
 	scan        func() []instanceView
-	states      func() map[string]string   // journal ID to the server's state of the instance
-	busy        func(string) (bool, error) // whether the server sees work owned by the instance
+	states      func() map[string]string          // journal ID to the server's state of the instance
+	recordsOf   func() []store.SupervisorInstance // the server's record of each instance, build included, for identifying a holder without an ID in its lock
+	busy        func(string) (bool, error)        // whether the server sees work owned by the instance
 	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, when a process started, and the handover's
 	// waits, clock and signal (server.SupervisorHandover).
 	holder   func() (int, bool, error)
@@ -394,8 +395,15 @@ func (m *detachedSupervisorManager) restartNow() error {
 // stopInstance asks one instance to exit (SIGUSR1: retire at idle with turn interrupt, SIGTERM for one that does not announce an ID, so an
 // older build) and starts its bounded handover.
 func (m *detachedSupervisorManager) stopInstance(v instanceView, why string) error {
+	return m.stopInstanceSignal(v, why, v.journalID != "" || m.canInterrupt != nil && m.canInterrupt())
+}
+
+// stopInstanceSignal is stopInstance with the exit request chosen by the caller. A liveness handover never interrupts: a holder that
+// announces no ID is an older build, and the SIGUSR1 it would otherwise get is its restart signal (it would mark its running turns as
+// interrupted by the owner and stop accepting work on a connection the server has already retired), so it gets SIGTERM, a plain stop.
+func (m *detachedSupervisorManager) stopInstanceSignal(v instanceView, why string, interrupt bool) error {
 	stop := syscall.SIGTERM
-	if v.journalID != "" || m.canInterrupt != nil && m.canInterrupt() {
+	if interrupt {
 		stop = syscall.SIGUSR1
 	}
 	start := m.processStart(v.pid) // read before the signal: the handover signals this very process and no later owner of its pid

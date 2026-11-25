@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sort"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
@@ -50,6 +52,7 @@ type instanceTrack struct {
 	heldSince, unconnectedSince, emptySince time.Time
 	inspectedAt, spawnedAt, handoverAt      time.Time
 	journalID                               string // learned from the lock, or by opening the journal while it was free
+	identityLogged                          bool   // the one log line about why this holder without an ID in its lock stays unidentified was written
 }
 
 func (m *detachedSupervisorManager) now() time.Time {
@@ -136,6 +139,7 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 	}
 	activeUp := m.connected != nil && m.connected()
 	states := m.instanceStates(ctx)
+	identity := m.newHolderIdentity(views, conns)
 	unidentified := false
 	blockers, unconnected, started := 0, 0, false
 	legacyHeld := false
@@ -147,6 +151,7 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 		}
 		if !v.held {
 			t.heldSince, t.unconnectedSince, t.emptySince = time.Time{}, time.Time{}, time.Time{}
+			t.identityLogged = false
 			continue
 		}
 		if supervisor.IsLegacyJournal(v.path) {
@@ -155,13 +160,25 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 		if v.pid > 1 && anyHeldPID == 0 {
 			anyHeldPID = v.pid
 		}
-		if v.journalID == "" {
+		// The journal ID the rules act on: the lock file's, or the one the holder without an ID in its lock was matched to. An unmatched
+		// holder is left to its own devices: no rule of ours may cut it on a guess.
+		id := v.journalID
+		if id == "" {
 			unidentified = true
+			if v.pid > 1 {
+				if matched, why, ok := m.identifyHolder(ctx, identity, conns); ok {
+					id = matched
+					t.identityLogged = false
+				} else if !t.identityLogged {
+					t.identityLogged = true
+					log.Printf("supervisor swap: instance pid %d holds %s without a journal ID in its lock file; %s; leaving it alone", v.pid, filepath.Base(v.path), why)
+				}
+			}
 		}
 		if t.heldSince.IsZero() {
 			t.heldSince = now
 		}
-		connected := v.journalID != "" && conns[v.journalID] || v.journalID == "" && len(conns) > 0
+		connected := id != "" && conns[id]
 		if connected {
 			t.unconnectedSince = time.Time{}
 		} else {
@@ -173,7 +190,7 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 				blockers++
 			}
 		}
-		retiring := v.journalID != "" && states[v.journalID] == "retiring" || v.journalID == "" && activeUp
+		retiring := id != "" && states[id] == "retiring"
 		if v.pid <= 1 || !retiring || now.Sub(t.handoverAt) < instanceHandoverAgain && !t.handoverAt.IsZero() {
 			continue
 		}
@@ -181,11 +198,11 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 		case !connected && now.Sub(t.unconnectedSince) >= retireDisconnectLimit:
 			t.handoverAt = now
 			log.Printf("supervisor swap: retiring instance pid %d holds its journal without a server connection for %s; handing over", v.pid, retireDisconnectLimit)
-			if err := m.stopInstance(v, "liveness handover"); err != nil {
+			if err := m.stopInstanceSignal(v, "liveness handover", v.journalID != ""); err != nil {
 				fmt.Fprintln(m.stderr, "supervisor handover:", err)
 			}
-		case connected && v.journalID != "" && (m.busy != nil || m.store != nil && m.machineID != ""):
-			active, err := m.instanceBusy(ctx, v.journalID)
+		case connected && id != "" && (m.busy != nil || m.store != nil && m.machineID != ""):
+			active, err := m.instanceBusy(ctx, id)
 			switch {
 			case err != nil || active:
 				t.emptySince = time.Time{}
@@ -194,7 +211,7 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 			case now.Sub(t.emptySince) >= retireEmptyLimit:
 				t.handoverAt = now
 				log.Printf("supervisor swap: retiring instance pid %d has nothing to run for %s and did not exit; handing over", v.pid, retireEmptyLimit)
-				if err := m.stopInstance(v, "liveness handover"); err != nil {
+				if err := m.stopInstanceSignal(v, "liveness handover", v.journalID != ""); err != nil {
 					fmt.Fprintln(m.stderr, "supervisor handover:", err)
 				}
 			}
@@ -270,6 +287,19 @@ func (m *detachedSupervisorManager) instanceStates(ctx context.Context) map[stri
 	if m.states != nil {
 		return m.states()
 	}
+	records := m.instanceRecords(ctx)
+	states := make(map[string]string, len(records))
+	for _, item := range records {
+		states[item.JournalID] = item.State
+	}
+	return states
+}
+
+// instanceRecords is the server's record of each instance of the machine, build included: what identifies a holder whose lock file has no ID.
+func (m *detachedSupervisorManager) instanceRecords(ctx context.Context) []store.SupervisorInstance {
+	if m.recordsOf != nil {
+		return m.recordsOf()
+	}
 	if m.store == nil || m.machineID == "" {
 		return nil
 	}
@@ -277,11 +307,81 @@ func (m *detachedSupervisorManager) instanceStates(ctx context.Context) map[stri
 	if err != nil {
 		return nil
 	}
-	states := make(map[string]string, len(list))
-	for _, item := range list {
-		states[item.JournalID] = item.State
+	return list
+}
+
+// holderIdentity works out which server instance a holder without an ID in its lock file (an older build on the legacy journal) is, without
+// opening its journal. The holder's own connection carries the journal ID of its hello, so when it is connected, its is the one connection
+// whose ID no lock file on the machine claims (the current build always writes its ID next to the pid). When it is not connected, the only
+// sound left is the server's records: a retiring instance of an older build that no lock file claims and that is not connected either. Both
+// rules name exactly one instance or they refuse: with anything ambiguous the holder is left alone, because cutting it on a guess could cut
+// the wrong instance, which no rule here may do.
+type holderIdentity struct {
+	claimed  map[string]bool // the journal IDs this pass's lock files carry
+	idless   int             // held holders without an ID in their lock file
+	connsIDs []string        // the connections whose ID no lock file claims, sorted
+	records  []store.SupervisorInstance
+	connsUse bool
+	recsUse  bool
+}
+
+func (m *detachedSupervisorManager) newHolderIdentity(views []instanceView, conns map[string]bool) *holderIdentity {
+	h := &holderIdentity{claimed: map[string]bool{}}
+	for _, v := range views {
+		if v.held && v.journalID != "" {
+			h.claimed[v.journalID] = true
+		}
+		if v.held && v.journalID == "" {
+			h.idless++
+		}
 	}
-	return states
+	return h
+}
+
+// identify names the server instance of one ID-less holder, or says why it cannot. It is only asked when exactly one holder on the machine
+// lacks an ID: with more, no connection or record can be attributed to one of them.
+func (m *detachedSupervisorManager) identifyHolder(ctx context.Context, h *holderIdentity, conns map[string]bool) (id, why string, ok bool) {
+	if h.idless != 1 {
+		return "", fmt.Sprintf("%d held journals have no ID in their lock file, so none can be told from the others", h.idless), false
+	}
+	if !h.connsUse {
+		h.connsUse = true
+		for id := range conns {
+			if !h.claimed[id] {
+				h.connsIDs = append(h.connsIDs, id)
+			}
+		}
+		sort.Strings(h.connsIDs)
+	}
+	switch len(h.connsIDs) {
+	case 1:
+		return h.connsIDs[0], "", true
+	case 0:
+		// The holder is not connected (or its connection is one whose ID a lock claims, which cannot be). The server's records are left:
+		// an instance that is retiring, of a build that is not this manager's (an older build is the only kind that leaves no ID in its
+		// lock), that no lock file claims and that is not connected either.
+		if !h.recsUse {
+			h.recsUse = true
+			h.records = m.instanceRecords(ctx)
+		}
+		var candidates []string
+		for _, item := range h.records {
+			if item.State != "retiring" || item.Build == version || h.claimed[item.JournalID] || conns[item.JournalID] {
+				continue
+			}
+			candidates = append(candidates, item.JournalID)
+		}
+		switch len(candidates) {
+		case 1:
+			return candidates[0], "", true
+		case 0:
+			return "", "no connection whose journal no lock file names and no retiring record of an older build is left once every lock file's ID is accounted for", false
+		default:
+			return "", fmt.Sprintf("%d retiring records of older builds are left once every lock file's ID is accounted for", len(candidates)), false
+		}
+	default:
+		return "", fmt.Sprintf("%d connected instances have a journal no lock file names, so the holder without an ID cannot be told from them", len(h.connsIDs)), false
+	}
 }
 
 // writeOffVanished tells the server an instance is gone when its journal no longer exists anywhere (deleted by hand or by a disk that was
