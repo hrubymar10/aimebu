@@ -34,7 +34,7 @@ func (s *Server) grantAgentKeys(ctx context.Context, machine *machineConn, held 
 		if have[candidate.AgentID] || s.spawnKeys[fmt.Sprintf("%s/%d", candidate.AgentID, candidate.Generation)] != "" {
 			continue
 		}
-		if machine.retiring {
+		if s.connRetiring(machine) {
 			continue
 		}
 		blocked, err := s.handoverBlocked(ctx, machine.id, candidate.AgentID)
