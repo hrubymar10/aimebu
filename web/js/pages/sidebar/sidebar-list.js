@@ -104,6 +104,11 @@ function Row({ view, store, ctx, preview, onToggle }) {
   const add = () => newRoomDialog(store, room);
   const reopen = async () => { setReopening(true); if (!(await store.reopen(room))) setReopening(false); };
   const drag = controls ? dragHandlers(room, store) : {};
+  const statusCounts = room.kind === 'home' && !archivedProject ? ctx.statusCounts.get(room.project_id) : null;
+  const hasProjectStatus = statusCounts && statusCounts.needs + statusCounts.waiting + statusCounts.working > 0;
+  const memberBadge = counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`;
+  const healthBadge = (affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`;
+  const attentionBadge = attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`;
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
     ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${onToggle || (() => store.toggleCollapsed(room.id))}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
     <span class="room-item-icon-group"><span class=${`room-item-icon room-type-${type.key}`} data-room-type=${type.key} role="img" aria-label=${type.label} title=${type.label}><span class=${`icon-mask icon-mask-${type.icon}`} aria-hidden="true"></span></span></span>
@@ -112,16 +117,16 @@ function Row({ view, store, ctx, preview, onToggle }) {
     <span class="room-item-actions-slot"><span class="room-item-actions">${controls && manual && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
     <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} /></span></span>
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class=${ctx.filtering ? 'room-project room-project-needed' : 'room-project'} title=${`Project ${projectName}`}>${projectName}</span>`}
-    ${counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`}
+    ${!hasProjectStatus && memberBadge}
     </span>
     ${room.restricted && html`<span class="room-restricted" role="img" aria-label="Restricted room" title="Restricted room"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg></span>`}
-    ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
+    ${!hasProjectStatus && healthBadge}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${status ? html`<span class=${`room-state room-status room-status-${status.key}`} role="img" title=${status.title} aria-label=${`${status.label}: ${status.title}`}>${status.label}</span>` : room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
-    ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
+    ${!hasProjectStatus && attentionBadge}
     ${view.mention && html`<span class="room-item-mention" role="img" title="You were mentioned" aria-label="You were mentioned"></span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
-    ${room.kind === 'home' && !archivedProject && html`<${ProjectStatus} counts=${ctx.statusCounts.get(room.project_id)} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} />`}
+    ${hasProjectStatus && html`<span class="project-badges"><span class="project-badge-group">${healthBadge}${memberBadge}${attentionBadge}</span><${ProjectStatus} counts=${statusCounts} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} /></span>`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
   return row;

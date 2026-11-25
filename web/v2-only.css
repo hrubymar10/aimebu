@@ -197,18 +197,18 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item .room-item-top { flex-wrap: nowrap; }
 .room-item .room-name-line { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .room-item .room-item-name { flex: 1 1 0; min-width: 0; border: 0; background: transparent; text-align: left; }
-/* A project row also carries its task status pill. When the full name line and the pill do not both fit on one line, the row becomes three lines (name, pill,
-   preview). The name line (name, its buttons and the badges that fit) is one flex unit that wraps as a whole: the pill moves to its own line before anything
-   on the name line gives up room, and nothing there is cut while the line alone fits the row. Inside the line the badges flow after the name text and wrap
-   to a line of their own (above the pill) only when the name alone fills the column; the name is never shrunk or overlapped by a badge — a badge starts at
-   or after the name text's own right edge (the hover-actions slot's negative margin is cancelled here). The name itself is cut only when it alone is wider
-   than the row. The house icon and the expand chevron stay vertically centred on the whole row in both layouts. */
+/* A project with a task status keeps the name and its badges as separate flex units. The name takes its full intrinsic width before
+   the badges move below it; only a name wider than the text column gets an ellipsis. Warning, member count and bell are one unbreakable
+   group, while the status pill can wrap after that group. The preview follows beneath the complete top area. */
 .room-item .room-item-top:has(.project-status) { flex-wrap: wrap; row-gap: 2px; }
 .room-group > .room-item:has(.project-status-wrap) { align-items: center; }
-.room-item .room-item-top:has(.project-status) > .room-name-line { flex-wrap: wrap; max-width: 100%; row-gap: 2px; }
+.room-item .room-item-top:has(.project-status) > .room-name-line { flex: 0 1 auto; max-width: 100%; }
 .room-item .room-item-top:has(.project-status) > .room-name-line .room-item-name { flex: 0 0 auto; min-width: 0; max-width: 100%; }
 .room-item .room-item-top:has(.project-status) > .room-name-line .room-project { flex: 0 1 auto; }
 .room-item .room-item-top:has(.project-status) > .room-name-line .room-item-actions-slot { margin-right: 0; }
+.room-item .project-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 0 1 auto; max-width: 100%; min-width: 0; }
+.room-item .project-badge-group { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
+.room-item .project-badge-group > [hidden] { display: none; }
 .room-restricted { display: inline-flex; align-items: center; color: var(--text-muted); }
 .room-item :is(.room-item-top, .room-name-line) > :not(.room-item-name):not(.room-name-line) { flex: none; white-space: nowrap; }
 /* A nested row at the narrowest column leaves the badges less room than they need even with no name at all, and a badge must not wrap or leave the row, so the ones the

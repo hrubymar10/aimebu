@@ -1793,68 +1793,68 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
       assert.equal(await page.$('.project-status-switch'), null, 'no variant switcher remains');
     }
-    // In a narrow rooms column a project name and the pill do not both fit: the pill drops below the name and the name keeps its full
-    // width (it is cut only when it alone is wider than the row); wide, everything stays on one line. 'Wrapping Project' (16 chars, about
-    // 102px) fits the 220px column's text area alone but not beside the pill, so it is the genuine case 2; a name wider than the text area
-    // alone is case 3, and that is checked too.
-    await page.evaluate(() => { const name = 'Wrapping Project'; document.documentElement.dataset.theme = 'dark'; localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; window.__sidebar.rooms.get('rm_api').attention_count = 0; });
-    await page.evaluate(() => window.__sidebar.store.touch());
+    // The complete project row can carry a warning, member count, attention bell and status pill at once.
+    // One pixel of tolerance on element edges accounts only for subpixel rounding; the name uses exact integer widths.
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); window.__sidebar.rooms.get('rm_api').attention_count = 1; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_ah'], flags: [{ code: 'stuck' }] }]); });
     await page.setViewport({ width: 1280, height: 800 });
-    await settle(page);
     const measureRow = () => page.evaluate(() => {
       const row = document.querySelector('[data-room-id=rm_ah] > .room-item');
-      const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; };
-      const centre = box => box.top + box.height / 2;
-      const name = row.querySelector('.room-item-name'), pill = row.querySelector('.project-status'), preview = row.querySelector('.room-item-preview');
-      const count = row.querySelector('.room-item-count');
-      // The name's TEXT width (a Range over its contents), not the element box: the box may be wider than the letters, and a badge that starts
-      // inside the box but after the letters is not an overlap.
-      const nameRange = document.createRange(); nameRange.selectNodeContents(name);
-      const nameText = nameRange.getBoundingClientRect();
-      const countBox = count ? count.getBoundingClientRect() : null;
-      const sameLine = (a, b) => Math.abs(a.top - b.top) < 4;
-      const rowBox = rect(row), icon = rect(row.querySelector('.room-item-icon-group')), chevron = rect(row.querySelector('.room-collapse'));
-      const infoWidth = row.querySelector('.room-item-info').getBoundingClientRect().width;
-      return { row: rowBox, info: rect(row.querySelector('.room-item-info')), name: { ...rect(name), clipped: name.scrollWidth > name.clientWidth, scrollW: name.scrollWidth, clientW: name.clientWidth }, nameText: { width: nameText.width, right: nameText.right, bottom: nameText.bottom }, textFitsAlone: nameText.width <= infoWidth, pill: rect(pill), preview: preview ? rect(preview) : null,
-        countOnNameLine: countBox ? sameLine(countBox, name.getBoundingClientRect()) : null,
-        badgeOverlapsName: countBox ? (sameLine(countBox, name.getBoundingClientRect()) && countBox.left < nameText.right - 1) : null,
-        iconOff: Math.abs(centre(icon) - centre(rowBox)), chevronOff: Math.abs(centre(chevron) - centre(rowBox)) };
+      const box = node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
+      const name = row.querySelector('.room-item-name'), info = row.querySelector('.room-item-info');
+      const text = document.createRange(); text.selectNodeContents(name);
+      const rowBox = box(row), nameBox = box(name), badgeNames = ['.room-health', '.room-item-count', '.room-item-attention'];
+      const badges = badgeNames.map(selector => box(row.querySelector(selector)));
+      const pill = box(row.querySelector('.project-status'));
+      const visible = [...row.querySelectorAll('*')].filter(node => {
+        const style = getComputedStyle(node), r = node.getBoundingClientRect();
+        return !node.classList.contains('sr-only') && style.display !== 'none' && style.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+      });
+      const overflow = visible.filter(node => node.getBoundingClientRect().right > rowBox.right + 1).map(node => ({ className: node.className?.baseVal || node.className, right: node.getBoundingClientRect().right }));
+      const centre = node => { const r = node.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+      return { row: rowBox, contentWidth: box(info).width, name: { ...nameBox, scrollWidth: name.scrollWidth, clientWidth: name.clientWidth, textWidth: text.getBoundingClientRect().width },
+        badges, pill, preview: box(row.querySelector('.room-item-preview')), overflow,
+        iconOff: Math.abs(centre(row.querySelector('.room-item-icon-group')) - centre(row)), chevronOff: Math.abs(centre(row.querySelector('.room-collapse')) - centre(row)) };
     });
-    const shot = (where, box) => page.screenshot({ path: `/tmp/una-a125-${where}.png`, clip: { x: Math.max(0, box.row.left - 6), y: Math.max(0, box.row.top - 6), width: box.row.width + 12, height: box.row.height + 12 } });
-    const narrowChecks = (box, label) => {
-      assert.equal(box.name.clipped, false, `${label}: the full project name is not cut to make room for the pill`);
-      assert.equal(box.badgeOverlapsName, false, `${label}: no badge covers the name's text`);
-      assert.ok(box.pill.top >= box.nameText.bottom - 1, `${label}: the pill sits below the name`);
-      assert.ok(box.preview && box.preview.top >= box.pill.bottom - 1, `${label}: the preview sits below the pill`);
-      assert.ok(box.iconOff <= 2.5, `${label}: the house icon is centred on the row (${box.iconOff.toFixed(1)} px off)`);
-      assert.ok(box.chevronOff <= 2.5, `${label}: the expand chevron is centred on the row (${box.chevronOff.toFixed(1)} px off)`);
-      assert.ok(box.countOnNameLine !== null && box.countOnNameLine, `${label}: the member-count badge stays on the name's line (the attention bell is zeroed for this fixture)`);
+    const setCase = async (name, width) => {
+      await page.evaluate((name, width) => { window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; document.getElementById('app-view').style.setProperty('--rooms-w', `${width}px`); window.__sidebar.store.touch(); }, name, width);
+      await settle(page);
     };
-    await page.evaluate(() => document.getElementById('app-view').style.setProperty('--rooms-w', '220px'));
-    await settle(page);
-    const narrow = await measureRow();
-    assert.ok(narrow.textFitsAlone, 'narrow: the case-2 fixture name fits the column alone (it is a genuine fits-alone-but-not-beside-the-pill case)');
-    narrowChecks(narrow, 'narrow');
-    await shot('narrow', narrow);
-    await page.evaluate(() => document.getElementById('app-view').style.setProperty('--rooms-w', '480px'));
-    await settle(page);
-    const wide = await measureRow();
-    assert.equal(wide.name.clipped, false, 'wide: the name is not cut');
-    assert.ok(wide.pill.top < wide.name.bottom - 1, 'wide: the pill stays on the name line');
-    assert.ok(wide.iconOff <= 2.5, `wide: the house icon is centred on the row (${wide.iconOff.toFixed(1)} px off)`);
-    assert.ok(wide.chevronOff <= 2.5, `wide: the expand chevron is centred on the row (${wide.chevronOff.toFixed(1)} px off)`);
-    await shot('wide', wide);
-    // A name that alone is wider than the row is cut, pill or no pill: the rule cuts only then. The row's title (the row shows the
-    // home room's title, not the project name) goes with the project name so the check measures the name itself.
-    await page.evaluate(() => { const name = 'Alpha wrapping check with a few more words'; window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; });
-    await page.evaluate(() => window.__sidebar.store.touch());
-    await page.evaluate(() => document.getElementById('app-view').style.setProperty('--rooms-w', '220px'));
-    await settle(page);
-    const longNarrow = await measureRow();
-    assert.equal(longNarrow.name.clipped, true, 'narrow: a name wider than the row alone is cut');
-    assert.ok(longNarrow.pill.top >= longNarrow.name.bottom - 1, 'narrow: the pill still sits below the cut name');
-    assert.ok(longNarrow.row.height <= longNarrow.info.height + longNarrow.row.height * 0.34, `narrow: the cut keeps the row at its three text lines plus the row's own padding (row ${longNarrow.row.height.toFixed(0)}px, text column ${longNarrow.info.height.toFixed(0)}px)`);
-    await shot('narrow-long', longNarrow);
+    const check = (box, label, expectClip) => {
+      assert.ok(box.name.width > 0, `${label}: name has non-zero rendered width`);
+      assert.equal(box.name.textWidth > box.contentWidth, expectClip, `${label}: fixture determines whether name alone exceeds text column`);
+      assert.equal(box.name.scrollWidth > box.name.clientWidth, expectClip, `${label}: name is clipped exactly when it alone exceeds text column`);
+      assert.deepEqual(box.overflow, [], `${label}: no visible child crosses the row's right edge`);
+      assert.ok(box.iconOff <= 2.5, `${label}: house icon is centered (${box.iconOff.toFixed(2)} px)`);
+      assert.ok(box.chevronOff <= 2.5, `${label}: chevron is centered (${box.chevronOff.toFixed(2)} px)`);
+      assert.ok(box.badges.every(badge => Math.abs(badge.top - box.badges[0].top) < 2), `${label}: warning, member count and bell stay grouped`);
+      assert.ok(box.badges[0].width && box.badges[1].width && box.badges[2].width && box.pill.width, `${label}: all badges and pill render`);
+      assert.ok(box.pill.top >= box.badges[0].bottom - 1 ||
+        (box.pill.left >= box.badges[2].right - 1 && box.pill.bottom > box.badges[0].top), `${label}: pill follows the badge group`);
+      assert.ok(box.preview.top >= Math.max(box.pill.bottom, ...box.badges.map(badge => badge.bottom)) - 1, `${label}: preview follows badges and pill`);
+      console.log(`project-row ${label}: scrollWidth=${box.name.scrollWidth} clientWidth=${box.name.clientWidth} contentWidth=${box.contentWidth.toFixed(2)} nameWidth=${box.name.width.toFixed(2)} badgeTop=${box.badges[0].top.toFixed(2)} pillTop=${box.pill.top.toFixed(2)}`);
+    };
+    const shot = async label => {
+      if (!process.env.AIMEBU_SIDEBAR_SHOTS) return;
+      const file = path.join(process.env.AIMEBU_SIDEBAR_SHOTS, `${label}.png`);
+      const row = await page.$('[data-room-id=rm_ah] > .room-item');
+      await row.evaluate(node => node.scrollIntoView({ block: 'center' }));
+      await page.mouse.move(1200, 780);
+      await page.evaluate(() => document.activeElement?.blur());
+      await row.screenshot({ path: file });
+    };
+    for (const [label, name, width, clipped] of [
+      ['narrow-short', 'Alpha', 220, false],
+      ['narrow-fit', 'Wrapping Project', 220, false],
+      ['narrow-truncated', 'Alpha wrapping check with a few more words', 220, true],
+      ['wide', 'Wrapping Project', 480, false],
+    ]) {
+      await setCase(name, width);
+      const box = await measureRow();
+      check(box, label, clipped);
+      if (label !== 'narrow-short' && width === 220) assert.ok(box.badges[0].top >= box.name.bottom - 1, `${label}: badges wrap below the name`);
+      if (width === 480) assert.ok(box.badges[0].top < box.name.bottom - 1, 'wide: name and badges share a line');
+      await shot(label);
+    }
     await page.evaluate(() => { document.getElementById('app-view').style.removeProperty('--rooms-w'); localStorage.removeItem('aimebu2.ui.sidebar_preview.usr_me'); window.__sidebar.projects.get('prj_a').name = 'Alpha'; window.__sidebar.rooms.get('rm_ah').title = 'Alpha'; window.__sidebar.rooms.get('rm_api').attention_count = 0; });
     await page.evaluate(() => window.__sidebar.store.touch());
     await page.setViewport({ width: 390, height: 844 });
