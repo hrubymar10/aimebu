@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -79,6 +80,10 @@ type Client struct {
 	// NoAttachmentSave makes the client behave like a build from before attachment_save, for the same kind of test.
 	NoAttachmentSave bool
 	retireRequested  atomic.Bool
+	retired          atomic.Bool // Run ended because a retire request found nothing owed (FinishRetire removes the journal then)
+	// DrainOnly marks an instance that only finishes the work a dead predecessor left in its journal: hello says so, so the server sends it nothing
+	// new, and it retires as soon as its connection is up.
+	DrainOnly bool
 	// disconnectedDrops counts the sends that failed for want of a connection since the last one: the first is logged, the rest only
 	// counted and summed up in one line when the connection is back (logDisconnectedDrops).
 	disconnectedDrops  atomic.Int64
@@ -263,7 +268,8 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if c.retireRequested.Load() && !c.hasRetireBlockingWork() {
+		if c.retireRequested.Load() && !c.retireOwes() {
+			c.retired.Store(true)
 			return nil
 		}
 		if c.IdleDisconnectLimit > 0 {
@@ -373,7 +379,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsAgentConversationLog: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsAttachmentSave: !c.NoAttachmentSave, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsHandoffOutcome: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, DrainOnly: c.DrainOnly, SupervisorVersion: c.SupervisorVersion, SupervisorEnvironment: c.EnvironmentFingerprint, SupportsRetireAtIdle: true, SupportsPathProbe: true, SupportsDirectoryList: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionCopy: true, SupportsLegacySessionCopy: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsProviders: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsAgentConversationLog: c.AgentLogs != nil, SupportsStopReplay: true, SupportsTurnInterrupt: !c.NoTurnInterrupt, SupportsAttachmentSave: !c.NoAttachmentSave, SupportsTelemetryConfig: c.OnTelemetry != nil, SupportsAgentKeys: true, SupportsCommands: true, SupportsContainerCommands: true, SupportsHandoffOutcome: true, SupportsWarm: c.warmCapable(), HeldKeys: c.heldKeys(), Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents, CommandOpen: openCommands, CommandExits: commandExits}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -386,17 +392,13 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	c.logDisconnectedDrops()
 	// A retire request belongs to the previous server connection. The new
 	// server sends another retire frame after this ack if it still needs one.
-	if c.retireRequested.Swap(false) && !c.shutdownRequested.Load() {
+	if !c.DrainOnly && c.retireRequested.Swap(false) && !c.shutdownRequested.Load() {
 		c.mu.Lock()
 		c.stopping = false
 		c.mu.Unlock()
 	}
 	// New keys first, before anything that could start a turn: an agent that lost its key with a restart gets another here.
-	for _, grant := range ack.AgentKeys {
-		if err := c.setAgentKey(grant.AgentID, grant.Key); err != nil {
-			c.report("an agent key from the server could not be stored", fmt.Errorf("key for agent %s: %w", grant.AgentID, err))
-		}
-	}
+	c.applyAgentKeys(ack.AgentKeys)
 	c.mu.Lock()
 	c.harnessProbeDir = ack.HarnessProbeDir
 	c.harnessProbeMore = ack.HarnessProbeDirs
@@ -504,6 +506,16 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	if c.DrainOnly {
+		// The holder that ran these turns is dead and a drain instance starts no process: a turn its journal still lists as running has no
+		// process, and the server has just lost it (or settled it from the hello). Ending it here is what lets the journal become empty.
+		if n, err := c.Journal.EndDeadTurns(ctx, adapter.ExitInfo{ExitCode: -1, ErrorEvent: "supervisor_lost", ErrorSummary: "the supervisor that ran this turn died"}); err != nil {
+			c.replayReadFailed(ctx, err)
+			return err
+		} else if n > 0 {
+			log.Printf("supervisor drain: ended %d turn(s) whose supervisor died", n)
+		}
+	}
 	exits, err := c.Journal.PendingExits(ctx)
 	if err != nil {
 		c.replayReadFailed(ctx, err)
@@ -541,6 +553,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	if c.OnReady != nil {
 		c.OnReady()
 	}
+	if c.DrainOnly {
+		c.beginRetire(ctx, conn, probeCtx)
+	}
 	interval := c.PingInterval
 	if interval <= 0 {
 		interval = 15 * time.Second
@@ -572,25 +587,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 		switch frame.Type {
 		case protocol.RetireAtIdle:
-			c.retireRequested.Store(true)
-			c.mu.Lock()
-			c.stopping = true
-			c.mu.Unlock()
-			go func() {
-				ticker := time.NewTicker(250 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					if !c.hasRetireBlockingWork() {
-						_ = conn.CloseNow()
-						return
-					}
-					select {
-					case <-probeCtx.Done():
-						return
-					case <-ticker.C:
-					}
-				}
-			}()
+			c.beginRetire(ctx, conn, probeCtx)
+		case protocol.AgentKeys:
+			c.applyAgentKeys(frame.AgentKeys)
 		case protocol.TurnInterrupt:
 			if c.NoTurnInterrupt {
 				continue // a build from before the frame does not know its type

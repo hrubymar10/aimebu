@@ -87,39 +87,60 @@ func startDetachedSupervisor(config serverConfig) error {
 		fmt.Fprintf(os.Stderr, "adopting local supervisor pid %d; waiting for its machine connection\n", pid)
 		return nil
 	}
+	_, err = startSupervisorInstance(config, "", false)
+	return err
+}
+
+// startSupervisorInstance starts one detached local supervisor instance. journal is the journal it owns ("" is the legacy
+// supervisor/journal.sqlite); drain starts it with --drain, so it only finishes what a dead instance left in that journal.
+func startSupervisorInstance(config serverConfig, journal string, drain bool) (int, error) {
 	serverURL, err := localSupervisorURL(config)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	executable, err := daemonExecutable()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	logPath := filepath.Join(config.root, "supervisor", "aimebu.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer logFile.Close()
 	null, err := os.Open(os.DevNull)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer null.Close()
-	command := exec.Command(executable, "supervisor", "--local")
+	args := []string{"supervisor", "--local"}
+	if journal != "" {
+		args = append(args, "--journal", journal)
+	}
+	if drain {
+		args = append(args, "--drain")
+	}
+	command := exec.Command(executable, args...)
 	command.Stdin, command.Stdout, command.Stderr = null, logFile, logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	command.Env = append(os.Environ(), "AIMEBU_URL="+serverURL)
 	markInheritedFDsCloseOnExec()
 	if err := command.Start(); err != nil {
-		return err
+		return 0, err
 	}
 	if daemonSpawned != nil {
 		daemonSpawned(command.Process.Pid)
 	}
-	log.Printf("supervisor swap: started supervisor pid %d", command.Process.Pid)
+	switch {
+	case drain:
+		log.Printf("supervisor swap: started drain instance pid %d to finish the journal %s", command.Process.Pid, filepath.Base(journal))
+	case journal != "":
+		log.Printf("supervisor swap: started supervisor instance pid %d on journal %s", command.Process.Pid, filepath.Base(journal))
+	default:
+		log.Printf("supervisor swap: started supervisor pid %d", command.Process.Pid)
+	}
 	go func() { _ = command.Wait() }()
-	return nil
+	return command.Process.Pid, nil
 }
 
 // The running server may outlive replacement of the executable on disk. Ask
@@ -139,11 +160,16 @@ func onDiskSupervisorVersion() (string, error) {
 }
 
 func supervisorPID(root string) (int, bool, error) {
+	return journalHolderPID(supervisorJournalPath(root))
+}
+
+// journalHolderPID is the verified pid of the supervisor that holds one journal's lock.
+func journalHolderPID(journal string) (int, bool, error) {
 	var held bool
 	var owner string
 	var err error
 	for attempt := 0; attempt < 20; attempt++ {
-		held, owner, err = supervisor.JournalOwner(supervisorJournalPath(root))
+		held, owner, err = supervisor.JournalOwner(journal)
 		if err != nil || !held || owner != "" {
 			break
 		}
@@ -178,6 +204,17 @@ type detachedSupervisorManager struct {
 	replaceOverdue func(context.Context) (bool, error)
 	stopMu         sync.Mutex
 	stopWatched    map[int]bool // the pids a stop was sent to and whose exit is being waited for
+	// instances is what the manager keeps of each supervisor instance of the machine, one journal each (supervisor_instances.go); the
+	// functions after it are what its tests replace.
+	instancesMu sync.Mutex
+	instances   map[string]*instanceTrack
+	lastSpawn   time.Time
+	connections func() map[string]bool // journal ID of every connected local instance, active or retiring
+	spawn       func(journal string, drain bool) error
+	clock       func() time.Time
+	scan        func() []instanceView
+	states      func() map[string]string   // journal ID to the server's state of the instance
+	busy        func(string) (bool, error) // whether the server sees work owned by the instance
 	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, when a process started, and the handover's
 	// waits, clock and signal (server.SupervisorHandover).
 	holder   func() (int, bool, error)
@@ -191,6 +228,11 @@ type detachedSupervisorManager struct {
 // replacement can start: the journal keeps what its turns reported, and the replacement delivers it. start is the process's start time
 // when the stop was sent: a pid that belongs to another process by the time a signal is due is never signalled.
 func (m *detachedSupervisorManager) killIfStuck(pid int, start string) {
+	m.killIfStuckOn(pid, start, supervisorJournalPath(m.config.root))
+}
+
+// killIfStuckOn is killIfStuck for the instance that holds the given journal.
+func (m *detachedSupervisorManager) killIfStuckOn(pid int, start, journal string) {
 	m.stopMu.Lock()
 	if m.stopWatched == nil {
 		m.stopWatched = make(map[int]bool)
@@ -208,7 +250,7 @@ func (m *detachedSupervisorManager) killIfStuck(pid int, start string) {
 	handover := m.handover
 	holder := m.holder
 	if holder == nil {
-		holder = func() (int, bool, error) { return supervisorPID(m.config.root) }
+		holder = func() (int, bool, error) { return journalHolderPID(journal) }
 	}
 	handover.Holds = func(p int) (bool, error) {
 		current, held, err := holder()
@@ -333,28 +375,39 @@ func (m *detachedSupervisorManager) cancelLegacyDrain() {
 	m.legacyMu.Unlock()
 }
 
+// restartNow is the owner's Restart now: every supervisor instance of the machine is asked to stop, the bounded handover follows each, and the
+// manager's next pass starts the replacement. Without a running instance it starts one.
 func (m *detachedSupervisorManager) restartNow() error {
-	pid, held, err := supervisorPID(m.config.root)
-	if err != nil {
-		return err
-	}
-	if !held {
+	held := m.heldInstances()
+	if len(held) == 0 {
 		return startDetachedSupervisor(m.config)
 	}
+	var first error
+	for _, v := range held {
+		if err := m.stopInstance(v, "retire requested"); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// stopInstance asks one instance to exit (SIGUSR1: retire at idle with turn interrupt, SIGTERM for one that does not announce an ID, so an
+// older build) and starts its bounded handover.
+func (m *detachedSupervisorManager) stopInstance(v instanceView, why string) error {
 	stop := syscall.SIGTERM
-	if m.canInterrupt != nil && m.canInterrupt() {
+	if v.journalID != "" || m.canInterrupt != nil && m.canInterrupt() {
 		stop = syscall.SIGUSR1
 	}
-	start := m.processStart(pid) // read before the signal: the handover signals this very process and no later owner of its pid
-	if err := syscall.Kill(pid, stop); err != nil {
+	start := m.processStart(v.pid) // read before the signal: the handover signals this very process and no later owner of its pid
+	if err := syscall.Kill(v.pid, stop); err != nil {
 		return err
 	}
 	signalName := "SIGTERM"
 	if stop == syscall.SIGUSR1 {
 		signalName = "SIGUSR1, retire at idle with turn interrupt"
 	}
-	log.Printf("supervisor swap: retire requested: pid %d, stop signal %s, %s", pid, signalName, m.openTurnsNote())
-	m.killIfStuck(pid, start)
+	log.Printf("supervisor swap: %s: pid %d, journal %s, stop signal %s, %s", why, v.pid, filepath.Base(v.path), signalName, m.openTurnsNote())
+	m.killIfStuckOn(v.pid, start, v.path)
 	return nil
 }
 
@@ -377,58 +430,20 @@ func (m *detachedSupervisorManager) ctxOrBackground() context.Context {
 	return context.Background()
 }
 
+// run keeps the machine's supervisor instances going until the server stops: every pass looks at the journals and the server's view of them
+// (supervisor_instances.go).
 func (m *detachedSupervisorManager) run(ctx context.Context) {
-	announcedPID := 0
-	backoff := time.Second
-	var disconnectedAt time.Time
-	everConnected := false
 	select {
 	case <-ctx.Done():
 		return
-	case <-time.After(backoff):
+	case <-time.After(time.Second):
 	}
 	for ctx.Err() == nil {
-		if m.connected != nil && m.connected() {
-			disconnectedAt = time.Time{}
-			everConnected = true
-			backoff = time.Second
-			if pid, held, err := supervisorPID(m.config.root); err == nil && held && pid != announcedPID {
-				announcedPID = pid
-				log.Printf("supervisor swap: supervisor pid %d connected", pid)
-			}
-		} else if _, held, err := supervisorPID(m.config.root); err != nil {
-			fmt.Fprintln(m.stderr, "supervisor:", err)
-		} else if !held {
-			disconnectedAt = time.Time{}
-			everConnected = false
-			if err := startDetachedSupervisor(m.config); err != nil {
-				fmt.Fprintln(m.stderr, "supervisor respawn:", err)
-			}
-			backoff = min(backoff*2, 30*time.Second)
-		} else if disconnectedAt.IsZero() {
-			disconnectedAt = time.Now()
-		} else if replaced, err := m.overdue(ctx, disconnectedAt); err != nil {
-			fmt.Fprintln(m.stderr, "supervisor replacement:", err)
-			disconnectedAt = time.Now()
-		} else if replaced {
-			fmt.Fprintln(m.stderr, "supervisor was told to retire, did not exit within the grace and is not connected; requested its restart")
-			disconnectedAt = time.Now()
-		} else if !everConnected && time.Since(disconnectedAt) > 30*time.Second {
-			active, err := m.store.MachineActiveWork(ctx, m.machineID)
-			if err != nil {
-				fmt.Fprintln(m.stderr, "supervisor restart check:", err)
-			} else if !active {
-				fmt.Fprintln(m.stderr, "supervisor is holding the journal without connecting to this server; requesting its restart")
-				if err := m.restartNow(); err != nil {
-					fmt.Fprintln(m.stderr, "supervisor restart:", err)
-				}
-			}
-			disconnectedAt = time.Now()
-		}
+		m.pass(ctx)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
+		case <-time.After(instancePassEvery):
 		}
 	}
 }
@@ -459,29 +474,62 @@ func looksLikeAimebuSupervisor(exe, command string) bool {
 	return false
 }
 
+// heldSupervisors are the verified supervisor processes of this config directory, one per instance journal.
+func heldSupervisors(root string) ([]instanceView, error) {
+	var out []instanceView
+	for _, path := range supervisor.InstanceJournals(filepath.Join(root, "supervisor")) {
+		pid, held, err := journalHolderPID(path)
+		if err != nil {
+			return nil, err
+		}
+		if held {
+			out = append(out, instanceView{path: path, held: true, pid: pid})
+		}
+	}
+	// A legacy journal that does not exist yet is probed too, as before.
+	if len(out) == 0 {
+		if pid, held, err := supervisorPID(root); err != nil {
+			return nil, err
+		} else if held {
+			out = append(out, instanceView{path: supervisorJournalPath(root), held: true, pid: pid})
+		}
+	}
+	return out, nil
+}
+
 func stopDetachedSupervisor(root string, stdout, stderr io.Writer) int {
-	pid, held, err := supervisorPID(root)
+	held, err := heldSupervisors(root)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if !held {
+	if len(held) == 0 {
 		fmt.Fprintln(stdout, "supervisor is not running")
 		return 0
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+	for _, v := range held {
+		if err := syscall.Kill(v.pid, syscall.SIGTERM); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	deadline := time.Now().Add(daemonStopLimit)
 	for time.Now().Before(deadline) {
-		if running, _, err := supervisor.JournalOwner(supervisorJournalPath(root)); err == nil && !running {
-			fmt.Fprintf(stdout, "supervisor stopped (was pid %d)\n", pid)
+		all := true
+		for _, v := range held {
+			if running, _, err := supervisor.JournalOwner(v.path); err != nil || running {
+				all = false
+			}
+		}
+		if all {
+			for _, v := range held {
+				fmt.Fprintf(stdout, "supervisor stopped (was pid %d)\n", v.pid)
+			}
 			return 0
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	fmt.Fprintf(stderr, "supervisor pid %d is still stopping; check %s\n", pid, filepath.Join(root, "supervisor", "aimebu.log"))
+	fmt.Fprintf(stderr, "supervisor is still stopping; check %s\n", filepath.Join(root, "supervisor", "aimebu.log"))
 	return 1
 }
 
@@ -493,16 +541,23 @@ func supervisorControl(action string, stdout, stderr io.Writer) int {
 	}
 	switch action {
 	case "status":
-		pid, held, err := supervisorPID(config.root)
+		held, err := heldSupervisors(config.root)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if !held {
+		if len(held) == 0 {
 			fmt.Fprintln(stdout, "supervisor is not running")
 			return 1
 		}
-		fmt.Fprintf(stdout, "supervisor is running (pid %d)\n", pid)
+		if len(held) == 1 {
+			fmt.Fprintf(stdout, "supervisor is running (pid %d)\n", held[0].pid)
+			return 0
+		}
+		fmt.Fprintf(stdout, "supervisor is running (%d instances side by side)\n", len(held))
+		for _, v := range held {
+			fmt.Fprintf(stdout, "  pid %d, journal %s\n", v.pid, filepath.Base(v.path))
+		}
 		return 0
 	case "restart":
 		answered, err := askServerToRestartSupervisor(config)

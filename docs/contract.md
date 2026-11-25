@@ -1570,8 +1570,21 @@ or reports its warm process. New work for other agents proceeds on the active
 instance. There is no replacement grace or automatic turn interruption during
 normal retirement. The owner can choose Restart now to interrupt current work
 and trigger the ordinary auto-continue. The bounded handover remains for an
-instance that loses its connection or remains alive after becoming empty.
-A crashed instance is recovered from its own journal.
+instance that holds its journal lock without a server connection for about ten
+minutes, or that the server sees as empty for about a minute and that does not
+exit: the exit request, SIGTERM after 30 seconds, SIGKILL of its process tree
+after 15 more, sparing verified detached jobs. An instance that is doing work
+is never cut. The local manager starts the next instance when none is active:
+on the legacy `supervisor/journal.sqlite` when its lock is free, otherwise on a
+fresh `supervisor/journals/<name>.sqlite` next to the old one (`aimebu
+supervisor --local --journal <path>`). A supervisor started while another
+instance holds the default journal's lock, local or remote, picks such a
+journal by itself, so upgrading a remote host is starting the new build. A
+crashed instance is recovered from its own journal: when its lock is free and
+the journal owes work, a `--drain` process of the current build (a regular
+supervisor when no instance is active) finishes it, removes the journal and
+exits. A journal that owes nothing is removed, except the legacy path. The lock
+file holds the owner's pid and, after it, the journal ID.
 Migration 141 removes the saved replacement grace value.
 If the executable on disk is newer than the
 running server, its supervisor keeps dispatching and the server reports that
@@ -1605,7 +1618,10 @@ it never silently reruns a turn with uncertain effects.
 - S→M `retire_at_idle{v}` asks a detached supervisor to reject new work, finish
   its running turns and all command jobs, retire idle warm processes, and
   exit after its journaled acknowledgements are complete. Normal work has no
-  replacement deadline.
+  replacement deadline. The server sends it again after each `hello_ack` to an
+  instance it holds as retiring, so one that reconnects resumes retiring. An
+  instance that retired with nothing owed removes its journal; started again on
+  that path it has a new `journal_id` and counts as a new instance.
 - `supports_turn_interrupt=true` in `hello` says the supervisor cuts one
   running turn on a `turn_interrupt` frame (§4.2) and leaves its agent
   running. The server sends the frame only to a supervisor that says so; for

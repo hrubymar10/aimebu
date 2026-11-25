@@ -11,7 +11,7 @@ stops both.
 The agent-tools bridge retries connection failures and maintenance responses
 for up to a minute; keyed writes retain their request key. Other server
 errors reach the agent immediately.
-`aimebu supervisor status` shows its PID, and `aimebu supervisor restart`
+`aimebu supervisor status` shows its PID (one line per instance while several run side by side), and `aimebu supervisor restart`
 asks the running server to replace it using the server's environment. If the
 server is absent, the command starts a replacement from the CLI environment.
 If a server holds the config directory but does not answer the request, the
@@ -32,11 +32,71 @@ There is no replacement grace or automatic interruption of a turn during a
 normal swap. Restart now remains an explicit interruption. A bounded handover
 is reserved for a disconnected or empty instance that does not exit. An
 instance that crashes with open work is recovered from its own journal.
+See "Side by side" below for how the instances are started and finished.
 If the executable on disk is newer than the running server, restart the
 server to use that build; repeated supervisor replacements do not help.
 After 24 hours without
 a server connection and with no active turn or command, it exits by itself.
 Its output is in `supervisor/aimebu.log`.
+
+### Side by side
+
+An upgrade starts a new supervisor instance next to the old one; nothing is
+replaced. The server tells instances apart by `journal_id` and routes new work
+to the one that matches its build and environment (see above). The local manager
+(in the server process) keeps the instances running:
+
+- **A mismatch starts the next instance.** When no instance is active and the
+  server has the old one connected as retiring, the manager starts
+  `aimebu supervisor --local --journal supervisor/journals/<name>.sqlite`. The
+  old instance keeps its turns and jobs on its own journal and leaves by itself
+  when it owes nothing: no turn, no job (native ones included), no warm process
+  and nothing the server has not acknowledged. It then removes its journal and
+  exits 0, so an old build lives as long as its longest job. The log shows
+  `supervisor swap: no instance is active; starting a new one on <name> next to
+  pid P` and `started supervisor instance pid P on journal <name>`. An instance
+  that holds its lock without connecting is given 30 seconds (a healthy one
+  connects within seconds, also after a server restart) before another is
+  started next to it, and at most three unconnected instances are tolerated.
+- **A crash is finished by a drain instance.** A journal whose lock is free and
+  that still owes work (an open turn, a job, an end the server never
+  acknowledged, a warm process of the dead holder) gets `aimebu supervisor
+  --local --journal <path> --drain` of the current build. Its hello says
+  `drain_only`, so the server sends it nothing new; it finishes the journal the
+  way a replacement used to (the server replays journaled ends or loses the
+  turns with recovery, native jobs are adopted and report their real exit code)
+  and exits, removing the journal. With no instance active at all, the same
+  journal is instead taken by a regular supervisor, which is what takes the
+  machine's work again. A journal that owes nothing and whose lock is free is
+  removed, except the legacy path. If a journal file is gone altogether and its
+  instance has not connected for a minute, the manager tells the server the
+  instance is gone, and the work the server still lists on it is lost, once.
+- **Liveness is the only bound.** A retiring instance that holds its lock
+  without a server connection for about 10 minutes, or one the server sees as
+  empty for about a minute that does not exit, gets the bounded handover: an
+  exit request (SIGUSR1), SIGTERM after 30 seconds, SIGKILL of its process tree
+  15 seconds later, sparing verified detached jobs (below). A retiring instance
+  that is connected and runs work is never cut, however long it takes. The
+  owner's Restart now still interrupts: it asks every instance to stop.
+- **Remote hosts.** `aimebu supervisor` started while another instance holds the
+  default journal's lock picks a fresh `journals/<name>.sqlite` by itself. To
+  upgrade a remote host, install the new build and start `aimebu supervisor`
+  (or let its service start it): the server sees the newer matching build,
+  retires the old instance, which finishes its work and exits. No manager runs
+  there, so a crashed instance's journal is finished by starting `aimebu
+  supervisor --journal <path> --drain` by hand.
+- **A pre-feature supervisor** (one on `journal.sqlite` that does not write its
+  journal ID in the lock file) is treated as retiring when another instance is
+  active and is waited for by the same rules; its native jobs are left in its
+  journal when it exits, and a drain instance adopts them. A retiring instance
+  that removed its journal and is started again on that path has a new
+  `journal_id` and is a new instance. After each `hello_ack` to an instance it
+  holds as retiring, the server sends `retire_at_idle` again, so one that
+  reconnects keeps retiring.
+
+The text below this section describes the bounded handover and the adoption of
+jobs by a replacement; those now apply to the liveness handover and to a drain
+instance.
 
 The server auto-provisions the approved host machine and its private key on
 first start. The local supervisor opens `supervisor/journal.sqlite` and
@@ -48,8 +108,11 @@ setups or tests (the variable keeps its old name). On shutdown, the server
 stops dispatch, closes its HTTP listener and its store; the local supervisor
 and its turns keep running and reconnect to the next server.
 One supervisor owns a journal at a time. A sibling `journal.sqlite.lock`
-file (0600) holds an exclusive process lock and its owner's PID. Opening the
-same journal from a second supervisor fails with a message naming that PID.
+file (0600) holds an exclusive process lock, its owner's PID and, on a second
+line, the journal ID. Opening the same journal from a second supervisor fails
+with a message naming that PID. Instances that run next to each other each have
+a journal of their own: the legacy `journal.sqlite` and `journals/<name>.sqlite`
+(see "Side by side").
 Two live processes cannot safely share its turn records because each has a
 different in-memory process-liveness map. When testing a second standalone
 supervisor on the same host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server
@@ -88,8 +151,10 @@ pending until the owner approves it; the CLI waits and then connects.
 Later `aimebu supervisor` runs reuse this credential and URL. On the server
 host, standalone mode still reads `server/host-machine.key` when no remote
 credential exists. Set `AIMEBU_URL` to override the saved origin if needed.
-The supervisor opens `supervisor/journal.sqlite`, uses one WebSocket per
-machine, and reconnects after a disconnect. Revocation invalidates the key,
+The supervisor opens `supervisor/journal.sqlite` (or, when another instance of
+this machine holds it, a fresh `supervisor/journals/<name>.sqlite`: to upgrade a
+remote host, start the new build and the old instance retires, see "Side by
+side"), uses one WebSocket per instance, and reconnects after a disconnect. Revocation invalidates the key,
 closes its current socket immediately, and rejects subsequent frames.
 
 For remote supervisors over a VPN, bind the server to its VPN IP with

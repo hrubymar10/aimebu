@@ -168,6 +168,17 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	case "supervisor":
 		rest, insecure := withoutFlag(args[1:], "--insecure")
 		rest, local := withoutFlag(rest, "--local")
+		rest, drain := withoutFlag(rest, "--drain")
+		rest, journalPath, journalOK := withoutValueFlag(rest, "--journal")
+		if !journalOK {
+			fmt.Fprintln(stderr, "--journal needs a path")
+			return 2
+		}
+		instance := supervisorInstanceOptions{Journal: journalPath, DrainOnly: drain}
+		if (drain || journalPath != "") && len(rest) != 0 {
+			fmt.Fprintln(stderr, "usage: aimebu supervisor [--local] [--journal <path>] [--drain] [--insecure]")
+			return 2
+		}
 		if len(rest) == 1 && (rest[0] == "status" || rest[0] == "restart") && !local && !insecure {
 			return supervisorControl(rest[0], stdout, stderr)
 		}
@@ -179,10 +190,10 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 			return pairSupervisorCommand(ctx, rest[1], rest[2], insecure, stderr)
 		}
 		if len(rest) != 0 || local && insecure {
-			fmt.Fprintln(stderr, "usage: aimebu supervisor [--local|--insecure] [--pair <server-url> <token>] | status | restart")
+			fmt.Fprintln(stderr, "usage: aimebu supervisor [--local|--insecure] [--journal <path>] [--drain] [--pair <server-url> <token>] | status | restart")
 			return 2
 		}
-		return supervisorCommand(ctx, insecure, stderr, local)
+		return runSupervisor(ctx, insecure, stderr, local, instance)
 	case "agent-tools":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: aimebu agent-tools")
@@ -288,8 +299,52 @@ func withoutFlag(args []string, flag string) ([]string, bool) {
 	return rest, found
 }
 
+// supervisorInstanceOptions is what tells one supervisor instance of a machine from another: the journal file it owns (empty: the legacy
+// supervisor/journal.sqlite) and whether it only drains a journal a dead instance left (hello says drain_only).
+type supervisorInstanceOptions struct {
+	Journal   string
+	DrainOnly bool
+}
+
+// withoutValueFlag takes a flag and its value out of an argument list; ok is false when the flag is the last argument.
+func withoutValueFlag(args []string, flag string) (rest []string, value string, ok bool) {
+	ok = true
+	for i := 0; i < len(args); i++ {
+		if args[i] != flag {
+			rest = append(rest, args[i])
+			continue
+		}
+		if i+1 >= len(args) {
+			return rest, "", false
+		}
+		value = args[i+1]
+		i++
+	}
+	return rest, value, ok
+}
+
+// chooseJournalPath is the journal this supervisor opens: the one it was told (--journal), else the default one, unless another instance of this
+// machine holds that, when it takes a fresh journals/<name>.sqlite next to it so that starting a new build is the whole upgrade.
+func chooseJournalPath(instance supervisorInstanceOptions, defaultPath string, now time.Time, stderr io.Writer) (string, error) {
+	if instance.Journal != "" {
+		return instance.Journal, nil
+	}
+	if held, _, _, err := supervisor.JournalLockInfo(defaultPath); err != nil || !held {
+		return defaultPath, nil
+	}
+	fresh, err := supervisor.NewInstanceJournalPath(filepath.Dir(defaultPath), now)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(stderr, "supervisor: another instance holds the default journal; starting next to it on %s\n", filepath.Base(fresh))
+	return fresh, nil
+}
+
 func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, localFlag ...bool) int {
-	local := len(localFlag) > 0 && localFlag[0]
+	return runSupervisor(ctx, insecure, stderr, len(localFlag) > 0 && localFlag[0], supervisorInstanceOptions{})
+}
+
+func runSupervisor(ctx context.Context, insecure bool, stderr io.Writer, local bool, instance supervisorInstanceOptions) int {
 	if tlsclient.InsecureSkipVerify() {
 		fmt.Fprintln(stderr, "WARNING: AIMEBU_INSECURE_SKIP_VERIFY disables server certificate verification")
 	}
@@ -327,7 +382,12 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	journal, err := supervisor.OpenJournal(ctx, filepath.Join(config.root, "supervisor", "journal.sqlite"))
+	journalPath, err := chooseJournalPath(instance, filepath.Join(config.root, "supervisor", "journal.sqlite"), time.Now(), stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	journal, err := supervisor.OpenJournal(ctx, journalPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -374,6 +434,7 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 		supervisorClientHook(client)
 	}
 	client.AllowPlainHTTP = insecure
+	client.DrainOnly = instance.DrainOnly
 	client.SupervisorVersion = resolveVersion()
 	client.EnvironmentFingerprint = supervisor.EnvironmentFingerprint(os.Environ())
 	if local {
@@ -425,6 +486,14 @@ func supervisorCommand(ctx context.Context, insecure bool, stderr io.Writer, loc
 			}
 		}
 		cancelDrain()
+	}
+	if runErr == nil {
+		// A supervisor that retired with nothing owed removes its journal: no other instance adopts it.
+		if removed, err := client.FinishRetire(); err != nil {
+			fmt.Fprintln(stderr, "supervisor journal removal:", err)
+		} else if removed {
+			fmt.Fprintln(stderr, "supervisor retired: nothing owed, journal removed")
+		}
 	}
 	if runErr != nil {
 		fmt.Fprintln(stderr, runErr)
@@ -743,6 +812,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	var localManager *detachedSupervisorManager
 	if localEnabled {
 		localManager = &detachedSupervisorManager{config: config, stderr: stderr, store: db, ctx: ctx, connected: service.LocalSupervisorConnected, canInterrupt: service.LocalSupervisorCanInterrupt, replaceOverdue: service.ReplaceOverdueLocalSupervisor}
+		localManager.connections = service.LocalSupervisorConnections
 		service.LocalSupervisorEnvironment = supervisor.EnvironmentFingerprint(os.Environ())
 		service.LocalSupervisorDiskVersion = onDiskSupervisorVersion
 		service.LocalSupervisorRestart = localManager.restartNow

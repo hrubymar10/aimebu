@@ -22,8 +22,13 @@ func (c *Client) legacyAgentToolsDir() string {
 }
 
 // SweepLegacyKeys removes what an older supervisor left on the disk that holds an agent's key: the agent-tools directory, and the generated
-// configs of the adapters (a key in a Codex config.toml or a Pi mcp.json). It is called once when the supervisor starts.
+// configs of the adapters (a key in a Codex config.toml or a Pi mcp.json). It is called once when the supervisor starts, and skipped while another instance of the machine holds its journal lock.
 func (c *Client) SweepLegacyKeys() {
+	// The sweep is machine-wide (the runtime roots are shared), so it would delete the config a running turn of another instance still reads.
+	if c.otherInstanceHeld() {
+		c.logSweepSkipped()
+		return
+	}
 	if dir := c.legacyAgentToolsDir(); dir != "" {
 		if err := os.RemoveAll(dir); err != nil {
 			c.report("the legacy agent-tools directory could not be removed", err)

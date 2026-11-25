@@ -137,6 +137,20 @@ func (s *Server) LocalSupervisorConnected() bool {
 	}
 }
 
+// LocalSupervisorConnections is the journal ID of every local supervisor instance that is connected now, the active one and the retiring ones:
+// what the manager needs to tell a live instance from one that holds its journal without talking to the server.
+func (s *Server) LocalSupervisorConnections() map[string]bool {
+	out := map[string]bool{}
+	id := s.localSupervisorID()
+	if id == "" {
+		return out
+	}
+	for _, c := range s.machineConnections(id) {
+		out[c.journalID] = true
+	}
+	return out
+}
+
 func (s *Server) LocalSupervisorCanInterrupt() bool {
 	return s.LocalSupervisorConnected() && s.localSupervisorCanInterrupt.Load()
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,26 +28,40 @@ var ErrJournalInUse = errors.New("supervisor journal already in use")
 // JournalOwner probes the journal's process lock without opening the database.
 // A free lock means no supervisor owns it; pid is advisory while it is held.
 func JournalOwner(path string) (held bool, pid string, err error) {
+	held, pid, _, err = JournalLockInfo(path)
+	return held, pid, err
+}
+
+// JournalLockInfo is JournalOwner plus the journal ID the holder wrote after its pid, so a manager can tell which instance a process is without
+// opening the database: "" while the holder has not written it yet, and for a holder from before instances had one.
+func JournalLockInfo(path string) (held bool, pid, journalID string, err error) {
 	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	file, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	defer file.Close()
 	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			data, readErr := os.ReadFile(path + ".lock")
 			if readErr != nil {
-				return true, "", readErr
+				return true, "", "", readErr
 			}
-			return true, strings.TrimSpace(string(data)), nil
+			lines := strings.Fields(string(data))
+			if len(lines) > 0 {
+				pid = lines[0]
+			}
+			if len(lines) > 1 {
+				journalID = lines[1]
+			}
+			return true, pid, journalID, nil
 		}
-		return false, "", err
+		return false, "", "", err
 	}
 	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-	return false, "", nil
+	return false, "", "", nil
 }
 
 type Journal struct {
@@ -54,6 +69,7 @@ type Journal struct {
 	lockFile *os.File
 	ID       string
 	path     string
+	closed   atomic.Bool
 }
 
 // OpenJournal uses SQLite's FULL synchronous WAL. A committed turn_start is
@@ -206,6 +222,11 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	// The holder's journal ID goes after its pid, for the manager that tells instances apart by it. A failure only costs that.
+	if _, err := lockFile.Seek(0, 0); err == nil && lockFile.Truncate(0) == nil {
+		_, _ = fmt.Fprintf(lockFile, "%d\n%s\n", os.Getpid(), j.ID)
+		_ = lockFile.Sync()
+	}
 	owned = true
 	return j, nil
 }
@@ -247,6 +268,9 @@ func ensureColumn(ctx context.Context, db *sql.DB, table, column, alter string) 
 }
 
 func (j *Journal) Close() error {
+	if !j.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	dbErr := j.db.Close()
 	unlockErr := syscall.Flock(int(j.lockFile.Fd()), syscall.LOCK_UN)
 	return errors.Join(dbErr, unlockErr, j.lockFile.Close())
@@ -836,4 +860,17 @@ func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
 		out = append(out, process)
 	}
 	return out, rows.Err()
+}
+
+// Remove closes the journal and deletes its files (the database, its write-ahead log and shared memory, and the lock file): what an instance that
+// retired with nothing owed leaves behind is nothing. The lock goes last, so no other process can open the path while its files are being removed.
+func (j *Journal) Remove() error {
+	closeErr := j.Close()
+	var errs []error
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".lock"} {
+		if err := os.Remove(j.path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(append(errs, closeErr)...)
 }

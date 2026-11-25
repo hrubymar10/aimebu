@@ -442,13 +442,6 @@ func TestDetachedSupervisorRestartNowContinuesTurn(t *testing.T) {
 	testDetachedSupervisorAcrossServerRestart(t, false, true, false)
 }
 
-// The upgrade case: the supervisor that runs a turn across the server's restart is an older build, which does not know turn_interrupt,
-// and the restarted server no longer matches it. The turn does not end by itself. When the drain grace is over the server stops the old
-// supervisor itself, a new one takes over, the turn is continued on it and its answer is delivered: nobody kills anything by hand.
-func TestDetachedSupervisorFromAnOlderBuildIsReplacedAfterTheGrace(t *testing.T) {
-	testDetachedSupervisorAcrossServerRestart(t, true, false, true)
-}
-
 func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, restartNow, olderBuild bool) {
 	root, _ := daemonFixture(t)
 	// These tests do not look at the web page, and each server start would otherwise bundle the web UI with esbuild before it listens.
