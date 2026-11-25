@@ -44,3 +44,36 @@ func (s *Store) MachineRunningCommand(ctx context.Context, machineID string) (bo
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM command_job WHERE machine_id=? AND state='running')`, machineID).Scan(&running)
 	return running, err
 }
+
+// MachineRunningTurnIDsForInstance is MachineRunningTurnIDs for the turns one supervisor instance (a journal) owns.
+func (s *Store) MachineRunningTurnIDsForInstance(ctx context.Context, machineID, journalID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id FROM turn t JOIN agent a ON a.id=t.agent_id
+		WHERE a.machine_id=? AND t.journal_id=? AND (t.exec='running' OR (t.exec='pending' AND EXISTS(
+			SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')))`, machineID, journalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// MachineActiveWorkForInstance is MachineActiveWork for the turns and running commands one supervisor instance (a journal) owns.
+func (s *Store) MachineActiveWorkForInstance(ctx context.Context, machineID, journalID string) (bool, error) {
+	var active bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM turn t JOIN agent a ON a.id=t.agent_id
+		WHERE a.machine_id=? AND t.journal_id=? AND (t.exec='running' OR (t.exec='pending' AND EXISTS(
+			SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')))
+		UNION ALL
+		SELECT 1 FROM command_job WHERE machine_id=? AND journal_id=? AND state='running'
+	)`, machineID, journalID, machineID, journalID).Scan(&active)
+	return active, err
+}

@@ -49,10 +49,13 @@ func commandEndInferred(job CommandJob) bool {
 // CommandJob is one long command an agent started outside its turn. It runs under the supervisor in the agent's own checkout, and its
 // completion wakes the agent with a note.
 type CommandJob struct {
-	ID             string `json:"id"`
-	AgentID        string `json:"agent_id"`
-	Generation     int    `json:"generation"`
-	MachineID      string `json:"machine_id"`
+	ID         string `json:"id"`
+	AgentID    string `json:"agent_id"`
+	Generation int    `json:"generation"`
+	MachineID  string `json:"machine_id"`
+	// JournalID names the supervisor instance that holds the job: set when the job is created (the machine's last accepted journal when
+	// the caller names none). It is never shown to an agent.
+	JournalID      string `json:"-"`
 	ProjectID      string `json:"project_id"`
 	RoomID         string `json:"room_id"`
 	Label          string `json:"label,omitempty"`
@@ -75,14 +78,14 @@ type CommandJob struct {
 }
 
 const commandColumns = `id,agent_id,generation,machine_id,project_id,room_id,label,cmd,cwd,timeout_seconds,
-	state,exit_code,log_path,visible_log_path,visible_cwd,log_bytes,tail_truncated,COALESCE(error,''),COALESCE(started_at,''),COALESCE(ended_at,''),created_at`
+	state,exit_code,log_path,visible_log_path,visible_cwd,log_bytes,tail_truncated,COALESCE(error,''),COALESCE(started_at,''),COALESCE(ended_at,''),created_at,COALESCE(journal_id,'')`
 
 func scanCommand(row interface{ Scan(...any) error }) (CommandJob, error) {
 	var job CommandJob
 	var exitCode sql.NullInt64
 	err := row.Scan(&job.ID, &job.AgentID, &job.Generation, &job.MachineID, &job.ProjectID, &job.RoomID,
 		&job.Label, &job.Cmd, &job.Cwd, &job.TimeoutSeconds, &job.State, &exitCode, &job.LogPath,
-		&job.VisibleLogPath, &job.VisibleCwd, &job.LogBytes, &job.TailTruncated, &job.Error, &job.StartedAt, &job.EndedAt, &job.CreatedAt)
+		&job.VisibleLogPath, &job.VisibleCwd, &job.LogBytes, &job.TailTruncated, &job.Error, &job.StartedAt, &job.EndedAt, &job.CreatedAt, &job.JournalID)
 	if err != nil {
 		return CommandJob{}, err
 	}
@@ -220,13 +223,21 @@ func (tx *Tx) CreateCommandJob(job CommandJob) (CommandJob, error) {
 	}
 	job.State = "queued"
 	job.CreatedAt = timestamp()
+	if job.JournalID == "" {
+		// The caller names the instance it sends the run request to; without one, the machine's last accepted journal is the one there is.
+		var accepted sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT journal_id FROM machine WHERE id=?`, job.MachineID).Scan(&accepted); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return CommandJob{}, err
+		}
+		job.JournalID = accepted.String
+	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO command_job
 		(id,agent_id,generation,machine_id,project_id,room_id,label,cmd,cwd,timeout_seconds,state,
-		 log_path,visible_log_path,log_bytes,tail_truncated,error,started_at,ended_at,created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, job.ID, job.AgentID, job.Generation, job.MachineID,
+		 log_path,visible_log_path,log_bytes,tail_truncated,error,started_at,ended_at,created_at,journal_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, job.ID, job.AgentID, job.Generation, job.MachineID,
 		job.ProjectID, job.RoomID, job.Label, job.Cmd, job.Cwd, job.TimeoutSeconds, job.State,
 		job.LogPath, job.VisibleLogPath, job.LogBytes, job.TailTruncated, nullableString(job.Error),
-		nullableString(job.StartedAt), nullableString(job.EndedAt), job.CreatedAt)
+		nullableString(job.StartedAt), nullableString(job.EndedAt), job.CreatedAt, nullableString(job.JournalID))
 	if err != nil {
 		return CommandJob{}, err
 	}
@@ -356,6 +367,27 @@ func (s *Store) OpenCommandJobs(ctx context.Context, machineID string) ([]Comman
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND state IN ('queued','running')`, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []CommandJob
+	for rows.Next() {
+		job, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// OpenCommandJobsForInstance lists the open jobs one supervisor instance (a journal) holds on a machine.
+func (s *Store) OpenCommandJobsForInstance(ctx context.Context, machineID, journalID string) ([]CommandJob, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND journal_id=? AND state IN ('queued','running')`, machineID, journalID)
 	if err != nil {
 		return nil, err
 	}
@@ -569,8 +601,9 @@ func commandDuration(d time.Duration) string {
 // (open) and the ends it has not been acknowledged for (exits, replayed right after). A job whose start was never confirmed but which the
 // machine runs becomes running; a job the machine knows nothing of can no longer be reported, so it ends now (failed when it never started,
 // lost when its end was never reported) and its agent is woken. It returns the jobs the machine runs that were cancelled before their start
-// was confirmed: the caller kills them.
-func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, open []protocol.CommandOpen, exits []protocol.CommandExit) ([]CommandJob, error) {
+// was confirmed: the caller kills them. journalID names the supervisor instance that said hello: only its jobs (and
+// those without an owner) are settled.
+func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID, journalID string, open []protocol.CommandOpen, exits []protocol.CommandExit) ([]CommandJob, error) {
 	openByID := make(map[string]protocol.CommandOpen, len(open))
 	for _, item := range open {
 		openByID[item.JobID] = item
@@ -583,7 +616,8 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, 
 	cutoff := time.Now().UTC().Add(-CommandUnconfirmedWindow).Format(timestampLayout)
 	err := s.Tx(ctx, func(tx *Tx) error {
 		kill = nil
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND state IN ('queued','running')`, machineID)
+		scope, args := ` AND (journal_id=? OR journal_id IS NULL)`, []any{machineID, journalID}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=?`+scope+` AND state IN ('queued','running')`, args...)
 		if err != nil {
 			return err
 		}
@@ -630,7 +664,7 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID string, 
 			if known[id] {
 				continue
 			}
-			job, err := scanCommand(tx.tx.QueryRowContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE id=? AND machine_id=?`, id, machineID))
+			job, err := scanCommand(tx.tx.QueryRowContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE id=? AND machine_id=?`+scope, append([]any{id}, args...)...))
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}

@@ -349,6 +349,7 @@ func TestHandoffOutcomeRequiredMigration(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE turn SET handoff_outcome_required=2 WHERE id=?`, f.turn.ID); err == nil {
 		t.Fatal("the column took 2")
 	}
+	dropSupervisorInstances(t, s)
 	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `ALTER TABLE agent DROP COLUMN approved_by`, `DELETE FROM schema_version WHERE version>=132`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)

@@ -36,18 +36,17 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT journal_id FROM machine WHERE id=?`, machineID).Scan(&previous); err != nil {
 			return err
 		}
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT t.id,t.agent_id,t.room_id,t.exec,t.mode,a.project_id,a.observed,EXISTS(SELECT 1 FROM receipt r WHERE r.turn_id=t.id) FROM turn t JOIN agent a ON a.id=t.agent_id WHERE a.machine_id=? AND t.exec IN ('pending','running') AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')`, machineID)
+		// A machine can run several supervisor instances, each owning the turns it was sent: this hello speaks for its own journal only
+		// (and for the turns that were never given an owner).
+		scope, args := ` AND (t.journal_id=? OR t.journal_id IS NULL)`, []any{machineID, journalID}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT t.id,t.agent_id,t.room_id,t.exec,t.mode,a.project_id,a.observed,EXISTS(SELECT 1 FROM receipt r WHERE r.turn_id=t.id),COALESCE(t.journal_id,'') FROM turn t JOIN agent a ON a.id=t.agent_id WHERE a.machine_id=?`+scope+` AND t.exec IN ('pending','running') AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')`, args...)
 		if err != nil {
 			return err
 		}
-		type item struct {
-			id, agentID, roomID, exec, mode, projectID, observed string
-			hasReceipt                                           bool
-		}
-		items := []item{}
+		items := []openTurnItem{}
 		for rows.Next() {
-			var item item
-			if err := rows.Scan(&item.id, &item.agentID, &item.roomID, &item.exec, &item.mode, &item.projectID, &item.observed, &item.hasReceipt); err != nil {
+			var item openTurnItem
+			if err := rows.Scan(&item.id, &item.agentID, &item.roomID, &item.exec, &item.mode, &item.projectID, &item.observed, &item.hasReceipt, &item.owner); err != nil {
 				rows.Close()
 				return err
 			}
@@ -58,8 +57,17 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 		if err != nil {
 			return err
 		}
-		changed := previous.Valid && previous.String != journalID || !previous.Valid && len(items) > 0
+		// A turn with no recorded owner (from before instances were tracked) keeps the old rule: a journal other than the last accepted one
+		// loses it. A turn an instance owns is never lost because another instance said hello.
+		ownerless := 0
 		for _, item := range items {
+			if item.owner == "" {
+				ownerless++
+			}
+		}
+		changedAll := previous.Valid && previous.String != journalID || !previous.Valid && ownerless > 0
+		for _, item := range items {
+			changed := changedAll && item.owner == ""
 			journaled, found := open[item.id]
 			if !changed && found && item.exec == "pending" && journaled.ProcessAlive {
 				if _, err := tx.Exec(`UPDATE turn SET exec='running',started_at=COALESCE(started_at,?) WHERE id=?`, timestamp(), item.id); err != nil {
@@ -135,40 +143,8 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 				continue
 			}
 			if changed || !found || journaled.Exec == "running" && !journaled.ProcessAlive {
-				if item.exec == "pending" {
-					if err := TurnExecTransitions.Transition("pending", "running"); err != nil {
-						return err
-					}
-					if _, err := tx.Exec(`UPDATE turn SET exec='running' WHERE id=?`, item.id); err != nil {
-						return err
-					}
-				}
-				if err := TurnExecTransitions.Transition("running", "lost"); err != nil {
+				if err := tx.loseOpenTurn(item, machineID, changed); err != nil {
 					return err
-				}
-				if err := TurnOutcomeTransitions.Transition("none", "unknown"); err != nil {
-					return err
-				}
-				if _, err := tx.Exec(`UPDATE turn SET exec='lost',outcome='unknown' WHERE id=?`, item.id); err != nil {
-					return err
-				}
-				if _, err := tx.Exec(`UPDATE note SET state='unknown' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('queued','dispatched','in_turn')`, item.id); err != nil {
-					return err
-				}
-				if _, err := tx.Exec(`UPDATE agent SET recovery_block=1,observed='lost' WHERE id=?`, item.agentID); err != nil {
-					return err
-				}
-				if _, err := tx.AppendEvent(Event{Kind: "turn_lost", ProjectID: item.projectID, RoomID: item.roomID, AgentID: item.agentID, TurnID: item.id}); err != nil {
-					return err
-				}
-				if err := tx.ensureRecoveryPath(item.id); err != nil {
-					return err
-				}
-				if changed {
-					if _, err := tx.AppendEvent(Event{Kind: "supervisor_journal_changed", ProjectID: item.projectID, RoomID: item.roomID, AgentID: item.agentID, TurnID: item.id,
-						PayloadJSON: payloadJSON(map[string]string{"machine_id": machineID, "turn_id": item.id})}); err != nil {
-						return err
-					}
 				}
 			}
 		}
@@ -227,4 +203,51 @@ func (s *Store) ReconcileMachineHello(ctx context.Context, machineID, journalID 
 		return nil
 	})
 	return receipts, err
+}
+
+// openTurnItem is a dispatched turn that is still open on a machine.
+type openTurnItem struct {
+	id, agentID, roomID, exec, mode, projectID, observed string
+	hasReceipt                                           bool
+	owner                                                string // the journal of the supervisor instance that holds it, "" when none was recorded
+}
+
+// loseOpenTurn ends an open turn as lost, blocks its agent's recovery and records why. journalChanged adds the supervisor_journal_changed event.
+func (tx *Tx) loseOpenTurn(item openTurnItem, machineID string, journalChanged bool) error {
+	if item.exec == "pending" {
+		if err := TurnExecTransitions.Transition("pending", "running"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE turn SET exec='running' WHERE id=?`, item.id); err != nil {
+			return err
+		}
+	}
+	if err := TurnExecTransitions.Transition("running", "lost"); err != nil {
+		return err
+	}
+	if err := TurnOutcomeTransitions.Transition("none", "unknown"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE turn SET exec='lost',outcome='unknown' WHERE id=?`, item.id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE note SET state='unknown' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('queued','dispatched','in_turn')`, item.id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agent SET recovery_block=1,observed='lost' WHERE id=?`, item.agentID); err != nil {
+		return err
+	}
+	if _, err := tx.AppendEvent(Event{Kind: "turn_lost", ProjectID: item.projectID, RoomID: item.roomID, AgentID: item.agentID, TurnID: item.id}); err != nil {
+		return err
+	}
+	if err := tx.ensureRecoveryPath(item.id); err != nil {
+		return err
+	}
+	if journalChanged {
+		if _, err := tx.AppendEvent(Event{Kind: "supervisor_journal_changed", ProjectID: item.projectID, RoomID: item.roomID, AgentID: item.agentID, TurnID: item.id,
+			PayloadJSON: payloadJSON(map[string]string{"machine_id": machineID, "turn_id": item.id})}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

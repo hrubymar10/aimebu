@@ -2,10 +2,22 @@ package store
 
 import "testing"
 
+// dropSupervisorInstances undoes migration 140 (the instance table, the owner columns and their indexes), for a test that replays it.
+func dropSupervisorInstances(t *testing.T, s *Store) {
+	t.Helper()
+	for _, statement := range []string{`DROP INDEX turn_open_journal`, `DROP INDEX command_job_open_journal`,
+		`ALTER TABLE turn DROP COLUMN journal_id`, `ALTER TABLE command_job DROP COLUMN journal_id`, `DROP TABLE supervisor_instance`} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // rewindWorkerRecoveryMigration (also drops room.purpose, the login columns, message.outcome and turn.handoff_outcome_required, which later migrations add) restores the pre-120 schema for tests that
 // construct an older database from a current fixture before replaying upgrades.
 func rewindWorkerRecoveryMigration(t *testing.T, s *Store) {
 	t.Helper()
+	dropSupervisorInstances(t, s)
 	for _, statement := range []string{
 		`ALTER TABLE room DROP COLUMN purpose`,
 		`ALTER TABLE turn DROP COLUMN login`,
@@ -28,6 +40,7 @@ func rewindWorkerRecoveryMigration(t *testing.T, s *Store) {
 // deleting version rows.
 func dropColumnsSince130(t *testing.T, s *Store) {
 	t.Helper()
+	dropSupervisorInstances(t, s)
 	for _, statement := range []string{`ALTER TABLE turn DROP COLUMN login`, `ALTER TABLE provider_limit DROP COLUMN login`, `ALTER TABLE message DROP COLUMN outcome`, `ALTER TABLE turn DROP COLUMN handoff_outcome_required`, `ALTER TABLE agent DROP COLUMN approved_by`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)

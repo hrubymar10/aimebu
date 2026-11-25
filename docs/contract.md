@@ -617,6 +617,17 @@ Machines and workspace
   supervisor journal identity. The capability reports from the most recent
   `hello` are stored here and matched when admitting a turn. Only one machine
   is the host; remote machines start pending and require owner approval.
+- **supervisor_instance**(machine_id, journal_id, build, environment,
+  state[active|retiring|gone], first_seen_at, last_seen_at, gone_at?) — PK
+  (machine_id, journal_id) (migration 140). A machine can run several
+  supervisor processes at once, local or remote, each with its own journal; an
+  instance is named by its `journal_id` (the one `hello` carries). `build` and
+  `environment` are what its `hello` reported. A `hello` creates the instance
+  active or makes it active again; `retiring` is an instance that finishes the
+  work it holds; `gone` is one whose journal is finished or lost, and marking
+  one gone loses only the open turns and jobs it owns. The migration creates one
+  active instance per machine that has a `journal_id` and gives every open turn
+  and job that journal as owner.
 - **machine_harness_setting**(machine_id, tool, variant, enabled,
   override_path) and **machine_harness_activity**(machine_id, tool, variant,
   actor, old/new enabled and path, created_at) — owner settings and their
@@ -715,8 +726,11 @@ Execution
 - **turn**(id, agent_id, session_id, generation, room_id (originating),
   parent_turn_id?, attempt, mode[normal|correction|diagnostic],
   exec (§3.2a), outcome (§3.2b), settle[pending|settled], cancel_intent,
-  terminal_event, report_json?, policy_json?, login?, started_at?, ended_at?)
-  — at most one turn per agent with exec in (pending, running)
+  terminal_event, report_json?, policy_json?, login?, journal_id?, started_at?, ended_at?)
+  — at most one turn per agent with exec in (pending, running); `journal_id`
+  (migration 140) is the supervisor instance that owns the turn: it is set when
+  the turn is dispatched (the journal of the connection it is sent on) and read
+  only by that instance's `hello` reconcile (§5)
 - **turn_note**(turn_id, note_id)
 - **turn_room_read**(turn_id, room_id) — PK (turn_id, room_id); a room whose
   content the turn was given beyond its notes: what a toolbox read returned
@@ -741,8 +755,10 @@ Execution
   label?, cmd, cwd, timeout_seconds,
   state[queued|running|done|cancelled|cancelled_unconfirmed|timed_out|lost|
   failed], exit_code?, log_path, visible_log_path?, visible_cwd?, log_bytes,
-  tail_truncated, error?, started_at?, ended_at?, created_at) — one long
-  command an agent starts **outside its turn** (migration 121): it runs under
+  tail_truncated, error?, started_at?, ended_at?, created_at, journal_id?) — one long
+  command an agent starts **outside its turn** (migration 121; `journal_id`,
+  migration 140, is the supervisor instance that holds the job, set when it
+  is created): it runs under
   the supervisor in the agent's own checkout, with no turn row, no usage and no
   turn limit, and its end wakes the agent with a note. The log lives at
   `<checkout>/.aimebu/commands/<id>.log` (the runtime state no commit carries),
@@ -2207,12 +2223,19 @@ CC/Codex, prompt-only on pi):
    after `hello_ack`; a durable server receipt proves the turn started but
    does not prove that its process exited. If no live process or journaled
    exit can be shown, the turn becomes `lost` and requires recovery.
-   The server compares `journal_id` with the last accepted ID for the machine.
-   A mismatch, or the first hello when the machine already has open dispatched
-   turns, marks every such turn `lost`/`unknown` with recovery blocked and a
-   visible `supervisor_journal_changed` event. Journal loss classifies
-   uncertainty, never invites replay. A first hello without open dispatched
-   turns records the ID.
+   A `hello` speaks for its own supervisor instance, named by its `journal_id`,
+   on every machine: it reconciles only the open dispatched turns and command
+   jobs whose `journal_id` is its own, never those another instance owns. A
+   turn or job with no recorded owner (from before instances were tracked)
+   keeps the old rule: it is lost when the `journal_id` differs from the last
+   accepted one for the machine, or on a first hello when the machine already
+   has such turns. A journal that vanishes (the instance is marked gone) marks
+   only the open turns it owned `lost`/`unknown` with recovery blocked and a
+   visible `supervisor_journal_changed` event, and ends its open jobs. Journal
+   loss classifies uncertainty, never invites replay. A first hello without
+   open dispatched turns records the ID. Until the server keeps several
+   instances connected, it treats a `hello` with a new `journal_id` as the
+   replacement of the machine's previous instance and marks that one gone.
 2. Classify:
    - **intact journal has no `turn_start`** → never started → note
      `queued` (redeliver); a missing ack alone proves nothing;

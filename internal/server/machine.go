@@ -28,6 +28,7 @@ var ErrSlowMachine = errors.New("slow machine")
 
 type machineConn struct {
 	id                         string
+	journalID                  string // the supervisor instance behind this connection
 	keyHash                    string
 	conn                       *websocket.Conn
 	sendQueue                  chan protocol.Frame
@@ -319,6 +320,20 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "invalid capabilities")
 		return
 	}
+	// The server still runs one supervisor instance per machine: a hello with a journal other than the one accepted before replaces that
+	// instance, so what the earlier one held is lost now, as a journal change always did.
+	if previous, err := s.Store.MachineJournalID(ctx, machineID); err == nil && previous != "" && previous != hello.JournalID {
+		if _, _, err := s.Store.MarkSupervisorInstanceGone(ctx, machineID, previous); err != nil {
+			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: retiring the previous supervisor instance: %w", err))
+			conn.Close(websocket.StatusInternalError, "reconciliation error")
+			return
+		}
+	}
+	if err := s.Store.RecordSupervisorInstance(ctx, machineID, hello.JournalID, hello.SupervisorVersion, hello.SupervisorEnvironment); err != nil {
+		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the supervisor instance: %w", err))
+		conn.Close(websocket.StatusInternalError, "machine state error")
+		return
+	}
 	records, err := s.Store.ReconcileMachineHello(ctx, machineID, hello.JournalID, capabilities, open)
 	if err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: reconciliation error: %w", err))
@@ -329,7 +344,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	// now, so it is settled here instead of counting against its agent forever.
 	var killCommands []store.CommandJob
 	if hello.SupportsCommands {
-		killCommands, err = s.Store.ReconcileMachineCommands(ctx, machineID, hello.CommandOpen, hello.CommandExits)
+		killCommands, err = s.Store.ReconcileMachineCommands(ctx, machineID, hello.JournalID, hello.CommandOpen, hello.CommandExits)
 		if err != nil {
 			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: command reconciliation error: %w", err))
 			conn.Close(websocket.StatusInternalError, "reconciliation error")
@@ -374,7 +389,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsAgentConversation: hello.SupportsAgentConversationLog, supportsStopReplay: hello.SupportsStopReplay, supportsTurnInterrupt: hello.SupportsTurnInterrupt, supportsAttachmentSave: hello.SupportsAttachmentSave, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsHandoffOutcome: hello.SupportsHandoffOutcome, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, journalID: hello.JournalID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsDirectoryList: hello.SupportsDirectoryList, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionCopy: hello.SupportsSessionCopy, supportsLegacySessionCopy: hello.SupportsLegacySessionCopy, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsProviders: hello.SupportsProviders, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsAgentConversation: hello.SupportsAgentConversationLog, supportsStopReplay: hello.SupportsStopReplay, supportsTurnInterrupt: hello.SupportsTurnInterrupt, supportsAttachmentSave: hello.SupportsAttachmentSave, supportsTelemetryConfig: hello.SupportsTelemetryConfig, supportsAgentKeys: hello.SupportsAgentKeys, supportsCommands: hello.SupportsCommands, supportsContainerCommands: hello.SupportsContainerCommands, supportsHandoffOutcome: hello.SupportsHandoffOutcome, supportsWarm: hello.SupportsWarm, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	if !c.supportsWarm {
 		s.noteWarmSeen(machineID, 0) // a supervisor that cannot keep anything warm has nothing left running when it drops
@@ -1003,7 +1018,7 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 		noteIDs = append(noteIDs, note.NoteID)
 	}
 	if err := s.Store.AdmitTurn(ctx, store.Admission{TurnID: delivery.TurnID, AgentID: delivery.AgentID, MachineID: agent.MachineID, Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: noteIDs,
-		HandoffOutcomeRequired: c.supportsHandoffOutcome}); err != nil {
+		HandoffOutcomeRequired: c.supportsHandoffOutcome, JournalID: c.journalID}); err != nil {
 		return err
 	}
 	return c.send(protocol.DeliverFrame(delivery))

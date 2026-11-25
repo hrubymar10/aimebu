@@ -11,6 +11,7 @@ import (
 // version rows from 124 also replays the room purpose migration (126), which adds a column, so that column is dropped too, and so are the columns migrations 130, 131 and 132 add.
 func rewindUsageTotalMigration(t *testing.T, s *Store) {
 	t.Helper()
+	dropSupervisorInstances(t, s)
 	for _, statement := range []string{
 		`ALTER TABLE usage_record DROP COLUMN tokens_in_total`,
 		`ALTER TABLE usage_record DROP COLUMN tokens_out_total`,

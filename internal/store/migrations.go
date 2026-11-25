@@ -2173,6 +2173,7 @@ CREATE INDEX agent_launcher_active ON agent(launcher_id,desired,observed);
 -- a launcher the owner customised keeps what the owner chose.
 UPDATE machine_launcher SET supports_toolbox=1 WHERE preset=1 AND tool='pi' AND name='harness-docker';
 `}, {139, `
+
 -- Built-in role bodies are overrides. Keep the old text for manual recovery,
 -- then resolve an empty body from the running build's shipped definition.
 CREATE TABLE IF NOT EXISTS builtin_role_body_archive (
@@ -2192,6 +2193,32 @@ WHERE id IN ('role_leader_default','role_dispatcher_default','role_advisor_defau
   'role_sec-reviewer_default','role_test-reviewer_default','role_ux-reviewer_default')
   AND project_id IS NULL AND body<>''
   AND body=(SELECT body FROM builtin_role_body_archive WHERE role_id=role.id);
+`}, {140, `
+-- Side-by-side supervisors: a machine can run several supervisor instances, each with its own journal. An instance is named by its
+-- journal_id (hello already carries it). Turns and command jobs record the instance that holds them, so a hello reconciles only its own
+-- work. Open work is backfilled with the journal the machine last accepted, the one instance there was.
+CREATE TABLE supervisor_instance (
+  machine_id TEXT NOT NULL REFERENCES machine(id),
+  journal_id TEXT NOT NULL,
+  build TEXT NOT NULL DEFAULT '',
+  environment TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL CHECK (state IN ('active','retiring','gone')),
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  gone_at TEXT,
+  PRIMARY KEY (machine_id, journal_id)
+);
+ALTER TABLE turn ADD COLUMN journal_id TEXT;
+ALTER TABLE command_job ADD COLUMN journal_id TEXT;
+UPDATE turn SET journal_id=(SELECT m.journal_id FROM agent a JOIN machine m ON m.id=a.machine_id WHERE a.id=turn.agent_id)
+  WHERE exec IN ('pending','running');
+UPDATE command_job SET journal_id=(SELECT m.journal_id FROM machine m WHERE m.id=command_job.machine_id)
+  WHERE state IN ('queued','running');
+INSERT INTO supervisor_instance (machine_id,journal_id,state,first_seen_at,last_seen_at)
+  SELECT id,journal_id,'active',strftime('%Y-%m-%dT%H:%M:%S','now') || '.000000000Z',strftime('%Y-%m-%dT%H:%M:%S','now') || '.000000000Z'
+  FROM machine WHERE journal_id IS NOT NULL AND journal_id<>'';
+CREATE INDEX turn_open_journal ON turn(journal_id) WHERE exec IN ('pending','running');
+CREATE INDEX command_job_open_journal ON command_job(machine_id,journal_id) WHERE state IN ('queued','running');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

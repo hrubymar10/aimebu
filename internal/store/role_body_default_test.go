@@ -76,7 +76,8 @@ func TestOldRoleBodiesBecomeCurrentDefaults(t *testing.T) {
 	if _, err := db.Exec(`UPDATE role SET body='new owner edit' WHERE id='role_leader_default'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DELETE FROM schema_version WHERE version=139`); err != nil {
+	dropSupervisorInstances(t, &Store{db: db})
+	if _, err := db.Exec(`DELETE FROM schema_version WHERE version>=139`); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrate(ctx, db); err != nil {
@@ -98,7 +99,8 @@ func TestRoleBodyDefaultMigrationKeepsRecoverableEditsAndExtensions(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=139`); err != nil {
+	dropSupervisorInstances(t, s)
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=139`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`DROP TABLE builtin_role_body_archive`); err != nil {

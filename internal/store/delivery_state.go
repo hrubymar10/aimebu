@@ -25,6 +25,9 @@ type Admission struct {
 	// HandoffOutcomeRequired is the dispatching supervisor's supports_handoff_outcome. It is recorded on the turn, and the turn's answer
 	// is judged by it (AnswerInput), whichever connection later delivers that answer.
 	HandoffOutcomeRequired bool
+	// JournalID is the supervisor instance the turn is sent to: it owns the turn until the turn ends. Empty takes the machine's last
+	// accepted journal.
+	JournalID string
 }
 
 func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
@@ -196,6 +199,18 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 		}
 		// Set on every dispatch, so a turn sent again takes the flag of the supervisor it is sent to now.
 		if _, err := tx.Exec(`UPDATE turn SET handoff_outcome_required=? WHERE id=?`, input.HandoffOutcomeRequired, input.TurnID); err != nil {
+			return err
+		}
+		owner := input.JournalID
+		if owner == "" {
+			var accepted sql.NullString
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT journal_id FROM machine WHERE id=?`, machineID).Scan(&accepted); err != nil {
+				return err
+			}
+			owner = accepted.String
+		}
+		// Set on every dispatch like the flag above: a turn sent again belongs to the instance it is sent to now.
+		if _, err := tx.Exec(`UPDATE turn SET journal_id=? WHERE id=?`, nullable(owner), input.TurnID); err != nil {
 			return err
 		}
 		_, err = tx.AppendEvent(Event{Kind: "turn_dispatch_requested", ProjectID: projectID, RoomID: roomID, AgentID: input.AgentID, TurnID: input.TurnID, PayloadJSON: payloadJSON(map[string]string{"turn_id": input.TurnID})})
