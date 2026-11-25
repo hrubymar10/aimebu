@@ -54,7 +54,7 @@ func (tx *Tx) CreateAgent(agent Agent) (Agent, error) {
 	if err != nil {
 		return Agent{}, err
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO agent
+	_, err = tx.Exec(`INSERT INTO agent
 		(id, slug, project_id, role_id, tool, variant, launcher_id, model, provider,
 		 machine_id, checkout_id, key_hash, created_by, created_at, approved_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.Slug,
@@ -117,7 +117,7 @@ func (tx *Tx) RecordTurn(turn Turn) (Turn, error) {
 	if err != nil {
 		return Turn{}, err
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO turn
+	_, err = tx.Exec(`INSERT INTO turn
 		(id, agent_id, session_id, generation, room_id, parent_turn_id,
 		 attempt, mode, exec, policy_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, turn.ID, turn.AgentID, turn.SessionID,
@@ -187,7 +187,7 @@ func (tx *Tx) InsertNote(note Note) (Note, error) {
 	if note.State == "" {
 		note.State = "queued"
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO note
+	_, err = tx.Exec(`INSERT INTO note
 		(id, agent_id, message_id, room_id, state, wake_reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, note.ID, note.AgentID, note.MessageID,
 		note.RoomID, note.State, note.WakeReason, timestamp())
@@ -256,7 +256,7 @@ func (s *Store) WithRequestKey(ctx context.Context, request RequestKey,
 		if callErr != nil {
 			return callErr
 		}
-		_, callErr = tx.tx.ExecContext(tx.ctx, `INSERT INTO request_key
+		_, callErr = tx.Exec(`INSERT INTO request_key
 			(actor_kind, actor_id, kind, key, request_digest, result_json, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`, request.ActorKind, request.ActorID,
 			request.Kind, request.Key, request.Digest, result, timestamp())

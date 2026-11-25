@@ -77,6 +77,11 @@ type Server struct {
 	switchBgMu     sync.Mutex     // guards switchBgCtx and switchBgCancel
 	switchBgCtx    context.Context
 	switchBgCancel context.CancelFunc
+	// wakeMu guards wakeFn, the dispatcher wake NewDispatcher installs; a
+	// machine connecting (or reconnecting) calls it, so queued notes of its
+	// agents do not wait for the fallback tick.
+	wakeMu sync.Mutex
+	wakeFn func()
 	// switchCheckAfter is the clock of the Codex overwrite check: tests replace it; nil is time.After.
 	switchCheckAfter func(time.Duration) <-chan time.Time
 	// codexWatch is the Codex overwrite check of the last Codex switch (see codex_overwrite.go); nil when none is running.

@@ -87,7 +87,7 @@ func (tx *Tx) CreateUser(user User) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO user(id,login,pw_hash,pw_params,created_at)
+	_, err = tx.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at)
 		VALUES (?,?,?,?,?)`, user.ID, user.Login, user.PWHash, user.PWParams, timestamp())
 	if err != nil {
 		return User{}, err

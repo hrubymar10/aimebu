@@ -528,7 +528,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 			return ErrTeamFlowRev
 		}
 		out = TeamFlowApplied{Key: key, Rev: rev + 1, CreatedRooms: []Room{}, Conflicts: []FlowConflict{}}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE project SET team_flow_key=?,team_flow_rev=?,team_flow_review_pending=0 WHERE id=?`, key, out.Rev, projectID); err != nil {
+		if _, err := tx.Exec(`UPDATE project SET team_flow_key=?,team_flow_rev=?,team_flow_review_pending=0 WHERE id=?`, key, out.Rev, projectID); err != nil {
 			return err
 		}
 		t, _ := teamFlowTemplate(key)
@@ -546,7 +546,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 				return ErrTeamFlowSelection
 			}
 			selected[removal] = true
-			if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, timestamp(), removal.RoomID, removal.AgentID); err != nil {
+			if _, err := tx.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, timestamp(), removal.RoomID, removal.AgentID); err != nil {
 				return err
 			}
 		}
@@ -564,7 +564,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 				return err
 			}
 			if id != "" {
-				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=restricted OR ?,purpose=CASE WHEN ? THEN 'general' ELSE purpose END WHERE id=?`, spec.Key, spec.Restricted, flowRoomIsGeneral(spec.Key), id); err != nil {
+				if _, err := tx.Exec(`UPDATE room SET team_flow_room_key=?,restricted=restricted OR ?,purpose=CASE WHEN ? THEN 'general' ELSE purpose END WHERE id=?`, spec.Key, spec.Restricted, flowRoomIsGeneral(spec.Key), id); err != nil {
 					return err
 				}
 				continue
@@ -581,7 +581,7 @@ func (tx *Tx) applyTeamFlow(projectID, userID, key string, rev int64, removals [
 			if err != nil {
 				return err
 			}
-			if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET team_flow_room_key=?,restricted=? WHERE id=?`, spec.Key, spec.Restricted, room.ID); err != nil {
+			if _, err := tx.Exec(`UPDATE room SET team_flow_room_key=?,restricted=? WHERE id=?`, spec.Key, spec.Restricted, room.ID); err != nil {
 				return err
 			}
 			room.TeamFlowRoomKey = spec.Key

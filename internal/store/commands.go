@@ -231,7 +231,7 @@ func (tx *Tx) CreateCommandJob(job CommandJob) (CommandJob, error) {
 		}
 		job.JournalID = accepted.String
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO command_job
+	_, err = tx.Exec(`INSERT INTO command_job
 		(id,agent_id,generation,machine_id,project_id,room_id,label,cmd,cwd,timeout_seconds,state,
 		 log_path,visible_log_path,log_bytes,tail_truncated,error,started_at,ended_at,created_at,journal_id)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, job.ID, job.AgentID, job.Generation, job.MachineID,
@@ -267,12 +267,12 @@ func (s *Store) RecordCommandStarted(ctx context.Context, id, startedAt, visible
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
 		// A job inferred never started that the machine says it did start is running after all.
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=COALESCE(started_at,?),visible_log_path=?,
+		if _, err := tx.Exec(`UPDATE command_job SET state='running',started_at=COALESCE(started_at,?),visible_log_path=?,
 			visible_cwd=?,error=NULL,ended_at=NULL WHERE id=? AND (state='queued' OR (state='failed' AND error=?))`,
 			startedAt, visibleLogPath, visibleCwd, id, commandNeverStarted); err != nil {
 			return err
 		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET started_at=COALESCE(started_at,?),
+		if _, err := tx.Exec(`UPDATE command_job SET started_at=COALESCE(started_at,?),
 			visible_log_path=CASE WHEN visible_log_path='' THEN ? ELSE visible_log_path END,
 			visible_cwd=CASE WHEN visible_cwd='' THEN ? ELSE visible_cwd END WHERE id=?`, startedAt, visibleLogPath, visibleCwd, id); err != nil {
 			return err
@@ -289,7 +289,7 @@ func (s *Store) RecordCommandStarted(ctx context.Context, id, startedAt, visible
 func (s *Store) FailCommandStart(ctx context.Context, id, message string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
-		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='failed',error=?,ended_at=? WHERE id=? AND state='queued'`,
+		result, err := tx.Exec(`UPDATE command_job SET state='failed',error=?,ended_at=? WHERE id=? AND state='queued'`,
 			message, timestamp(), id)
 		if err != nil {
 			return err
@@ -327,7 +327,7 @@ func (s *Store) CancelCommand(ctx context.Context, id string) (CommandJob, error
 		if job.State != "queued" {
 			return nil // only a job that never started is cancelled here; a running one ends on its machine's report
 		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='cancelled',error=?,ended_at=? WHERE id=?`,
+		if _, err := tx.Exec(`UPDATE command_job SET state='cancelled',error=?,ended_at=? WHERE id=?`,
 			commandCancelledBeforeStart, timestamp(), id); err != nil {
 			return err
 		}
@@ -461,7 +461,7 @@ func finishCommand(tx *Tx, id string, result CommandResult) (CommandJob, error) 
 	if result.EndedAt == "" {
 		result.EndedAt = timestamp()
 	}
-	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state=?,exit_code=?,ended_at=?,log_bytes=?,tail_truncated=?,error=?,
+	if _, err := tx.Exec(`UPDATE command_job SET state=?,exit_code=?,ended_at=?,log_bytes=?,tail_truncated=?,error=?,
 		started_at=COALESCE(started_at,?) WHERE id=?`, result.State, nullableExitCode(result.ExitCode), result.EndedAt, result.LogBytes,
 		result.TailTruncated, nullableString(result.Error), nullableString(result.StartedAt), id); err != nil {
 		return CommandJob{}, err
@@ -641,7 +641,7 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID, journal
 			}
 			if item, running := openByID[job.ID]; running {
 				if job.State == "queued" {
-					if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',started_at=COALESCE(started_at,?) WHERE id=?`,
+					if _, err := tx.Exec(`UPDATE command_job SET state='running',started_at=COALESCE(started_at,?) WHERE id=?`,
 						nullableString(item.StartedAt), job.ID); err != nil {
 						return err
 					}
@@ -676,7 +676,7 @@ func (s *Store) ReconcileMachineCommands(ctx context.Context, machineID, journal
 				kill = append(kill, job)
 			case job.State == "failed" && job.Error == commandNeverStarted:
 				// Inferred never started, yet the machine runs it: it is running after all, and its end will be reported.
-				if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE command_job SET state='running',error=NULL,ended_at=NULL,
+				if _, err := tx.Exec(`UPDATE command_job SET state='running',error=NULL,ended_at=NULL,
 					started_at=COALESCE(started_at,?) WHERE id=?`, nullableString(openByID[id].StartedAt), id); err != nil {
 					return err
 				}

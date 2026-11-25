@@ -28,7 +28,7 @@ func (s *Store) SetUserPreferences(ctx context.Context, userID string, prefs map
 	return s.Tx(ctx, func(tx *Tx) error {
 		now := timestamp()
 		for key, value := range prefs {
-			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO user_preference(user_id,key,value,updated_at) VALUES (?,?,?,?)
+			if _, err := tx.Exec(`INSERT INTO user_preference(user_id,key,value,updated_at) VALUES (?,?,?,?)
 				ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, userID, key, value, now); err != nil {
 				return err
 			}

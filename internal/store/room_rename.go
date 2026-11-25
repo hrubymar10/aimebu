@@ -57,7 +57,7 @@ func (s *Store) RenameRoom(ctx context.Context, roomID, title, actorID string) (
 			if _, err := tx.updateProject(projectID, &title, nil, actorID, true); err != nil {
 				return err
 			}
-		} else if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET title=? WHERE id=?`, title, roomID); err != nil {
+		} else if _, err := tx.Exec(`UPDATE room SET title=? WHERE id=?`, title, roomID); err != nil {
 			return err
 		}
 		_, err := tx.AppendEvent(Event{Kind: "room_renamed", ProjectID: projectID, RoomID: roomID,

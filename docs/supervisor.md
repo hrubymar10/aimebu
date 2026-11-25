@@ -627,7 +627,18 @@ all AI room members. Routine system chatter never wakes agents; explicitly
 targeted system messages can. Leaving a room drops
 that agent's queued notes there.
 
-The server runs a dispatcher every 100 ms. It batches at most 20 queued notes
+The server runs a dispatcher that is woken by work: every committed change that
+can create dispatch work (a message that queues a note, a turn ending, a
+control or desired change, a recovery decision, a queue change) sends a
+non-blocking wake, and the next pass starts at once, so a new message reaches an
+idle agent in well under a second. The wake coalesces (several changes share
+one signal), the pass's own writes do not wake it again, and a fallback tick of
+two seconds catches everything no write covers — a schedule falling due, a
+sweep's effect, a lost signal. An idle server therefore passes about once per
+fallback tick, not ten times a second, and skips the team-flow step entirely
+while no change is draining or applying (a cheap cached check, seeded at start,
+set when a change begins or is cancelled or fails, and cleared by the pass that
+finds nothing left). It batches at most 20 queued notes
 from one room per agent, rotating rooms between passes. Paused rooms/projects,
 stopped agents, recovery blocks, provider quota, active or unsettled turns,
 and the per-machine/tool `dispatch_switch_gate` pause prevent ordinary dispatch

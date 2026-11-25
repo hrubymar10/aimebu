@@ -378,7 +378,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if in.ResumeLegacyID != "" {
 		// A legacy agent is started once: its name is then the v2 agent's for good (names are unique in a project), and that agent is
 		// restarted with the ordinary controls.
-		result, err := tx.tx.ExecContext(tx.ctx, `UPDATE legacy_agent_session SET started_agent_id=? WHERE agent_id=? AND (started_agent_id IS NULL OR started_agent_id='')`, agent.ID, in.ResumeLegacyID)
+		result, err := tx.Exec(`UPDATE legacy_agent_session SET started_agent_id=? WHERE agent_id=? AND (started_agent_id IS NULL OR started_agent_id='')`, agent.ID, in.ResumeLegacyID)
 		if err != nil {
 			return AgentCard{}, err
 		}

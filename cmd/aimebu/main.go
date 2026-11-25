@@ -896,7 +896,10 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	dispatchDone := make(chan struct{})
 	telemetry.Go(ctx, func() {
 		defer close(dispatchDone)
-		server.NewDispatcher(service).Run(dispatchCtx, 100*time.Millisecond, func(err error) { fmt.Fprintln(stderr, "dispatch:", err) })
+		// The dispatcher is woken by every committed change that can create
+		// dispatch work; the tick is only the fallback that catches what no write
+		// covers (a schedule falling due, a sweep's effect, a lost signal).
+		server.NewDispatcher(service).Run(dispatchCtx, 2*time.Second, func(err error) { fmt.Fprintln(stderr, "dispatch:", err) })
 	})
 	var localMu sync.Mutex
 	// stopping is set at shutdown: a start that is still pending (it runs in the background) must not begin after that, or it would start

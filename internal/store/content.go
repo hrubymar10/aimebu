@@ -41,14 +41,14 @@ func (tx *Tx) CreateProject(project Project) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO project
+	_, err = tx.Exec(`INSERT INTO project
 		(id, name, folder, repo_url, created_at, team_flow_key, team_flow_review_pending)
 		VALUES (?, ?, ?, ?, ?, '', 0)`, project.ID, project.Name, project.Folder,
 		nullable(project.RepoURL), timestamp())
 	if err != nil {
 		return Project{}, err
 	}
-	if _, err = tx.tx.ExecContext(tx.ctx,
+	if _, err = tx.Exec(
 		`INSERT INTO settings_project(project_id) VALUES (?)`, project.ID); err != nil {
 		return Project{}, err
 	}
@@ -98,11 +98,11 @@ func (tx *Tx) updateProject(id string, name, folder *string, actorID string, ren
 	if name != nil {
 		project.Name = *name
 	}
-	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE project SET name=?, folder=? WHERE id=?`, project.Name, project.Folder, id); err != nil {
+	if _, err := tx.Exec(`UPDATE project SET name=?, folder=? WHERE id=?`, project.Name, project.Folder, id); err != nil {
 		return project, err
 	}
 	if project.Name != oldName || renameHome {
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET title=? WHERE project_id=? AND kind='home' AND (title=? OR ?)`, project.Name, id, oldName, renameHome); err != nil {
+		if _, err := tx.Exec(`UPDATE room SET title=? WHERE project_id=? AND kind='home' AND (title=? OR ?)`, project.Name, id, oldName, renameHome); err != nil {
 			return project, err
 		}
 	}
@@ -237,7 +237,7 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 	if room.Purpose == "" || room.Kind != "task" {
 		room.Purpose = RoomPurposeTask // only a task room has another purpose
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO room
+	_, err = tx.Exec(`INSERT INTO room
 		(id, project_id, parent_id, depth, kind, dm_key, title, created_by, created_at, purpose)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, room.ID, room.ProjectID,
 		nullable(room.ParentID), room.Depth, room.Kind, nullable(room.DMKey),
@@ -428,7 +428,7 @@ func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
 	}
 	if already > 0 && kind == "agent" {
 		if !auto && wasAuto == 1 {
-			_, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET auto=0 WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, memberID)
+			_, err := tx.Exec(`UPDATE room_member SET auto=0 WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, memberID)
 			return err
 		}
 		return nil
@@ -453,7 +453,7 @@ func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
 			}
 		}
 	}
-	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO room_member
+	if _, err := tx.Exec(`INSERT INTO room_member
 		(room_id, member_kind, member_id, joined_at, auto) VALUES (?, ?, ?, ?, ?)`,
 		roomID, kind, memberID, timestamp(), autoValue); err != nil {
 		return err
@@ -484,7 +484,7 @@ func (tx *Tx) RemoveMember(roomID, kind, memberID string) error {
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
 		return err
 	}
-	result, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET left_at = ?
+	result, err := tx.Exec(`UPDATE room_member SET left_at = ?
 		WHERE room_id = ? AND member_kind = ? AND member_id = ? AND left_at IS NULL`,
 		timestamp(), roomID, kind, memberID)
 	if err != nil {
@@ -627,7 +627,7 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 			return Message{}, err
 		}
 	}
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO message
+	_, err = tx.Exec(`INSERT INTO message
 		(id, seq, room_id, author_kind, author_id, body, reply_to,
 		 thread_root, targets_json, ask_json, source_out_id, created_at,
 		 visual_plan_json, appendix_pages_json, needs_attention, proposed_answers_json, open_questions_json,
@@ -658,7 +658,7 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		flow, ok := teamFlowTemplate(flowKey)
 		if ok && flowAllows(flow.GrantRoles, role) {
 			for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
-				if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
 					SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
 					WHERE target.no=? AND target.no>0 AND tr.project_id=sr.project_id AND tr.kind<>'dm'
 					AND (tr.restricted=0 OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=tr.id
@@ -672,7 +672,7 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		// A lead's "#N" in a chat with another project's lead lets that lead read the message, if it is one of the author's own project that the
 		// author reads (a normal room, or a restricted one it sits in). The read re-checks both leads, so a lead that is no longer one grants nothing.
 		for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
-			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
 				SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
 				JOIN agent au ON au.id=? JOIN role ro ON ro.id=au.role_id
 				WHERE target.no=? AND target.no>0 AND sr.kind='dm' AND ro.cap_is_lead=1 AND tr.project_id=au.project_id AND tr.kind<>'dm'
@@ -686,7 +686,7 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		// A person's "#N" into another project is a grant for the agents of this room, if the person reads the target room now. Agents never
 		// grant across projects, and the read re-checks the person's access, so losing it revokes the grant.
 		for _, ref := range extractMessageRefs([]string{message.Body}, nil, 100) {
-			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO message_reference_grant(source_message_id,target_no)
 				SELECT ?,target.no FROM message target JOIN room tr ON tr.id=target.room_id JOIN room sr ON sr.id=?
 				WHERE target.no=? AND target.no>0 AND tr.project_id<>sr.project_id AND sr.kind<>'dm' AND `+personReadsRoomSQL("?"),
 				message.ID, message.RoomID, ref, message.AuthorID, message.AuthorID, message.AuthorID); err != nil {

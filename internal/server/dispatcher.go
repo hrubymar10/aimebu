@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/store"
@@ -15,6 +16,8 @@ import (
 // Dispatcher makes one serial pass. Machine delivery can fail after durable
 // preparation; in that case the never-sent turn is removed and its notes stay
 // queued. Once queued on the socket, journal reconciliation owns uncertainty.
+// A pass runs when any committed change can have created dispatch work (the
+// store wakes it) and at a slow fallback tick for everything else.
 type Dispatcher struct {
 	Server                 *Server
 	mu                     sync.Mutex
@@ -28,6 +31,13 @@ type Dispatcher struct {
 	cleanupMu              sync.Mutex
 	cleanupRunning         bool
 	lastCleanup            time.Time
+	// wake carries one coalesced signal per pass: a write that can create
+	// dispatch work sends into it without blocking, and the run loop consumes
+	// one signal per pass, so a burst of writes costs one pass.
+	wake chan struct{}
+	// passes counts the passes run, for tests that show an idle server lets
+	// the fallback tick, not a busy loop, drive it.
+	passes atomic.Int64
 }
 
 type dispatchFailure struct {
@@ -54,10 +64,49 @@ func dispatchBackoff(failures int) time.Duration {
 }
 
 func NewDispatcher(server *Server) *Dispatcher {
-	return &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure), forkHeld: make(map[string]*machineConn), dockerHeld: make(map[string]bool), dockerUnchecked: make(map[string]bool)}
+	d := &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure), forkHeld: make(map[string]*machineConn), dockerHeld: make(map[string]bool), dockerUnchecked: make(map[string]bool), wake: make(chan struct{}, 1)}
+	// Every committed change that can create dispatch work wakes the next pass
+	// at once; the store drops extra wakes and the fallback tick covers the
+	// rest (a schedule falling due, a sweep's effect, a lost signal).
+	server.Store.SetDispatchWake(d.Wake)
+	server.setDispatchWake(d.Wake)
+	return d
+}
+
+// Wake asks for one more pass without blocking. It coalesces: a signal already
+// waiting covers any number of further changes, and a wake arriving during a
+// pass is kept for the next one by the channel's one free slot.
+func (d *Dispatcher) Wake() {
+	select {
+	case d.wake <- struct{}{}:
+	default:
+	}
+}
+
+// setDispatchWake installs the server-side wake (a machine connecting), and
+// wakeDispatch calls it without blocking; both mirror the store's hook, which
+// covers writes. One dispatcher per server: a later install replaces an
+// earlier one.
+func (s *Server) setDispatchWake(wake func()) {
+	s.wakeMu.Lock()
+	s.wakeFn = wake
+	s.wakeMu.Unlock()
+}
+
+func (s *Server) wakeDispatch() {
+	s.wakeMu.Lock()
+	wake := s.wakeFn
+	s.wakeMu.Unlock()
+	if wake != nil {
+		wake()
+	}
 }
 
 func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
+	d.passes.Add(1)
+	// Marks this pass's own writes so the store does not wake the pass again
+	// for them; a pass that created work for another writer is woken by it.
+	ctx = context.WithValue(ctx, store.DispatchPassContextKey{}, true)
 	if d.Server.maintenance.Load() {
 		return 0, nil
 	}
@@ -90,23 +139,15 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 	}
 	d.Server.sendRoomControls(ctx, controls)
 	d.scheduleCleanup(ctx)
-	migrationControls, err := d.Server.Store.AdvanceTeamFlowMigrations(ctx)
-	if err != nil {
-		return 0, err
-	}
-	for _, card := range migrationControls {
-		if card.Desired == "stopped" || card.Desired == "not_accepting" {
-			d.Server.sendRoomControls(ctx, []store.AgentCard{card})
-			continue
+	// A team-flow change or the agents it left interrupted is the only step
+	// here with its own state machine; with none under way the store's cached
+	// answer says so and the pass pays nothing for it.
+	if d.Server.Store.TeamFlowMigrationBusy() {
+		migrationControls, err := d.Server.Store.AdvanceTeamFlowMigrations(ctx)
+		if err != nil {
+			return 0, err
 		}
-		if machine, err := d.Server.machineForDispatch(card.MachineID); err == nil {
-			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
-				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
-					log.Printf("team flow migration spawn %s: %v", card.ID, err)
-					telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("team flow migration spawn: %w", err))
-				}
-			}
-		}
+		d.sendMigrationControls(ctx, migrationControls)
 	}
 	switchControls, err := d.Server.Store.AdvanceAgentSwitches(ctx)
 	if err != nil {
@@ -342,6 +383,25 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// sendMigrationControls stops or holds the agents a team-flow change says to,
+// and sends the spawn of one it started again to its machine at once.
+func (d *Dispatcher) sendMigrationControls(ctx context.Context, cards []store.AgentCard) {
+	for _, card := range cards {
+		if card.Desired == "stopped" || card.Desired == "not_accepting" {
+			d.Server.sendRoomControls(ctx, []store.AgentCard{card})
+			continue
+		}
+		if machine, err := d.Server.machineForDispatch(card.MachineID); err == nil {
+			if pending, ok, err := d.Server.Store.PendingSpawnByID(ctx, card.ID); err == nil && ok {
+				if err := d.Server.sendPendingSpawn(ctx, machine, pending); err != nil {
+					log.Printf("team flow migration spawn %s: %v", card.ID, err)
+					telemetry.ReportError(ctx, "dispatcher", fmt.Errorf("team flow migration spawn: %w", err))
+				}
+			}
+		}
+	}
+}
+
 // scheduleCleanup runs the daily cleanup when it is due. It never removes worktrees: that is a manual action in 2.0.
 func (d *Dispatcher) scheduleCleanup(ctx context.Context) {
 	d.cleanupMu.Lock()
@@ -376,8 +436,8 @@ func (d *Dispatcher) scheduleCleanup(ctx context.Context) {
 	}()
 }
 
-func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller func(error)) {
-	// Every failure of a pass is said to the caller (a line on stderr) and to Sentry, once per cause: the pass runs every 100ms, so a failing one repeats at once.
+func (d *Dispatcher) Run(ctx context.Context, fallback time.Duration, caller func(error)) {
+	// Every failure of a pass is said to the caller (a line on stderr) and to Sentry, once per cause: the pass runs only when work appears or the fallback tick fires, so a failing one repeats quickly only while its cause persists.
 	onError := func(err error) {
 		telemetry.ReportError(ctx, "dispatcher", err)
 		if caller != nil {
@@ -399,10 +459,10 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller fun
 		case <-time.After(time.Second):
 		}
 	}
-	if interval <= 0 {
-		interval = 100 * time.Millisecond
+	if fallback <= 0 {
+		fallback = 2 * time.Second
 	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(fallback)
 	defer ticker.Stop()
 	lastAttachmentSweep := time.Now()
 	lastRecoverySweep := time.Time{}
@@ -438,9 +498,13 @@ func (d *Dispatcher) Run(ctx context.Context, interval time.Duration, caller fun
 		if _, err := d.Pass(ctx); err != nil && ctx.Err() == nil {
 			onError(err)
 		}
+		// One pass per wake or fallback tick: a wake is sent by any committed
+		// change that can create dispatch work, and several waiting changes
+		// share the one signal the channel holds, so a burst costs one pass.
 		select {
 		case <-ctx.Done():
 			return
+		case <-d.wake:
 		case <-ticker.C:
 		}
 	}

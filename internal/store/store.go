@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sqlite "modernc.org/sqlite"
@@ -27,6 +28,11 @@ var ErrDepthExceeded = errors.New("depth_exceeded")
 var ErrTxReentry = errors.New("store transaction re-entry")
 
 type txContextKey struct{}
+
+// DispatchPassContextKey marks the context a dispatcher pass runs under. A
+// change the pass itself commits must not wake the pass again: the pass sees
+// its own writes, and waking on them would loop passes back to back forever.
+type DispatchPassContextKey struct{}
 
 type Options struct {
 	MaxRoomDepth int
@@ -52,6 +58,27 @@ type Store struct {
 	hostLogin func(tool string) string
 	// drift caches how far a room worktree is behind its base ref (see base_drift.go).
 	drift baseDriftCache
+	// wakeMu guards wakeFn, the dispatcher wake installed once at server start.
+	wakeMu sync.Mutex
+	wakeFn func()
+	// flowMigrationBusy caches whether a team-flow change or its interrupted
+	// agents still need dispatcher passes. It is set when a change starts, is
+	// cancelled, or fails, and cleared by AdvanceTeamFlowMigrations once
+	// nothing is left, so an idle server skips the step entirely.
+	flowMigrationBusy atomic.Bool
+	// flowMigrationAdvances counts AdvanceTeamFlowMigrations runs, for tests
+	// that show an idle server leaves the step alone.
+	flowMigrationAdvances atomic.Int64
+	// writeCommits counts committed write transactions, for tests that show an
+	// idle server commits none. A transaction counts when it changed rows (see
+	// Tx.wrote); a read-only transaction does not.
+	writeCommits atomic.Int64
+}
+
+// WriteCommits says how many write transactions this store has committed since
+// it opened. Tests snapshot it around an idle stretch and expect no movement.
+func (s *Store) WriteCommits() int64 {
+	return s.writeCommits.Load()
 }
 
 // Open creates or opens a store, applies forward-only migrations, and enables
@@ -105,7 +132,18 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db, readDB: readDB, maxDepth: depth, attachmentDir: filepath.Join(filepath.Dir(path), "attachments"), dbPath: path}, nil
+	s := &Store{db: db, readDB: readDB, maxDepth: depth, attachmentDir: filepath.Join(filepath.Dir(path), "attachments"), dbPath: path}
+	// A crash can leave a team-flow change (or an agent it interrupted) waiting
+	// for a pass; one read here seeds the cache so the first passes do the
+	// step, and an idle server skips it once nothing is left.
+	var busy bool
+	if err := readDB.QueryRowContext(ctx, flowMigrationBusySQL).Scan(&busy); err != nil {
+		_ = readDB.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	s.flowMigrationBusy.Store(busy)
+	return s, nil
 }
 
 // Another process may be opening or checkpointing the same WAL database while
@@ -200,17 +238,29 @@ func (s *Store) Tx(ctx context.Context, fn func(*Tx) error) error {
 		return err
 	}
 	defer inner.Rollback()
-	tx := &Tx{tx: inner, ctx: markedContext, maxDepth: s.maxDepth}
+	tx := &Tx{store: s, tx: inner, ctx: markedContext, maxDepth: s.maxDepth}
 	if err := fn(tx); err != nil {
 		return err
 	}
-	return inner.Commit()
+	if err := inner.Commit(); err != nil {
+		return err
+	}
+	// A committed change that can create dispatch work wakes the dispatcher
+	// pass at once, so delivery does not wait for the fallback tick. The pass
+	// itself is not woken by its own writes (DispatchPassContextKey).
+	if tx.wrote {
+		s.writeCommits.Add(1)
+		s.wakeDispatch(markedContext)
+	}
+	return nil
 }
 
 type Tx struct {
+	store    *Store
 	tx       *sql.Tx
 	ctx      context.Context
 	maxDepth int
+	wrote    bool
 }
 
 // Context carries the active transaction marker for fail-fast Store calls.
@@ -218,7 +268,51 @@ func (tx *Tx) Context() context.Context { return tx.ctx }
 
 // Exec exposes SQL inside the managed transaction for later store accessors.
 func (tx *Tx) Exec(query string, args ...any) (sql.Result, error) {
-	return tx.tx.ExecContext(tx.ctx, query, args...)
+	result, err := tx.tx.ExecContext(tx.ctx, query, args...)
+	if err == nil && writesData(query) {
+		tx.wrote = true
+	}
+	return result, err
+}
+
+// writesData reports whether a statement changes rows (not a read, a
+// savepoint, or a pragma): a transaction holding one can create dispatch work
+// when it commits. A WITH header may open a data-changing statement.
+func writesData(query string) bool {
+	trimmed := strings.TrimLeft(query, " \t\r\n;")
+	for _, prefix := range []string{"INSERT", "UPDATE", "DELETE", "REPLACE", "WITH"} {
+		if len(trimmed) >= len(prefix) && strings.EqualFold(trimmed[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetDispatchWake installs the callback the store calls once per committed
+// change that can create dispatch work, so the dispatcher pass runs without
+// waiting for its fallback tick. The callback must never block; the store
+// calls it at most one per commit and drops extra wakes (the dispatcher
+// coalesces them itself). One dispatcher per store: a later install replaces
+// an earlier one.
+func (s *Store) SetDispatchWake(wake func()) {
+	s.wakeMu.Lock()
+	s.wakeFn = wake
+	s.wakeMu.Unlock()
+}
+
+// wakeDispatch calls the installed wake for a change committed outside a
+// dispatcher pass. Passes carry DispatchPassContextKey and are not woken by
+// their own writes.
+func (s *Store) wakeDispatch(ctx context.Context) {
+	if ctx.Value(DispatchPassContextKey{}) != nil {
+		return
+	}
+	s.wakeMu.Lock()
+	wake := s.wakeFn
+	s.wakeMu.Unlock()
+	if wake != nil {
+		wake()
+	}
 }
 
 func (tx *Tx) nextSeq() (int64, error) {
@@ -226,6 +320,9 @@ func (tx *Tx) nextSeq() (int64, error) {
 	err := tx.tx.QueryRowContext(tx.ctx,
 		`UPDATE seq_counter SET value = value + 1
 		 WHERE id = 1 RETURNING value`).Scan(&seq)
+	if err == nil {
+		tx.wrote = true
+	}
 	return seq, err
 }
 
@@ -260,12 +357,11 @@ func (tx *Tx) AppendEvent(event Event) (Event, error) {
 		event.PayloadJSON = "{}"
 	}
 	event.CreatedAt = timestamp()
-	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO event
+	if _, err = tx.Exec(`INSERT INTO event
 		(id, seq, kind, project_id, room_id, agent_id, turn_id, payload_json, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, event.Seq, event.Kind, nullable(event.ProjectID), nullable(event.RoomID),
-		nullable(event.AgentID), nullable(event.TurnID), event.PayloadJSON, event.CreatedAt)
-	if err != nil {
+		nullable(event.AgentID), nullable(event.TurnID), event.PayloadJSON, event.CreatedAt); err != nil {
 		return Event{}, err
 	}
 	if event.TurnID != "" {

@@ -546,6 +546,7 @@ func (tx *Tx) BeginTeamFlowMigration(projectID, actorID string, in TeamFlowMigra
 		VALUES (?,?,?,?,?,?,'draining',?,?)`, id, projectID, actorID, from, in.FlowKey, rev, string(stored), timestamp()); err != nil {
 		return out, err
 	}
+	tx.store.flowMigrationBusy.Store(true)
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.desired,a.observed,a.generation,a.recovery_block,
 		m.approved=1 AND m.revoked_at IS NULL FROM agent a JOIN role r ON r.id=a.role_id JOIN machine m ON m.id=a.machine_id
 		WHERE a.project_id=? AND a.revoked_at IS NULL ORDER BY a.created_at,a.id`, projectID)
@@ -688,6 +689,7 @@ func (s *Store) CancelTeamFlowMigration(ctx context.Context, projectID, actorID 
 		if _, err := tx.Exec(`UPDATE team_flow_migration SET state='cancelled',finished_at=? WHERE id=?`, timestamp(), id); err != nil {
 			return err
 		}
+		tx.store.flowMigrationBusy.Store(true)
 		if err := tx.appendFlowMigrationEvent(projectID, id); err != nil {
 			return err
 		}
@@ -736,10 +738,37 @@ func (tx *Tx) flowMigrationCancelHandoffs(id string) error {
 	return nil
 }
 
+// flowMigrationBusySQL reports whether a team-flow change still needs a
+// dispatcher pass: one that is draining or applying, or one that left agents
+// interrupted (cancelled or failed changes restart them, draining ones forget
+// the mark once the agent's spawn is confirmed). team_flow_migration_active,
+// the partial index on draining and applying, serves the first half; the
+// interrupt table is tiny or empty the rest of the time.
+const flowMigrationBusySQL = `SELECT EXISTS(SELECT 1 FROM team_flow_migration WHERE state IN ('draining','applying'))
+	OR EXISTS(SELECT 1 FROM team_flow_migration_interrupt i JOIN team_flow_migration m ON m.id=i.migration_id
+	WHERE m.state IN ('draining','cancelled','failed'))`
+
+// TeamFlowMigrationBusy reports the cached answer to flowMigrationBusySQL, so
+// an idle server's pass skips the team-flow step entirely. Open seeds it with
+// one read, a change starting, being cancelled, or failing sets it, and
+// AdvanceTeamFlowMigrations re-reads the database inside its own transaction
+// once it has settled everything, so a change starting concurrently either
+// commits first (and is seen) or has already set the cache itself.
+func (s *Store) TeamFlowMigrationBusy() bool {
+	return s.flowMigrationBusy.Load()
+}
+
+// FlowMigrationAdvanceRuns counts AdvanceTeamFlowMigrations runs, so a test
+// can show an idle server leaves the step alone.
+func (s *Store) FlowMigrationAdvanceRuns() int64 {
+	return s.flowMigrationAdvances.Load()
+}
+
 // AdvanceTeamFlowMigrations is called by the dispatcher. The drain is
 // cancellable until all affected turns and departing-role handoffs settle.
 // The flow update and its effects then commit in one transaction.
 func (s *Store) AdvanceTeamFlowMigrations(ctx context.Context) ([]AgentCard, error) {
+	s.flowMigrationAdvances.Add(1)
 	controls := []AgentCard{}
 	err := s.Tx(ctx, func(tx *Tx) error {
 		rows, err := tx.tx.QueryContext(ctx, `SELECT id,project_id,actor_id,from_key,to_key,flow_rev,state,input_json FROM team_flow_migration WHERE state IN ('draining','applying') ORDER BY created_at,id`)
@@ -825,6 +854,11 @@ func (s *Store) AdvanceTeamFlowMigrations(ctx context.Context) ([]AgentCard, err
 				return err
 			}
 		}
+		var busy bool
+		if err := tx.tx.QueryRowContext(ctx, flowMigrationBusySQL).Scan(&busy); err != nil {
+			return err
+		}
+		tx.store.flowMigrationBusy.Store(busy)
 		return nil
 	})
 	return controls, err
@@ -843,6 +877,7 @@ func (tx *Tx) flowMigrationFail(id, projectID, reason string) error {
 	if _, err := tx.Exec(`UPDATE team_flow_migration SET state='failed',error=?,finished_at=? WHERE id=?`, reason, timestamp(), id); err != nil {
 		return err
 	}
+	tx.store.flowMigrationBusy.Store(true)
 	if _, err := tx.Exec(`UPDATE team_flow_migration_agent SET state='failed',error=? WHERE migration_id=? AND state NOT IN ('done','failed')`, reason, id); err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 type AgentRuntime struct {
@@ -82,7 +83,25 @@ func (s *Store) PendingStopControlsForMachine(ctx context.Context, machineID str
 	return controls, rows.Err()
 }
 
+// machineTouchInterval is how stale the stored last_seen of a machine may get
+// before a ping writes it again. The server and its supervisors exchange pings
+// every 15 s and every one used to commit a write transaction for a timestamp
+// that is only displayed and read with minute-scale cutoffs; writing at most
+// once a minute keeps both uses honest while an idle server stops committing.
+const machineTouchInterval = time.Minute
+
+// TouchMachine records that the machine answered a ping. The stored timestamp
+// is only refreshed when it is machineTouchInterval old, so a mostly idle
+// server writes it about once a minute per machine instead of on every ping;
+// a value fresher than that already says the machine is alive.
 func (s *Store) TouchMachine(ctx context.Context, id string) error {
+	cutoff := time.Now().UTC().Add(-machineTouchInterval).Format(timestampLayout)
+	var fresh int
+	if err := s.readDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM machine WHERE id=? AND revoked_at IS NULL AND last_seen>?)`, id, cutoff).Scan(&fresh); err == nil && fresh == 1 {
+		return nil
+	}
+	// A failed read falls through to the write: staleness is then unknown, and
+	// one redundant write costs less than a machine looking gone.
 	return s.Tx(ctx, func(tx *Tx) error {
 		_, err := tx.Exec(`UPDATE machine SET last_seen=? WHERE id=? AND revoked_at IS NULL`, timestamp(), id)
 		return err

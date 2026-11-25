@@ -2223,6 +2223,15 @@ CREATE INDEX command_job_open_journal ON command_job(machine_id,journal_id) WHER
 -- The replacement grace is no longer a setting: normal retirement waits for
 -- all work owned by the retiring instance.
 DELETE FROM global_setting WHERE key='supervisor_drain_grace_seconds';
+`}, {142, `
+-- The dispatcher pass reads the queued notes and the pending turns on every wake; without these partial indexes it read the whole
+-- note and turn tables each time. Queued and pending rows are a vanishing fraction of both tables, so the partial indexes keep the
+-- read at the size of the work instead of the size of the history. The third keeps the same promise for the team-flow states a pass
+-- still has to serve (the existing team_flow_migration_active index covers only draining and applying).
+CREATE INDEX IF NOT EXISTS note_queued ON note(agent_id) WHERE state='queued';
+CREATE INDEX IF NOT EXISTS turn_pending ON turn(agent_id) WHERE exec='pending';
+CREATE INDEX IF NOT EXISTS team_flow_migration_unsettled ON team_flow_migration(created_at)
+  WHERE state IN ('draining','applying','cancelled','failed');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

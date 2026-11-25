@@ -148,7 +148,7 @@ func (s *Store) AppendCleanupLog(ctx context.Context, entries []CleanupEntry) er
 			if entry.ProjectID != "" {
 				project = entry.ProjectID
 			}
-			if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO cleanup_log(id,seq,category,target,project_id,reason,bytes,action,actor,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			if _, err := tx.Exec(`INSERT INTO cleanup_log(id,seq,category,target,project_id,reason,bytes,action,actor,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 				id, seq, entry.Category, entry.Target, project, entry.Reason, entry.Bytes, entry.Action, entry.Actor, timestamp()); err != nil {
 				return err
 			}
@@ -384,7 +384,7 @@ func (s *Store) MarkAttachmentRemoved(ctx context.Context, id string, days int) 
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT path FROM attachment WHERE id=? AND removed_at IS NULL`, id).Scan(&path); err != nil {
 			return err
 		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE attachment SET removed_at=?,removed_after_days=? WHERE id=?`, timestamp(), days, id); err != nil {
+		if _, err := tx.Exec(`UPDATE attachment SET removed_at=?,removed_after_days=? WHERE id=?`, timestamp(), days, id); err != nil {
 			return err
 		}
 		var shared int
