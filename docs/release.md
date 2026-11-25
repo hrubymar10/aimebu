@@ -218,6 +218,14 @@ The server closes event and machine WebSockets, waits for their handlers,
 then closes the database; the local supervisor's turns keep running. A Homebrew formula's
 `service` block takes the same `aimebu server` command.
 
+Before a release that changes supervisor startup, run the real-binary upgrade
+smoke with the previous and candidate binaries:
+`scripts/test-lock.sh sh scripts/upgrade-smoke.sh OLD_BINARY NEW_BINARY SCRATCH_DIR`.
+The script creates an isolated server and stub Claude harness below the given
+scratch directory, holds a turn and native command across the server upgrade,
+and checks the replacement supervisor, replies, command exit, journals, and
+doctor result. It removes its own scratch run when finished.
+
 Secondary options, none required for 2.0.0 and none verified here:
 
 - **Homebrew:** v1 shipped a HEAD-only formula in `hrubymar10/tap` (`brew install
