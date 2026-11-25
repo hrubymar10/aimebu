@@ -62,7 +62,7 @@ export class MockUsagesSource {
       { tool: 'codex', name: 'backup', active: false, has_credentials: true },
       { tool: 'claude', name: 'local', active: true, has_credentials: true },
     ], eligibility: [{ tool: 'codex', eligible: true }, { tool: 'claude', eligible: true }],
-      affected_agents: { codex: [{ id: 'milo@mock', slug: 'milo', tool: 'codex', desired: 'active', observed: 'idle', running: false }], claude: [] } };
+      affected_agents: { codex: [{ id: 'milo@mock', slug: 'milo', name: 'milo', role: 'worker', room: { id: 'room_mock', name: 'Example room' }, tool: 'codex', desired: 'active', observed: 'idle', running: false }], claude: [] } };
   }
   async list() {
     const response = this.usageList();

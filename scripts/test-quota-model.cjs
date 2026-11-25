@@ -55,6 +55,8 @@ assert.deepEqual(plain(entries), [2, 1, 3]);
 // What the server says, in words.
 assert.deepEqual([m.describeDecision({ action: 'switch', from: 'a', to: 'b' }), m.describeDecision({ action: 'switch', from: 'a', to: 'b', dry_run: true, reason: 'low' }), m.describeDecision({ action: 'stay', from: 'a' }), m.describeDecision({ action: 'hold', reason: 'warming up' }), m.describeDecision({ action: 'idle', reason: 'ignored' }), m.describeDecision({ action: 'odd' })],
   ['switched a → b', 'would switch a → b: low', 'stay on a', 'hold: warming up', 'idle', 'odd']);
+assert.equal(m.describeDecision({ action: 'stay', from: 'bkp', reason: 'no listed profile is usable; staying put' }), 'stay on bkp: no listed profile is usable; staying put');
+assert.equal(m.describeDecision({ action: 'stay', from: 'bkp', reason: 'the active profile is the highest-priority usable one' }), 'stay on bkp: the active profile is the highest-priority usable one');
 assert.deepEqual([m.percent(41.6), m.percent('x'), m.when(null), m.when('nope')], ['42%', '-', 'never', 'unknown']);
 assert.equal(m.decisionAction({ action: 'sw<i>tch!' }), 'switch', 'only letters of the action reach a data attribute');
 assert.deepEqual(m.decisionProfiles({ profiles: { a: { status: 'ok', session: 1, weekly: 2 }, b: null } }), ['a: ok, session 1%, weekly 2%', 'b: ?, session -, weekly -']);

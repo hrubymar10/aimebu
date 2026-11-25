@@ -22,7 +22,9 @@ function Field({ spec, index, state, onInput, onReset }) {
 export function AppDialog({ call, states, error, onInput, onReset, onSubmit, onCancel }) {
   if (!call) return null;
   const { title, message, fields, confirm, cancel, danger, notice } = call;
-  return html`<form key=${call.seq} novalidate onSubmit=${onSubmit}><h2 id="app-dialog-title">${title}</h2><p class="app-dialog-message" hidden=${!message}>${message || ''}</p>
+  return html`<form key=${call.seq} novalidate onSubmit=${onSubmit}><h2 id="app-dialog-title">${title}</h2>${typeof message === 'object' && message !== null
+    ? html`<div class="app-dialog-message"><p>${message.intro}</p>${message.items?.length ? html`<ul>${message.items.map(item => html`<li>${item}</li>`)}</ul>` : null}<p>${message.question}</p></div>`
+    : html`<p class="app-dialog-message" hidden=${!message}>${message || ''}</p>`}
     <div class="app-dialog-fields">${fields.map((spec, index) => html`<${Field} key=${spec.name} spec=${spec} index=${index} state=${states[index]} onInput=${onInput} onReset=${onReset} />`)}</div>
     <p class="error" role="alert">${error}</p>
     <div class="dialog-actions"><button type="button" class="btn app-dialog-cancel" hidden=${notice} onClick=${onCancel}>${cancel}</button><button type="submit" class=${`btn ${danger ? 'btn-danger' : 'btn-primary'} app-dialog-ok`}>${confirm}</button></div></form>`;

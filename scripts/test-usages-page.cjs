@@ -118,7 +118,8 @@ async function main() {
         ['Active', 'Inactive'], 'an account says in words whether it is the active one');
       await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
       await dialog(page);
-      assert.match(await page.$eval('#app-dialog .app-dialog-message', el => el.textContent), /Affected agents: milo@mock\. Switch to backup\?/);
+      assert.deepEqual(await page.$eval('#app-dialog .app-dialog-message', el => ({ intro: el.querySelector('p:first-child').textContent, items: [...el.querySelectorAll('li')].map(item => item.textContent), question: el.querySelector('p:last-child').textContent })),
+        { intro: 'Switching will affect:', items: ['Example room: 1 worker'], question: 'Switch to backup?' });
       await click(page, '#app-dialog .app-dialog-cancel');
       await settle(page);
       assert.equal(await calls(page, 'use'), 0, 'declining switches nothing');
@@ -140,6 +141,34 @@ async function main() {
       await page.evaluate(() => { window.__source.enable = async () => { throw new Error('Cannot switch now'); }; });
       await click(page, '#usage-switcher-disable'); await dialog(page); await click(page, '#app-dialog .app-dialog-ok');
       await page.waitForFunction(() => document.querySelector('#usages-error').textContent === 'Cannot switch now');
+      await page.close();
+    }
+    // The confirmation counts each agent once in its own room, even if it belongs to other rooms.
+    {
+      const page = await mount({ load: false });
+      await page.evaluate(() => {
+        const original = window.__source.switcherState.bind(window.__source);
+        window.__source.switcherState = () => ({ ...original(), affected_agents: { codex: [
+          { id: 'agt_lead', role: 'lead', room: { id: 'room_one', name: 'Alpha' }, rooms: [{ id: 'room_two', name: 'Beta' }] },
+          { id: 'agt_dispatch', role: 'dispatcher', room: { id: 'room_one', name: 'Alpha' } },
+          { id: 'agt_worker_one', role: 'worker', room: { id: 'room_two', name: 'Beta' } },
+          { id: 'agt_worker_two', role: 'worker', room: { id: 'room_two', name: 'Beta' } },
+          { id: 'agt_worker_three', role: 'worker', room: { id: 'room_two', name: 'Beta' } },
+          { id: 'agt_researcher', role: 'researcher', room: { id: 'room_unnamed', name: '' } },
+          { id: 'agt_unassigned', role: 'worker', room: null },
+        ], claude: [{ id: 'agt_other_tool', role: 'worker', room: { id: 'room_other', name: 'Other tool' } }] } });
+        window.__usages.load();
+      });
+      await page.waitForSelector(`${cardOf('codex')} .usages-b-switch`);
+      await click(page, `${cardOf('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
+      await dialog(page);
+      const message = await page.$eval('#app-dialog .app-dialog-message', el => ({ intro: el.querySelector('p:first-child').textContent, items: [...el.querySelectorAll('li')].map(item => item.textContent), question: el.querySelector('p:last-child').textContent, text: el.textContent }));
+      assert.deepEqual(message.items, ['Agents without a room: 1 worker', 'Alpha: leader, 1 dispatcher', 'Beta: 3 workers', 'Unnamed room: 1 researcher']);
+      assert.equal(message.items.length, 4);
+      assert.equal(message.items.reduce((total, item) => total + [...item.matchAll(/(\d+) (?:workers?|dispatchers?|researchers?)/g)].reduce((count, match) => count + Number(match[1]), item.includes('leader') ? 1 : 0), 0), 7, 'room counts equal the seven affected agents');
+      assert.equal(message.intro, 'Switching will affect:');
+      assert.equal(message.question, 'Switch to backup?');
+      assert.doesNotMatch(message.text, /agt_|Other tool/);
       await page.close();
     }
     // A stored account needing reauthentication offers an explicit install path.

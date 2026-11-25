@@ -19,6 +19,9 @@ there is no automatic profile conversion or merge between roots.
 
 For a fresh root, enable the switcher in Settings → Server → Accounts & usage, then **Import
 current login** before switching. Import adopts the live login as a profile.
+The Switch account confirmation lists affected agents by their own room, with a
+count for each role. Each agent is counted once, even when it belongs to other
+rooms. Agents without an own room appear under "Agents without a room".
 Existing v1 profiles at cutover need no re-import. **Add profile** creates an
 empty destination. Switching to an empty profile clears the live credential
 file so the harness asks you to log in. You can also use the CLI with the

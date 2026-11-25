@@ -1,5 +1,5 @@
 import { confirmDialog, promptDialog } from '../../dialogs.js';
-import { impactText } from './model.js';
+import { impactGroups, impactText } from './model.js';
 import { maskName } from '../../usage-privacy.js';
 
 // What a profile's Switch, Install anyway, Rename and Delete do: each asks first, then writes through the store and reads again. Shared by the
@@ -9,7 +9,7 @@ export function profileActions({ store, tool, profile, affected }) {
   // The dialogs' display text shows the masked name while B's privacy is on (read when asked, so a toggle flip counts); the real name still goes to the store and into Rename's input.
   const shown = () => maskName(name);
   const use = async () => {
-    if (await confirmDialog(`${impactText(affected)}${profile.has_credentials ? '' : ' This profile needs a new login.'} Switch to ${shown()}?`, { title: 'Switch account', confirm: 'Switch' })) store.mutateSwitcher(() => store.source.use(tool, name));
+    if (await confirmDialog({ intro: affected.length ? 'Switching will affect:' : 'No affected agents.', items: impactGroups(affected), question: `${profile.has_credentials ? '' : 'This profile needs a new login. '}Switch to ${shown()}?` }, { title: 'Switch account', confirm: 'Switch' })) store.mutateSwitcher(() => store.source.use(tool, name));
   };
   const installAnyway = async () => {
     if (await confirmDialog(`${impactText(affected)} Install ${shown()}'s stored credentials without refreshing? They may be expired; sign in again after switching.`, { title: 'Install expired account', confirm: 'Install anyway' })) store.mutateSwitcher(() => store.source.use(tool, name, true));

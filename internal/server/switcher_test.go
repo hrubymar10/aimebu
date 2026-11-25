@@ -68,8 +68,15 @@ func TestSwitcherRoutesShowImpactAndSwitchPastARunningTurn(t *testing.T) {
 		t.Fatalf("configured profiles absent from usage response: %+v", usage)
 	}
 	agent, turn, _, _ := f.execution(t)
+	otherRoom, err := f.db.CreateRoom(context.Background(), store.Room{ProjectID: f.project.ID, ParentID: f.room.ID, Kind: "task", Title: "Other room", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(context.Background(), otherRoom.ID, "agent", agent.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`UPDATE agent SET tool='codex',observed='in_turn' WHERE id=?`, agent.ID); err != nil {
+		if _, err := tx.Exec(`UPDATE agent SET tool='codex',observed='in_turn',home_room_id=? WHERE id=?`, f.room.ID, agent.ID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(`UPDATE turn SET exec='running' WHERE id=?`, turn.ID)
@@ -87,6 +94,9 @@ func TestSwitcherRoutesShowImpactAndSwitchPastARunningTurn(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || len(status.Affected["codex"]) != 1 || !status.Affected["codex"][0].Running {
 		t.Fatalf("impact=%+v status=%d", status, resp.StatusCode)
+	}
+	if got := status.Affected["codex"][0]; got.Name == "" || got.Role == "" || got.Room == nil || got.Room.ID != f.room.ID || got.Room.Name != f.room.Title {
+		t.Fatalf("impact must show the agent once in its own room: %+v", got)
 	}
 	// A switch never waits for agents: with an agent in a turn it succeeds.
 	resp = f.request(http.MethodPost, "/api/switcher/codex/use", map[string]string{"name": "empty"}, true)

@@ -7,7 +7,28 @@ export const providerStatus = provider => (!provider.available ? 'Unavailable' :
 export const profileKey = (provider, profile) => `${provider}/${profile.profile_name || 'local'}`;
 
 export const affectedText = affected => (affected.length ? `Switch affects: ${affected.map(agent => `${agent.id}${agent.running ? ' (running)' : ''}`).join(', ')}` : 'No agents use this tool');
-export const impactText = affected => (affected.length ? `Affected agents: ${affected.map(agent => agent.id).join(', ')}.` : 'No affected agents.');
+export function impactGroups(affected) {
+  if (!affected.length) return [];
+  const groups = new Map();
+  for (const agent of affected) {
+    const room = agent.room || { id: '', name: 'Agents without a room' };
+    const key = room.id || 'unassigned';
+    const name = room.name?.trim() && !/^(room_|agt_)/.test(room.name) ? room.name.trim() : room.id ? 'Unnamed room' : 'Agents without a room';
+    if (!groups.has(key)) groups.set(key, { name, roles: new Map() });
+    const roles = groups.get(key).roles;
+    const role = agent.role === 'lead' ? 'leader' : (agent.role || 'agent').replaceAll('_', ' ').toLowerCase();
+    roles.set(role, (roles.get(role) || 0) + 1);
+  }
+  const rank = role => role === 'leader' ? 0 : role === 'dispatcher' ? 1 : 2;
+  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name)).map(({ name, roles }) => {
+    const counts = [...roles].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([role, count]) => {
+      if (role === 'leader' && count === 1) return 'leader';
+      return `${count} ${role}${count === 1 ? '' : 's'}`;
+    });
+    return `${name}: ${counts.join(', ')}`;
+  });
+}
+export const impactText = affected => (affected.length ? `Switching will affect ${impactGroups(affected).join('; ')}.` : 'No affected agents.');
 
 // A provider can be switched on once it has credentials, or if it is one of the two the server can read itself.
 export const canEnable = (provider, configured) => provider.enabled || configured || ['codex', 'claude-code'].includes(provider.provider_name);

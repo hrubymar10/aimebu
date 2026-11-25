@@ -1695,6 +1695,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .app-dialog form { display: grid; gap: 12px; }
 .app-dialog h2 { margin: 0; }
 .app-dialog-message { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.app-dialog-message > p { margin: 0; }
+.app-dialog-message > ul { margin: 8px 0; padding-left: 24px; list-style: disc; }
 .app-dialog-fields { display: grid; gap: 12px; }
 .app-dialog-field { display: grid; gap: 4px; font-size: 12px; }
 .app-dialog-input-row { display: flex; align-items: center; gap: 8px; }

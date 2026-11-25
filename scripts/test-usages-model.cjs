@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'usages', 'model.js'), 'utf8');
 const context = vm.createContext({});
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { toolOf, isSwitchable, sortProviders, providerStatus, profileKey, affectedText, impactText, canEnable, providerConfigured, movedOrder, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenStatesPending, tokenStateLine, alertKind, ollamaBody, flowText, pollDelay, flowExpired, profileStatusLine, staleReason, switchView };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { toolOf, isSwitchable, sortProviders, providerStatus, profileKey, affectedText, impactGroups, impactText, canEnable, providerConfigured, movedOrder, usageSettingsBody, refreshMessage, WARMUP_MODES, warmupBody, warmupDisabled, tokenStatesPending, tokenStateLine, alertKind, ollamaBody, flowText, pollDelay, flowExpired, profileStatusLine, staleReason, switchView };', context);
 const plain = value => JSON.parse(JSON.stringify(value));
 // What the vm returns carries its own Object and Array, which deepStrictEqual tells apart: results are copied into this realm.
 const m = Object.fromEntries(Object.entries(context.api).map(([name, value]) => [name, typeof value === 'function' ? (...args) => plain(value(...args)) : plain(value)]));
@@ -21,7 +21,19 @@ assert.equal(m.profileKey('codex', {}), 'codex/local');
 // Which agents a switch touches, as the card line and as the confirm's text.
 const agents = [{ id: 'milo@x', running: true }, { id: 'ada@x' }];
 assert.deepEqual([m.affectedText(agents), m.affectedText([])], ['Switch affects: milo@x (running), ada@x', 'No agents use this tool']);
-assert.deepEqual([m.impactText(agents), m.impactText([])], ['Affected agents: milo@x, ada@x.', 'No affected agents.']);
+assert.deepEqual([m.impactText(agents), m.impactText([])], ['Switching will affect Agents without a room: 2 agents.', 'No affected agents.']);
+const grouped = [
+  { id: 'agt_1', role: 'worker', room: { id: 'room_b', name: 'Beta' } },
+  { id: 'agt_2', role: 'dispatcher', room: { id: 'room_a', name: 'Alpha' } },
+  { id: 'agt_3', role: 'lead', room: { id: 'room_a', name: 'Alpha' }, rooms: [{ id: 'room_b', name: 'Beta' }] },
+  { id: 'agt_4', role: 'worker', room: { id: 'room_a', name: 'Alpha' } },
+  { id: 'agt_5', role: 'worker', room: { id: 'room_b', name: 'Beta' } },
+  { id: 'agt_6', role: 'worker', room: { id: 'room_b', name: 'Beta' } },
+];
+assert.equal(m.impactText(grouped), 'Switching will affect Alpha: leader, 1 dispatcher, 1 worker; Beta: 3 workers.');
+assert.deepEqual(m.impactGroups(grouped), ['Alpha: leader, 1 dispatcher, 1 worker', 'Beta: 3 workers']);
+assert.equal(m.impactText([{ id: 'agt_7', role: 'researcher', room: { id: 'room_unnamed', name: '' } }, { id: 'agt_8', role: 'worker' }]), 'Switching will affect Agents without a room: 1 worker; Unnamed room: 1 researcher.');
+assert.doesNotMatch(m.impactText(grouped), /agt_/);
 
 // A provider can be switched on once it has credentials, or if the server reads it itself.
 assert.deepEqual([m.canEnable({ provider_name: 'mistral' }, false), m.canEnable({ provider_name: 'mistral' }, true), m.canEnable({ provider_name: 'codex' }, false), m.canEnable({ provider_name: 'mistral', enabled: true }, false)], [false, true, true, true]);

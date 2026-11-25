@@ -18,7 +18,7 @@ export function describeDecision(decision) {
     stay: `stay on ${decision.from || 'the active profile'}`,
     hold: 'hold', idle: 'idle', error: 'error',
   })[decision.action] || String(decision.action || '');
-  return decision.reason && ['hold', 'error', 'switch'].includes(decision.action) ? `${text}: ${decision.reason}` : text;
+  return decision.reason && ['hold', 'error', 'switch', 'stay'].includes(decision.action) ? `${text}: ${decision.reason}` : text;
 }
 
 // Whether a tool's draft differs from the stored configuration; a configuration the server has not saved yet (suggested defaults) can be
