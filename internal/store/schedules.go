@@ -252,7 +252,7 @@ func (tx *Tx) CreateSchedule(item Schedule, now time.Time) (Schedule, error) {
 	if err != nil {
 		return Schedule{}, err
 	}
-	creator, err := tx.scheduleCreator(item)
+	creator, err := tx.scheduleCreatorRef(item)
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -261,11 +261,23 @@ func (tx *Tx) CreateSchedule(item Schedule, now time.Time) (Schedule, error) {
 	}
 	return item, nil
 }
+
+// scheduleTarget names the note's target the ids-are-truth way: an agent as its @agt_<id> token (names are reusable), or
+// "the room lead" when the note targets the lead. The human view translates the token.
 func scheduleTarget(s Schedule) string {
 	if s.TargetLead {
 		return "the room lead"
 	}
-	return s.TargetAgentID
+	return "@" + s.TargetAgentID
+}
+
+// scheduleCreatorRef names the schedule's creator the same way: an agent as its @agt_<id> token, a person by its
+// login (person mentions are stored as written logins; a login is unique).
+func (tx *Tx) scheduleCreatorRef(s Schedule) (string, error) {
+	if s.CreatorKind == "agent" {
+		return "@" + s.CreatorID, nil
+	}
+	return tx.scheduleCreator(s)
 }
 
 func (tx *Tx) scheduleCreator(s Schedule) (string, error) {
@@ -422,7 +434,7 @@ func (tx *Tx) advanceSchedule(id string, now time.Time) error {
 		outcome = "skipped"
 	}
 	if outcome == "delivered" || s.LastOutcome != outcome || s.LastReason != reason {
-		creator, err := tx.scheduleCreator(s)
+		creator, err := tx.scheduleCreatorRef(s)
 		if err != nil {
 			return err
 		}

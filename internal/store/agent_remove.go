@@ -88,7 +88,7 @@ func (s *Store) RemoveAgent(ctx context.Context, id, actorID string) (AgentRemov
 		if err := tx.withdrawAgentInbox(id, agent.ProjectID, actorID); err != nil {
 			return err
 		}
-		if err := tx.pauseSchedulesTargeting(id, agent.Slug); err != nil {
+		if err := tx.pauseSchedulesTargeting(id); err != nil {
 			return err
 		}
 		// The name is free for another agent from here on: the row keeps a tombstone in its place (slug is unique within the project) and the name it had
@@ -167,7 +167,7 @@ func (tx *Tx) withdrawAgentInbox(agentID, projectID, actorID string) error {
 
 // pauseSchedulesTargeting pauses the schedules aimed at an agent that is going away, each with a notice in its room: they would skip every run from
 // here on, and a recurring one would never stop.
-func (tx *Tx) pauseSchedulesTargeting(agentID, slug string) error {
+func (tx *Tx) pauseSchedulesTargeting(agentID string) error {
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id,room_id FROM schedule WHERE target_agent_id=? AND enabled=1 ORDER BY id`, agentID)
 	if err != nil {
 		return err
@@ -191,7 +191,8 @@ func (tx *Tx) pauseSchedulesTargeting(agentID, slug string) error {
 		if _, err := tx.Exec(`UPDATE schedule SET enabled=0,rev=rev+1,updated_at=? WHERE id=?`, timestamp(), it.id); err != nil {
 			return err
 		}
-		if _, err := tx.InsertMessage(Message{RoomID: it.roomID, AuthorKind: "system", AuthorID: "system", Body: fmt.Sprintf("Schedule %s paused: %s was removed", it.id, slug)}); err != nil {
+		// The notice names the removed agent by its stored @agt_<id> token; the human view still shows its kept name.
+		if _, err := tx.InsertMessage(Message{RoomID: it.roomID, AuthorKind: "system", AuthorID: "system", Body: fmt.Sprintf("Schedule %s paused: @%s was removed", it.id, agentID)}); err != nil {
 			return err
 		}
 	}

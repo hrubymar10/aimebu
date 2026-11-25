@@ -326,8 +326,8 @@ func (tx *Tx) noWakeNote(turn answerTurn, numbers []int64) error {
 // never the rest of its room, and the targeted note wakes its recipient.
 // It reports how many pointers it posted.
 func (tx *Tx) forwardMissingMentions(message Message) (int, error) {
-	var projectID, title, kind string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,title,kind FROM room WHERE id=?`, message.RoomID).Scan(&projectID, &title, &kind); err != nil {
+	var projectID, kind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind FROM room WHERE id=?`, message.RoomID).Scan(&projectID, &kind); err != nil {
 		return 0, err
 	}
 	if kind == "dm" {
@@ -369,8 +369,11 @@ func (tx *Tx) forwardMissingMentions(message Message) (int, error) {
 		if sharedID == "" {
 			continue
 		}
+		// The pointer names the author and the room the mention lives in by their stored tokens, even when the recipient
+		// may not see the room (a room the reader has no access to renders as #private-room, never by its title); the
+		// message reference itself carries the grant that lets the recipient read it.
 		pointer, err := tx.InsertMessage(Message{RoomID: sharedID, AuthorKind: "system", AuthorID: "system",
-			Body:        fmt.Sprintf("%s mentioned you in %s: #%d", authorLabel(tx.ctx, tx.tx, "agent", message.AuthorID), title, message.No),
+			Body:        fmt.Sprintf("@%s mentioned you in #%s: #%d", message.AuthorID, message.RoomID, message.No),
 			OnlyTargets: []string{recipientID}})
 		if err != nil {
 			return 0, err

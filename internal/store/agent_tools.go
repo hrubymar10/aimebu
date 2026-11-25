@@ -227,16 +227,8 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 			return AgentCard{}, err
 		}
 	}
-	actor, err := tx.agentDisplay(actorID)
-	if err != nil {
-		return AgentCard{}, err
-	}
-	target, err := tx.agentDisplay(agentID)
-	if err != nil {
-		return AgentCard{}, err
-	}
 	var roomID string
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM event WHERE agent_id=? AND kind='agent_spawn_requested' ORDER BY seq LIMIT 1`, agentID).Scan(&roomID)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM event WHERE agent_id=? AND kind='agent_spawn_requested' ORDER BY seq LIMIT 1`, agentID).Scan(&roomID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM room_member WHERE member_kind='agent' AND member_id=? AND left_at IS NULL ORDER BY joined_at LIMIT 1`, agentID).Scan(&roomID)
 	}
@@ -259,8 +251,9 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 		PayloadJSON: payloadJSON(map[string]string{"actor_id": actorID, "old_role": oldRoleKey, "role": roleKey})}); err != nil {
 		return AgentCard{}, err
 	}
+	// The role-change notice names both agents by their stored tokens; the human view translates them.
 	if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
-		Body: fmt.Sprintf("%s changed %s's role to %s", actor, target, roleKey)}); err != nil {
+		Body: fmt.Sprintf("@%s changed @%s's role to %s", actorID, agentID, roleKey)}); err != nil {
 		return AgentCard{}, err
 	}
 	return tx.agentCardByID(agentID)
@@ -367,12 +360,10 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title, purpose 
 	if err := tx.AddMember(room.ID, "agent", agentID); err != nil {
 		return Room{}, err
 	}
-	actor, err := tx.agentDisplay(agentID)
-	if err != nil {
-		return Room{}, err
-	}
+	// The notice names the creator and the new room by their stored tokens (an agent name or a title is reusable);
+	// the human view translates both.
 	if _, err := tx.InsertMessage(Message{RoomID: parentID, AuthorKind: "system", AuthorID: "system",
-		Body: fmt.Sprintf("%s created task room %s", actor, room.Title)}); err != nil {
+		Body: fmt.Sprintf("@%s created task room #%s", agentID, room.ID)}); err != nil {
 		return Room{}, err
 	}
 	// The response carries the real member count, so the creator can see it
@@ -434,27 +425,27 @@ func (tx *Tx) StopAgentAsTool(agentID, actorID string, rev int64) (AgentCard, er
 	if targetLead && agentID != actorID {
 		return AgentCard{}, ErrForbidden
 	}
-	actor, err := tx.agentDisplay(actorID)
-	if err != nil {
+	var actorRole, targetRole string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.role_key FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, actorID).Scan(&actorRole); err != nil {
 		return AgentCard{}, err
 	}
-	target, err := tx.agentDisplay(agentID)
-	if err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.role_key FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, agentID).Scan(&targetRole); err != nil {
 		return AgentCard{}, err
 	}
 	if _, err := tx.SetAgentDesiredByAgent(agentID, actorID, "stopped", rev); err != nil {
 		return AgentCard{}, err
 	}
 	var roomID string
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM event WHERE agent_id=? AND kind='agent_spawn_requested' ORDER BY seq LIMIT 1`, agentID).Scan(&roomID)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM event WHERE agent_id=? AND kind='agent_spawn_requested' ORDER BY seq LIMIT 1`, agentID).Scan(&roomID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM room_member WHERE member_kind='agent' AND member_id=? ORDER BY joined_at LIMIT 1`, agentID).Scan(&roomID)
 	}
 	if err != nil {
 		return AgentCard{}, err
 	}
+	// The stop notice names both agents by their stored tokens, with their roles as plain text; the human view translates the tokens.
 	if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
-		Body: fmt.Sprintf("%s stopped %s", actor, target)}); err != nil {
+		Body: fmt.Sprintf("@%s (%s) stopped @%s (%s)", actorID, actorRole, agentID, targetRole)}); err != nil {
 		return AgentCard{}, err
 	}
 	return tx.agentCardByID(agentID)

@@ -427,8 +427,17 @@ func (tx *Tx) ControlScope(kind, id, action, actor string, rev int64) (ScopeCont
 		return ScopeControl{}, err
 	}
 	verb := map[string]string{"pause": "paused", "stop": "stopped", "resume": "resumed"}[action]
+	// The notice names the scope the ids-are-truth way when it is an entity (an agent as its @agt_<id> token, a room as
+	// its #room_<id>), so the human view shows names; a project keeps its kind and id.
+	scope := kind + " " + id
+	switch kind {
+	case "agent":
+		scope = "@" + id
+	case "room":
+		scope = "#" + id
+	}
 	if _, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
-		Body: fmt.Sprintf("%s %s %s by owner/operator", kind, id, verb)}); err != nil {
+		Body: fmt.Sprintf("%s %s by owner/operator", scope, verb)}); err != nil {
 		return ScopeControl{}, err
 	}
 	out.Desired, out.EffectiveState, out.Rev = target, target, currentRev+1

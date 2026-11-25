@@ -108,7 +108,7 @@ func TestRemoveAgentClosesAChatBetweenAgentsThatIsLeftWithOne(t *testing.T) {
 // What aimed at an agent that is removed is stopped, and what shows its name shows the name it had, not the tombstone its row now carries.
 func TestRemoveAgentPausesItsSchedulesAndShowsItsOldName(t *testing.T) {
 	t.Parallel()
-	s, project, room, agent, _ := wakeFixture(t)
+	s, project, room, agent, lead := wakeFixture(t)
 	ctx := t.Context()
 	message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "agent", AuthorID: agent.ID, Body: "I was here"})
 	if err != nil {
@@ -149,9 +149,14 @@ func TestRemoveAgentPausesItsSchedulesAndShowsItsOldName(t *testing.T) {
 	if on, rev := enabled("sch_lead"); on != 1 || rev != 0 {
 		t.Fatalf("a schedule aimed at the lead is not the removed agent's: enabled=%d rev=%d", on, rev)
 	}
+	// The stored notice names the removed agent by its @agt_<id> token; the mention display and scheduleCreator are what show its old name.
 	var notice int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body='Schedule sch_aimed paused: one was removed'`, room.ID).Scan(&notice); err != nil || notice != 1 {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body=?`, room.ID, "Schedule sch_aimed paused: @"+agent.ID+" was removed").Scan(&notice); err != nil || notice != 1 {
 		t.Fatalf("the room should be told: %d err=%v", notice, err)
+	}
+	entities, err := mentionEntities(ctx, s.db, lead.ID, project.ID, room.ID, "Schedule sch_aimed paused: @"+agent.ID+" was removed")
+	if err != nil || len(entities) != 1 || entities[0].ID != agent.ID || entities[0].Name != "one" {
+		t.Fatalf("the removed agent is named by its kept old name: %+v %v", entities, err)
 	}
 	// Names: the reaction's hover name and a schedule's creator show the name it had.
 	reactions, err := s.ReactionsForMessage(ctx, message.ID)

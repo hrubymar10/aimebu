@@ -53,7 +53,8 @@ func TestClearContextWaitsForTurnAndKeepsSessionHistory(t *testing.T) {
 		t.Fatalf("clear actor = %q, %v", actor, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) == 0 || messages[len(messages)-1].Body != "worker's context was cleared" {
+	// The read path translates the stored @agt_<id> token to the display name.
+	if err != nil || len(messages) == 0 || messages[len(messages)-1].Body != "@"+f.agent.Slug+"'s context was cleared" {
 		t.Fatalf("clear notice: %+v %v", messages, err)
 	}
 	var oldEnd, oldHandle, newMode, newHandle sql.NullString

@@ -157,7 +157,8 @@ func TestMissedMentionForwardsOneMessageThroughSharedRoutingRoom(t *testing.T) {
 		t.Fatal(err)
 	}
 	pointers, err := s.ListMessagesAfter(ctx, routing.ID, 0)
-	if err != nil || len(pointers) != 1 || !strings.Contains(pointers[0].Body, "mentioned you in ghi.md: #"+fmt.Sprint(reportNo)) {
+	// The read path translates the stored @agt_<id> author to the display name; the room reference keeps its id.
+	if err != nil || len(pointers) != 1 || !strings.Contains(pointers[0].Body, "@"+f.agent.Slug+" mentioned you in #"+f.room.ID+": #"+fmt.Sprint(reportNo)) {
 		t.Fatalf("routing pointer=%+v %v", pointers, err)
 	}
 	if _, err := s.NoteForAgentMessage(ctx, peer.ID, pointers[0].ID); err != nil {

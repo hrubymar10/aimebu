@@ -117,7 +117,9 @@ func (tx *Tx) createBoundaryPending(projectID, roomID, agentID, machineID, path,
 		WHERE p.id=?`, machineID, projectID).Scan(&mappedRoot); err != nil {
 		return "", err
 	}
-	question := fmt.Sprintf("Approve %s for agent %s on machine %s in %s? This also admits the machine for the whole project at mapped folder %s.", operation, agentID, machineID, path, mappedRoot)
+	// An Inbox question is a written text like any notice: it names the agent it is about as an @agt_<id> token
+	// (names are reusable), and the human view translates it; the machine keeps its id (machines are not named).
+	question := fmt.Sprintf("Approve %s for agent @%s on machine %s in %s? This also admits the machine for the whole project at mapped folder %s.", operation, agentID, machineID, path, mappedRoot)
 	options, err := json.Marshal(inboxAsk{Text: question, Options: []string{"Approve", "Deny"}})
 	if err != nil {
 		return "", err

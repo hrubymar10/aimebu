@@ -65,7 +65,7 @@ func (sf silentFixture) answer(t *testing.T, turn Turn, raw string) {
 // notices counts the room's silent-turn lines and the boss's silent_turn notes.
 func (sf silentFixture) notices(t *testing.T) (lines, wakes int) {
 	t.Helper()
-	if err := sf.s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body='worker ended its turn without a message'`, sf.f.room.ID).Scan(&lines); err != nil {
+	if err := sf.s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body=?`, sf.f.room.ID, "@"+sf.f.agent.ID+" ended its turn without a message").Scan(&lines); err != nil {
 		t.Fatal(err)
 	}
 	if err := sf.s.db.QueryRow(`SELECT COUNT(*) FROM note WHERE agent_id=? AND wake_reason='silent_turn'`, sf.boss.ID).Scan(&wakes); err != nil {

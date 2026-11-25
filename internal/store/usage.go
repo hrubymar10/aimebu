@@ -180,16 +180,13 @@ func (tx *Tx) recordUsageOrCompaction(turnID, agentID, projectID, roomID, source
 		return tx.evaluateUsageFor(roomID, projectID)
 	}
 	if kind == "compaction" && frame.Compaction != nil {
-		var slug string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT slug FROM agent WHERE id=?`, agentID).Scan(&slug); err != nil {
-			return err
-		}
 		if _, err := tx.AppendEvent(Event{Kind: "agent_context_compacted", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID,
 			PayloadJSON: payloadJSON(map[string]string{"pre_tokens": formatMeasuredTokenCount(frame.Compaction.PreTokens), "post_tokens": formatMeasuredTokenCount(frame.Compaction.PostTokens)})}); err != nil {
 			return err
 		}
+		// The notice names the agent by its stored @agt_<id> token (names are reusable); the human view translates it.
 		_, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
-			Body: fmt.Sprintf("%s's context was compacted (%s → %s tokens)", slug, formatMeasuredTokenCount(frame.Compaction.PreTokens), formatMeasuredTokenCount(frame.Compaction.PostTokens))})
+			Body: fmt.Sprintf("@%s's context was compacted (%s → %s tokens)", agentID, formatMeasuredTokenCount(frame.Compaction.PreTokens), formatMeasuredTokenCount(frame.Compaction.PostTokens))})
 		return err
 	}
 	return nil

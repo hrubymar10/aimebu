@@ -926,10 +926,11 @@ func TestLeadToolSpawnStopAndUsageHeadroom(t *testing.T) {
 		if message.AuthorKind != "system" {
 			continue
 		}
-		if message.Body == lead.Slug+" (leader) spawned "+spawned.Slug+" (reviewer)" {
+		// The read path translates the stored @agt_<id> tokens to display names; the roles stay plain text.
+		if message.Body == "@"+lead.Slug+" spawned @"+spawned.Slug+" (reviewer)" {
 			spawnNotices++
 		}
-		if message.Body == lead.Slug+" (leader) stopped "+spawned.Slug+" (reviewer)" {
+		if message.Body == "@"+lead.Slug+" (leader) stopped @"+spawned.Slug+" (reviewer)" {
 			stopNotices++
 		}
 	}

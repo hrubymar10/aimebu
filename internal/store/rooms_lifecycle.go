@@ -310,12 +310,10 @@ func (tx *Tx) CloseTaskRoomAsTool(id, actor string, rev int64, cascade bool) (Ro
 	}
 	room.ParentID, room.DMKey, room.ClosedAt = parent.String, dm.String, closed.String
 	if wasOpen && room.Lifecycle == "closing" && room.ParentID != "" {
-		actorName, err := tx.agentDisplay(actor)
-		if err != nil {
-			return Room{}, nil, err
-		}
+		// The notice names the closer and the closed room by their stored tokens (an agent name or a title is reusable);
+		// the human view translates them.
 		if _, err := tx.InsertMessage(Message{RoomID: room.ParentID, AuthorKind: "system", AuthorID: "system",
-			Body: actorName + " archived task room " + room.Title}); err != nil {
+			Body: fmt.Sprintf("@%s archived task room #%s", actor, room.ID)}); err != nil {
 			return Room{}, nil, err
 		}
 	}

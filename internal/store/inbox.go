@@ -191,5 +191,20 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 		item.FreeText = ask.FreeText
 		entries = append(entries, item)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// The stored question keeps the ids-are-truth tokens its writer left in it; the human view translates the agent
+	// ones the way a room's messages are translated (named by the item's room, its duplicate suffixes included).
+	views := make([]Message, len(entries))
+	for i := range entries {
+		views[i] = Message{RoomID: entries[i].RoomID, Body: entries[i].Question}
+	}
+	if err := displayMentions(ctx, s.readDB, views); err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].Question = views[i].Body
+	}
+	return entries, nil
 }

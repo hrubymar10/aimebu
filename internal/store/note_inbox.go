@@ -15,7 +15,8 @@ import (
 // changing the note elsewhere (the memory viewer, the agent taking it back) closes the item.
 const noteApprovalPrefix = "note:"
 
-// noteApprovalText is what the card says: who wrote what, short.
+// noteApprovalText is what the card says: who wrote what, short. The author is its stored @agt_<id> token (names are
+// reusable); the human view translates it.
 func noteApprovalText(agent, body string) string {
 	body = strings.Join(strings.Fields(body), " ")
 	if r := []rune(body); len(r) > 240 {
@@ -42,8 +43,8 @@ func (tx *Tx) syncNoteApproval(noteID string) error {
 	if active || authorKind != "agent" {
 		return nil
 	}
-	var projectID, slug, roomID string
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,COALESCE(NULLIF(a.removed_slug,''),a.slug) FROM agent a WHERE a.id=?`, authorID).Scan(&projectID, &slug)
+	var projectID, roomID string
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id FROM agent a WHERE a.id=?`, authorID).Scan(&projectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -62,7 +63,7 @@ func (tx *Tx) syncNoteApproval(noteID string) error {
 	if err != nil {
 		return err
 	}
-	options, err := json.Marshal(inboxAsk{Text: noteApprovalText(slug, body), Options: []string{"Approve", "Decline"}})
+	options, err := json.Marshal(inboxAsk{Text: noteApprovalText("@"+authorID, body), Options: []string{"Approve", "Decline"}})
 	if err != nil {
 		return err
 	}

@@ -85,10 +85,10 @@ func (s *Store) AdvanceAgentContextClears(ctx context.Context) ([]AgentCard, err
 			return err
 		}
 		for _, p := range items {
-			var projectID, roomID, slug, tool, desired, observed string
+			var projectID, roomID, tool, desired, observed string
 			var generation int
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,COALESCE(home_room_id,''),slug,tool,desired,observed,generation FROM agent WHERE id=? AND revoked_at IS NULL`, p.id).
-				Scan(&projectID, &roomID, &slug, &tool, &desired, &observed, &generation)
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,COALESCE(home_room_id,''),tool,desired,observed,generation FROM agent WHERE id=? AND revoked_at IS NULL`, p.id).
+				Scan(&projectID, &roomID, &tool, &desired, &observed, &generation)
 			if errors.Is(err, sql.ErrNoRows) {
 				_, err = tx.Exec(`DELETE FROM agent_context_clear WHERE agent_id=?`, p.id)
 				if err != nil {
@@ -150,7 +150,8 @@ func (s *Store) AdvanceAgentContextClears(ctx context.Context) ([]AgentCard, err
 				return err
 			}
 			if roomID != "" {
-				if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: fmt.Sprintf("%s's context was cleared", slug)}); err != nil {
+				// The notice names the agent by its stored @agt_<id> token (names are reusable); the human view translates it.
+				if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "@" + p.id + "'s context was cleared"}); err != nil {
 					return err
 				}
 			}

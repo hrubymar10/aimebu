@@ -169,12 +169,9 @@ func (tx *Tx) deliveryFailedInbox(parent answerTurn, toLead bool) error {
 		return err
 	}
 	if lifecycle == "open" {
-		actor, err := tx.agentDisplay(parent.agentID)
-		if err != nil {
-			return err
-		}
-		_, err = tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
-			Body: fmt.Sprintf("%s reply was held (%s). Review the delivery failure in Inbox.", actor, saved.HeldReason)})
+		// The notice names the author by its stored @agt_<id> token (names are reusable); the human view translates it.
+		_, err := tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
+			Body: fmt.Sprintf("@%s reply was held (%s). Review the delivery failure in Inbox.", parent.agentID, saved.HeldReason)})
 		if err != nil {
 			return err
 		}
@@ -302,12 +299,8 @@ func (tx *Tx) partialHeldRow(parent answerTurn, input AnswerInput, receipt Answe
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle FROM room WHERE id=?`, parent.roomID).Scan(&lifecycle); err != nil || lifecycle != "open" {
 		return err
 	}
-	actor, err := tx.agentDisplay(parent.agentID)
-	if err != nil {
-		return err
-	}
-	_, err = tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
-		Body: fmt.Sprintf("%s reply was only partly delivered: %s. The author was asked to resend it.", actor, partialHeldText(receipt.HeldMessages, len(input.Parsed.Messages)))})
+	_, err := tx.InsertMessage(Message{RoomID: parent.roomID, AuthorKind: "system", AuthorID: "system",
+		Body: fmt.Sprintf("@%s reply was only partly delivered: %s. The author was asked to resend it.", parent.agentID, partialHeldText(receipt.HeldMessages, len(input.Parsed.Messages)))})
 	return err
 }
 

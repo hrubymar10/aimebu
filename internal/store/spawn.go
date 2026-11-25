@@ -403,32 +403,30 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 			return AgentCard{}, err
 		}
 	}
-	notice := fmt.Sprintf("%s joined as %s", slug, in.RoleKey)
+	// The spawn notices name the agents they are about by their stored @agt_<id> tokens (names are reusable); the
+	// human view translates them. A v1 legacy id keeps its raw text: it is an imported id, not a live mention.
+	notice := fmt.Sprintf("@%s joined as %s", agent.ID, in.RoleKey)
 	if in.ResumeLegacyID != "" {
 		if in.ResumeHandle != "" {
-			notice = fmt.Sprintf("%s joined as %s, continuing the v1 session of %s in %s", slug, in.RoleKey, in.ResumeLegacyID, in.Path)
+			notice = fmt.Sprintf("@%s joined as %s, continuing the v1 session of %s in %s", agent.ID, in.RoleKey, in.ResumeLegacyID, in.Path)
 		} else {
-			notice = fmt.Sprintf("%s joined as %s, started fresh from v1 agent %s (its harness cannot resume a session)", slug, in.RoleKey, in.ResumeLegacyID)
+			notice = fmt.Sprintf("@%s joined as %s, started fresh from v1 agent %s (its harness cannot resume a session)", agent.ID, in.RoleKey, in.ResumeLegacyID)
 		}
 	}
 	if in.ResumeSession != nil {
-		notice = fmt.Sprintf("%s joined as %s, continuing the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+		notice = fmt.Sprintf("@%s joined as %s, continuing the Claude Code session %s in %s", agent.ID, in.RoleKey, describeSession(in.ResumeSession), in.Path)
 		if in.ResumeSession.Fork {
-			notice = fmt.Sprintf("%s joined as %s, working on a copy of the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+			notice = fmt.Sprintf("@%s joined as %s, working on a copy of the Claude Code session %s in %s", agent.ID, in.RoleKey, describeSession(in.ResumeSession), in.Path)
 			if in.ResumeLegacyID != "" {
-				notice = fmt.Sprintf("%s joined as %s, working on a copy of the v1 session of %s (%s) in %s", slug, in.RoleKey, in.ResumeLegacyID, describeSession(in.ResumeSession), in.Path)
+				notice = fmt.Sprintf("@%s joined as %s, working on a copy of the v1 session of %s (%s) in %s", agent.ID, in.RoleKey, in.ResumeLegacyID, describeSession(in.ResumeSession), in.Path)
 			}
 		}
 	}
 	if actorKind == "agent" {
-		actor, err := tx.agentDisplay(in.ActorID)
-		if err != nil {
-			return AgentCard{}, err
-		}
-		notice = fmt.Sprintf("%s spawned %s (%s)", actor, slug, in.RoleKey)
+		notice = fmt.Sprintf("@%s spawned @%s (%s)", in.ActorID, agent.ID, in.RoleKey)
 	}
 	if !allowed {
-		notice = fmt.Sprintf("%s is awaiting owner approval to start as %s", slug, in.RoleKey)
+		notice = fmt.Sprintf("@%s is awaiting owner approval to start as %s", agent.ID, in.RoleKey)
 		if in.ResumeHandle != "" {
 			kind := "a v1 session"
 			if in.ResumeSession != nil {

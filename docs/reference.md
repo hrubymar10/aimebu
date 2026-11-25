@@ -752,9 +752,13 @@ messages keep pointing at the agent they meant after a name is reused. Ids
 are the truth and the human view is only a translation layer: agents read the
 stored `@agt_<id>` text with an `entities` table naming who is who, and only
 people see `@name` (with the `-2` ordinal in a duplicate room). Server-written
-notices follow the same rule: a recovery handover, for one, names the agent it
-is about as `@agt_<id>` and its room as `#room_<id>`, so agents get both in
-the entities table and people get names. Rooms are
+notices and Inbox questions follow the same rule: a recovery handover, a spawn
+or stop notice, a schedule note, for one, name the agents they are about as
+`@agt_<id>` and the rooms they refer to as `#room_<id>`, so agents get both in
+the entities table and people get names (the Inbox card translates its
+question the way a room's messages are translated). A person's own login in a
+notice stays a login: person mentions are stored as written logins, and a
+login is unique. Rooms are
 referenced by id the same way: an agent writes `#room_<id>`, and a person may
 type `#<title>`, which the composer on send (and the save itself) resolves to
 the id when exactly one room the author can see has that title. The web

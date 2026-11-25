@@ -418,8 +418,9 @@ func TestResumeOutsideTheProjectFolderWaitsForBoundaryApproval(t *testing.T) {
 	if card.BoundaryPending == "" || card.Desired != "not_accepting" {
 		t.Fatalf("an agent outside the folder must wait for approval: %+v", card)
 	}
+	// The stored notice names the agent by its @agt_<id> token, so the old slug is no longer in its text.
 	var body string
-	if err := s.db.QueryRow(`SELECT body FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%far%' ORDER BY seq DESC LIMIT 1`, room.ID).Scan(&body); err != nil ||
+	if err := s.db.QueryRow(`SELECT body FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%awaiting owner approval%' ORDER BY seq DESC LIMIT 1`, room.ID).Scan(&body); err != nil ||
 		!strings.Contains(body, "outside the project folder") || !strings.Contains(body, "/elsewhere/dir") {
 		t.Fatalf("notice: %q %v", body, err)
 	}

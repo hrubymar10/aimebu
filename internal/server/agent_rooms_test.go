@@ -77,7 +77,7 @@ func TestLeadRoomToolsCreateListAndClose(t *testing.T) {
 	}
 	created := 0
 	for _, message := range notices {
-		if strings.Contains(message.Body, "created task room New task") {
+		if strings.Contains(message.Body, "created task room #"+room.ID) {
 			created++
 		}
 	}
@@ -114,7 +114,7 @@ func TestLeadRoomToolsCreateListAndClose(t *testing.T) {
 	}
 	closed := 0
 	for _, message := range notices {
-		if strings.Contains(message.Body, "archived task room New task") {
+		if strings.Contains(message.Body, "archived task room #"+room.ID) {
 			closed++
 		}
 	}

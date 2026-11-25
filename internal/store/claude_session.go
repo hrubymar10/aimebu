@@ -205,8 +205,8 @@ const (
 // and nothing was sent to it. why is one of the HeldFor constants (it takes the machine's name). An agent with nothing queued (a recovery
 // turn) is told in the first room it joined.
 func (s *Store) NoteSessionHeld(ctx context.Context, agentID, why string) error {
-	return s.noteHeld(ctx, agentID, func(slug, machine string) string {
-		return fmt.Sprintf("%s is held: "+why+". Update the supervisor; nothing was sent to it.", slug, machine)
+	return s.noteHeld(ctx, agentID, func(agentRef, machine string) string {
+		return fmt.Sprintf("%s is held: "+why+". Update the supervisor; nothing was sent to it.", agentRef, machine)
 	})
 }
 
@@ -215,23 +215,23 @@ const HeldForDockerOnly = "%s is held: Only run agents in docker is on for this 
 
 // NoteDockerOnlyHeld says in the agent's rooms that it is held by the Only run agents in docker setting.
 func (s *Store) NoteDockerOnlyHeld(ctx context.Context, agentID string) error {
-	return s.noteHeld(ctx, agentID, func(slug, _ string) string { return fmt.Sprintf(HeldForDockerOnly, slug) })
+	return s.noteHeld(ctx, agentID, func(agentRef, _ string) string { return fmt.Sprintf(HeldForDockerOnly, agentRef) })
 }
 
 // NoteDockerOnlyUnchecked says in the agent's rooms that it is held because the Only run agents in docker setting could not be checked for it (its launcher
 // could not be read), so a native launcher cannot be ruled out.
 func (s *Store) NoteDockerOnlyUnchecked(ctx context.Context, agentID string) error {
-	return s.noteHeld(ctx, agentID, func(slug, _ string) string {
-		return fmt.Sprintf("%s is held: Only run agents in docker is on and this agent's launcher could not be read, so a native launcher cannot be ruled out. Nothing was sent to it; check the agent's launcher in Settings -> Harnesses & models.", slug)
+	return s.noteHeld(ctx, agentID, func(agentRef, _ string) string {
+		return fmt.Sprintf("%s is held: Only run agents in docker is on and this agent's launcher could not be read, so a native launcher cannot be ruled out. Nothing was sent to it; check the agent's launcher in Settings -> Harnesses & models.", agentRef)
 	})
 }
 
-// noteHeld writes a system message, built by text from the agent's slug and its machine's name, into each room the agent has queued notes in (or its first
-// room when it has none).
-func (s *Store) noteHeld(ctx context.Context, agentID string, text func(slug, machine string) string) error {
+// noteHeld writes a system message, built by text from the agent's @agt_<id> token (names are reusable; the human view
+// translates it) and its machine's name, into each room the agent has queued notes in (or its first room when it has none).
+func (s *Store) noteHeld(ctx context.Context, agentID string, text func(agentRef, machine string) string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		var slug, machine string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.slug,mc.name FROM agent a JOIN machine mc ON mc.id=a.machine_id WHERE a.id=?`, agentID).Scan(&slug, &machine); err != nil {
+		var machine string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT mc.name FROM agent a JOIN machine mc ON mc.id=a.machine_id WHERE a.id=?`, agentID).Scan(&machine); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
@@ -266,7 +266,7 @@ func (s *Store) noteHeld(ctx context.Context, agentID string, text func(slug, ma
 		}
 		for _, room := range rooms {
 			if _, err := tx.InsertMessage(Message{RoomID: room, AuthorKind: "system", AuthorID: "system",
-				Body: text(slug, machine)}); err != nil {
+				Body: text("@"+agentID, machine)}); err != nil {
 				return err
 			}
 		}

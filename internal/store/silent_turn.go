@@ -20,8 +20,8 @@ const silentTurnEvent = "silent_turn"
 // note for the author, so the author's own silent answer to it never raises another one.
 func (tx *Tx) silentTurnNotice(turn answerTurn) error {
 	var isLead bool
-	var slug, projectID string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead,COALESCE(NULLIF(a.removed_slug,''),a.slug),a.project_id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, turn.agentID).Scan(&isLead, &slug, &projectID); err != nil {
+	var projectID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead,a.project_id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, turn.agentID).Scan(&isLead, &projectID); err != nil {
 		return err
 	}
 	if isLead {
@@ -90,7 +90,8 @@ func (tx *Tx) silentTurnNotice(turn answerTurn) error {
 		messageID, ok := lines[item.roomID]
 		if !ok {
 			// Shown to the room, waking nobody by itself (OnlyTargets empty): only the agents that addressed the worker are woken, below.
-			message, err := tx.InsertMessage(Message{RoomID: item.roomID, AuthorKind: "system", AuthorID: "system", Body: slug + " ended its turn without a message", OnlyTargets: []string{}})
+			// The notice names the worker by its stored @agt_<id> token (names are reusable); the human view translates it.
+			message, err := tx.InsertMessage(Message{RoomID: item.roomID, AuthorKind: "system", AuthorID: "system", Body: "@" + turn.agentID + " ended its turn without a message", OnlyTargets: []string{}})
 			if err != nil {
 				return err
 			}
