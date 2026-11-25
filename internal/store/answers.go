@@ -520,18 +520,21 @@ func safeReplyRef(ref string) string {
 //     woken to send it again (no card);
 //  3. when that note was already sent for this turn (the repair failed too), the failure goes to the lead.
 //
-// A lead (or a worker with no lead to hand to) has nobody above it, so its failure becomes the delivery_failed card for people.
+// A lead (or a worker with no lead to hand to) has nobody above it, so it is told and woken the same way, and only its failed repair becomes
+// the delivery_failed card and room notice for people.
 func (tx *Tx) routeInvalidReply(parent answerTurn, input AnswerInput, detail string) error {
 	var isLead bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, parent.agentID).Scan(&isLead); err != nil {
 		return err
 	}
 	if isLead {
-		if err := tx.deliveryFailedInbox(parent, false); err != nil {
+		// The lead is told why and woken to resend; its own next answer may settle the hold, so people hear of it (the Inbox card and the
+		// room notice) only once that repair has failed too: a turn already woken by the note is held again.
+		sent, err := tx.invalidReplyNote(parent, input, detail)
+		if err != nil || sent {
 			return err
 		}
-		_, err := tx.invalidReplyNote(parent, input, detail)
-		return err
+		return tx.deliveryFailedInbox(parent, false)
 	}
 	if strings.TrimSpace(string(input.Candidate)) == "" {
 		broken, err := tx.repeatedEmptyAnswer(parent)

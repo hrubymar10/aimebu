@@ -41,6 +41,26 @@ func asLead(t *testing.T, s *Store, f executionFixture) {
 	}
 }
 
+// holdTwice holds raw for the fixture's agent, then again on the turn the held-reply note woke (the repair failed too), which is when a lead's
+// failure first reaches people. It returns the second turn.
+func holdTwice(t *testing.T, s *Store, f executionFixture, raw string) Turn {
+	t.Helper()
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	return holdAgain(t, s, f, raw)
+}
+
+// holdAgain is the second half of holdTwice, for a test whose first hold is already applied.
+func holdAgain(t *testing.T, s *Store, f executionFixture, raw string) Turn {
+	t.Helper()
+	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)
+	if receipt, err := applyCandidate(t, s, second, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
+		t.Fatalf("second receipt=%+v err=%v", receipt, err)
+	}
+	return second
+}
+
 func heldNote(t *testing.T, s *Store, roomID string) Message {
 	t.Helper()
 	messages, err := s.ListMessagesAfter(context.Background(), roomID, 0)
@@ -130,9 +150,7 @@ func TestLeadMalformedAnswerReachesPeople(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, "prose from a lead"); err != nil || receipt.Result != "held" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
+	holdTwice(t, s, f, "prose from a lead")
 	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
 		t.Fatalf("people see %q, want delivery_failed", got)
 	}
@@ -157,14 +175,12 @@ func TestResendToTheIntendedRoomSettlesTheHeldCard(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_route',?,'hash','image/png',1,'p','owner',?)`, f.project.ID, timestamp()); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","attachments":["att_route"]},{"room":%q,"body":"y","attachments":["att_route"]}]}`, other.ID, other.ID)); err != nil || receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
+	second := holdTwice(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","attachments":["att_route"]},{"room":%q,"body":"y","attachments":["att_route"]}]}`, other.ID, other.ID))
 	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
 		t.Fatalf("people see %q, want delivery_failed", got)
 	}
-	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)
-	if receipt, err := applyCandidate(t, s, second, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"fixed"}]}`, other.ID)); err != nil || receipt.Result != "committed" {
+	third := nextNormalTurn(t, s, f, second, heldNote(t, s, f.room.ID).ID)
+	if receipt, err := applyCandidate(t, s, third, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"fixed"}]}`, other.ID)); err != nil || receipt.Result != "committed" {
 		t.Fatalf("resend receipt=%+v err=%v", receipt, err)
 	}
 	if got := openInboxKinds(t, s, "usr_answers"); len(got) != 0 {
@@ -192,11 +208,9 @@ func TestResendToAnotherRoomLeavesTheHeldCardOpen(t *testing.T) {
 	if err := s.AddMember(ctx, third.ID, "agent", f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","handoff":true,"outcome":"nope"}]}`, other.ID)); err != nil || receipt.Result != "held" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
-	second := nextNormalTurn(t, s, f, f.turn, heldNote(t, s, f.room.ID).ID)
-	if receipt, err := applyCandidate(t, s, second, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"elsewhere"}]}`, third.ID)); err != nil || receipt.Result != "committed" {
+	second := holdTwice(t, s, f, fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","handoff":true,"outcome":"nope"}]}`, other.ID))
+	next := nextNormalTurn(t, s, f, second, heldNote(t, s, f.room.ID).ID)
+	if receipt, err := applyCandidate(t, s, next, f.agent.ID, 0, fmt.Sprintf(`{"messages":[{"room":%q,"body":"elsewhere"}]}`, third.ID)); err != nil || receipt.Result != "committed" {
 		t.Fatalf("reply receipt=%+v err=%v", receipt, err)
 	}
 	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {

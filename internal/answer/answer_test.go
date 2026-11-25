@@ -94,15 +94,6 @@ func TestAttentionControls(t *testing.T) {
 	if err != nil || !parsed.Messages[0].NeedsAttention || len(parsed.Messages[0].OpenQuestions) != 1 {
 		t.Fatalf("parsed=%+v err=%v", parsed, err)
 	}
-	for _, raw := range [][]byte{
-		[]byte(`{"messages":[{"room":"r","body":"x","proposed_answers":["Only one"]}]}`),
-		[]byte(`{"messages":[{"room":"r","body":"x","open_questions":[{"question":"x","options":["One"]}]}]}`),
-		[]byte(`{"messages":[{"room":"r","body":"x","proposed_answers":["Yes","No"],"open_questions":[{"question":"x","options":["One","Two"]}]}]}`),
-	} {
-		if _, err := Parse(raw, false); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("invalid control accepted: %s, err=%v", raw, err)
-		}
-	}
 }
 
 func TestAnswerSizeLimit(t *testing.T) {
@@ -120,18 +111,23 @@ func TestAnswerSizeLimit(t *testing.T) {
 	}
 }
 
-func TestVisualPlanPreservesUnknownShapesWithReceiptWarnings(t *testing.T) {
-	raw := []byte(`{"messages":[{"room":"room","body":"plan","visual_plan":[{"type":"markdown","data":{"markdown":"safe"}},{"type":"future","data":{"payload":"<script>bad</script>"}},{"type":"checklist","data":{"other":1}},42],"appendix_pages":[{"title":"Full plan","body":"Details"}]}]}`)
+func TestVisualPlanDropsInvalidBlocksWithReceiptWarnings(t *testing.T) {
+	raw := []byte(`{"messages":[{"room":"room","body":"plan","visual_plan":[{"type":"markdown","data":{"markdown":"safe"}},{"type":"future","data":{"payload":"bad"}},{"type":"checklist","data":{"other":1}},42,{"type":"markdown","data":{"markdown":"last"}}],"appendix_pages":[{"title":"Full plan","body":"Details"}]}]}`)
 	parsed, err := Parse(raw, false)
-	if err != nil || len(parsed.Messages[0].VisualPlan) != 4 || len(parsed.Warnings) != 3 ||
-		!strings.Contains(string(parsed.Messages[0].VisualPlan[1]), "bad") ||
-		!strings.Contains(string(parsed.Messages[0].VisualPlan[1]), `"order":1`) ||
-		!strings.Contains(string(parsed.Messages[0].VisualPlan[1]), `"id":"block-1"`) {
+	plan := parsed.Messages[0].VisualPlan
+	if err != nil || len(plan) != 2 || len(parsed.Warnings) != 3 ||
+		!strings.Contains(string(plan[1]), `"order":1`) || !strings.Contains(string(plan[1]), `"id":"block-4"`) || len(parsed.Messages[0].AppendixPages) != 1 {
 		t.Fatalf("parsed=%+v err=%v", parsed, err)
 	}
-	bad := []byte(`{"messages":[{"room":"room","body":"plan","visual_plan":[{"type":"markdown","data":{"markdown":"` + strings.Repeat("x", 66000) + `"}}]}]}`)
-	if _, err := Parse(bad, false); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("unbounded plan accepted: %v", err)
+	for _, w := range parsed.Warnings {
+		if !strings.Contains(w, "visual_plan block") || !strings.Contains(w, "dropped") {
+			t.Fatalf("warning %q does not name the field and the drop", w)
+		}
+	}
+	big := []byte(`{"messages":[{"room":"room","body":"plan","visual_plan":[{"type":"markdown","data":{"markdown":"` + strings.Repeat("x", 66000) + `"}}]}]}`)
+	parsed, err = Parse(big, false)
+	if err != nil || len(parsed.Messages[0].VisualPlan) != 0 || len(parsed.Warnings) != 1 || !strings.Contains(parsed.Warnings[0], "exceeds 64 KiB") {
+		t.Fatalf("unbounded plan: parsed=%+v err=%v", parsed, err)
 	}
 }
 
@@ -160,7 +156,7 @@ func TestVisualPlanReceiptWarnsForBrowserFallbackShapes(t *testing.T) {
 	}
 	raw := []byte(`{"messages":[{"room":"room","body":"checklist summary","visual_plan":[{"type":"checklist","data":{"items":[{"text":7}]}}]}]}`)
 	parsed, err := Parse(raw, false)
-	if err != nil || len(parsed.Warnings) != 1 || !strings.Contains(parsed.Warnings[0], "unknown shape") {
+	if err != nil || len(parsed.Warnings) != 1 || !strings.Contains(parsed.Warnings[0], "visual_plan block 0 dropped") || len(parsed.Messages[0].VisualPlan) != 0 {
 		t.Fatalf("receipt warnings=%+v err=%v", parsed.Warnings, err)
 	}
 }
@@ -404,5 +400,36 @@ func TestParseToleratesNearMissAnswerShapes(t *testing.T) {
 		if _, err := Parse([]byte(raw), false); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("accepted %s: %v", raw, err)
 		}
+	}
+}
+
+// Optional decorations that break their rule are dropped with a warning naming the field and the rule; the message itself stays valid.
+func TestInvalidDecorationsAreDroppedWithAWarning(t *testing.T) {
+	cases := []struct {
+		name, fields, warn string
+		check              func(Message) bool
+	}{
+		{"one proposed answer", `"proposed_answers":["only"]`, "proposed_answers dropped: it needs 2 to 4 entries, got 1", func(m Message) bool { return m.ProposedAnswers == nil }},
+		{"five proposed answers", `"proposed_answers":["a","b","c","d","e"]`, "proposed_answers dropped: it needs 2 to 4 entries, got 5", func(m Message) bool { return m.ProposedAnswers == nil }},
+		{"both controls", `"proposed_answers":["a","b"],"open_questions":[{"question":"q","options":["x","y"]}]`, "proposed_answers dropped: a message uses proposed_answers or open_questions, not both", func(m Message) bool {
+			return m.ProposedAnswers == nil && len(m.OpenQuestions) == 1
+		}},
+		{"bad open question", `"open_questions":[{"question":"q","options":["x"]}]`, "open_questions dropped:", func(m Message) bool { return m.OpenQuestions == nil }},
+		{"too many open questions", `"open_questions":[` + strings.Repeat(`{"question":"q","options":["x","y"]},`, 10) + `{"question":"q","options":["x","y"]}]`, "open_questions dropped: at most 10 questions, got 11", func(m Message) bool { return m.OpenQuestions == nil }},
+		{"bad visual plan", `"visual_plan":[{"type":"nope","data":{}}]`, "visual_plan block 0 dropped: unknown block type", func(m Message) bool { return m.VisualPlan == nil }},
+		{"bad appendix", `"appendix_pages":[{"title":"t"}]`, "appendix_pages page 0 dropped:", func(m Message) bool { return m.AppendixPages == nil }},
+		{"ask and attention", `"ask":{"kind":"question","text":"?"},"needs_attention":true,"proposed_answers":["a","b"]`, "needs_attention, proposed_answers and open_questions were dropped", func(m Message) bool {
+			return m.Ask != nil && !m.NeedsAttention && m.ProposedAnswers == nil
+		}},
+	}
+	for _, tc := range cases {
+		parsed, err := Parse([]byte(`{"messages":[{"room":"r","body":"x",`+tc.fields+`}]}`), false)
+		if err != nil || len(parsed.Messages) != 1 || !tc.check(parsed.Messages[0]) || len(parsed.Warnings) == 0 || !strings.Contains(strings.Join(parsed.Warnings, "|"), tc.warn) {
+			t.Errorf("%s: parsed=%+v err=%v", tc.name, parsed, err)
+		}
+	}
+	// A core fault still holds.
+	if _, err := Parse([]byte(`{"messages":[{"room":"r","body":"x","ask":{"kind":"bad","text":"?"}}]}`), false); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a bad ask kind was accepted: %v", err)
 	}
 }

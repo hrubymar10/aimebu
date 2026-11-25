@@ -151,9 +151,8 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 		}
 		if message.Ask != nil {
 			if message.NeedsAttention || len(message.ProposedAnswers) > 0 || len(message.OpenQuestions) > 0 {
-				// An ask already puts the message in the person's inbox, so
-				// the attention controls are redundant: drop them and warn
-				// instead of rejecting the whole reply.
+				// An ask already puts the message in the person's inbox, so the attention controls are redundant: drop them (the ask is
+				// kept) and warn instead of rejecting the whole reply.
 				candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d: ask implies attention; needs_attention, proposed_answers and open_questions were dropped", i))
 				candidate.Messages[i].NeedsAttention = false
 				candidate.Messages[i].ProposedAnswers = nil
@@ -167,88 +166,163 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 				return candidate, fmt.Errorf("%w: ask text required", ErrInvalid)
 			}
 		}
-		if len(message.ProposedAnswers) > 4 || len(message.OpenQuestions) > 10 {
-			return candidate, fmt.Errorf("%w: message %d has too many answer controls", ErrInvalid, i)
-		}
-		if len(message.ProposedAnswers) > 0 && len(message.OpenQuestions) > 0 {
-			return candidate, fmt.Errorf("%w: message %d cannot combine proposed answers with open questions", ErrInvalid, i)
+		// The answer controls, visual blocks and appendix pages are optional decorations: one that breaks its rule is dropped with a
+		// receipt warning and the message is posted without it, instead of costing the whole reply.
+		dropDecorations(&candidate, i)
+	}
+	return candidate, nil
+}
+
+// dropDecorations validates the optional decorations of message i (proposed_answers, open_questions, visual_plan, appendix_pages) and
+// drops, with a warning naming the field and the rule, every one that breaks its rule. A proposed_answers and an open_questions set
+// together: proposed_answers is dropped and open_questions kept (the richer form), when open_questions itself is valid.
+func dropDecorations(candidate *Candidate, i int) {
+	message := &candidate.Messages[i]
+	warn := func(format string, args ...any) {
+		candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d: ", i)+fmt.Sprintf(format, args...)+"; the message was posted without it")
+	}
+	if n := len(message.ProposedAnswers); n > 0 {
+		valid := n >= 2 && n <= 4
+		if !valid {
+			warn("proposed_answers dropped: it needs 2 to 4 entries, got %d", n)
 		}
 		for _, option := range message.ProposedAnswers {
-			if strings.TrimSpace(option) == "" || utf8.RuneCountInString(option) > 500 {
-				return candidate, fmt.Errorf("%w: message %d has an invalid proposed answer", ErrInvalid, i)
+			if valid && (strings.TrimSpace(option) == "" || utf8.RuneCountInString(option) > 500) {
+				valid = false
+				warn("proposed_answers dropped: every entry must be non-empty text of at most 500 characters")
 			}
 		}
-		if len(message.ProposedAnswers) == 1 {
-			return candidate, fmt.Errorf("%w: message %d needs at least two proposed answers", ErrInvalid, i)
+		if !valid {
+			message.ProposedAnswers = nil
+		}
+	}
+	if len(message.OpenQuestions) > 0 {
+		valid := len(message.OpenQuestions) <= 10
+		if !valid {
+			warn("open_questions dropped: at most 10 questions, got %d", len(message.OpenQuestions))
 		}
 		for _, question := range message.OpenQuestions {
+			if !valid {
+				break
+			}
 			if strings.TrimSpace(question.Question) == "" || utf8.RuneCountInString(question.Question) > 500 || utf8.RuneCountInString(question.Description) > 1000 || len(question.Options) < 2 || len(question.Options) > 8 {
-				return candidate, fmt.Errorf("%w: message %d has an invalid open question", ErrInvalid, i)
+				valid = false
+				warn("open_questions dropped: each question needs text of at most 500 characters, a description of at most 1000 and 2 to 8 options")
+				break
 			}
 			for _, option := range question.Options {
 				if strings.TrimSpace(option) == "" || utf8.RuneCountInString(option) > 500 {
-					return candidate, fmt.Errorf("%w: message %d has an invalid question option", ErrInvalid, i)
+					valid = false
+					warn("open_questions dropped: every option must be non-empty text of at most 500 characters")
+					break
 				}
 			}
 		}
-		if len(message.VisualPlan) > 80 || len(message.AppendixPages) > 10 {
-			return candidate, fmt.Errorf("%w: message %d exceeds visual plan or appendix count", ErrInvalid, i)
+		if !valid {
+			message.OpenQuestions = nil
 		}
+	}
+	if len(message.ProposedAnswers) > 0 && len(message.OpenQuestions) > 0 {
+		warn("proposed_answers dropped: a message uses proposed_answers or open_questions, not both (open_questions kept)")
+		message.ProposedAnswers = nil
+	}
+	if len(message.VisualPlan) > 80 {
+		warn("visual_plan dropped: at most 80 blocks, got %d", len(message.VisualPlan))
+		message.VisualPlan = nil
+	}
+	if len(message.VisualPlan) > 0 {
+		kept := make([]json.RawMessage, 0, len(message.VisualPlan))
 		for j, block := range message.VisualPlan {
-			if len(block) > 64<<10 {
-				return candidate, fmt.Errorf("%w: message %d visual_plan block %d exceeds 64 KiB", ErrInvalid, i, j)
-			}
-			var fields map[string]json.RawMessage
-			if json.Unmarshal(block, &fields) != nil || fields == nil {
-				candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d visual_plan block %d has an unknown shape; raw content preserved", i, j))
+			fields, problem := checkVisualBlock(block)
+			if problem != "" {
+				warn("visual_plan block %d dropped: %s", j, problem)
 				continue
 			}
-			var kind string
-			_ = json.Unmarshal(fields["type"], &kind)
-			if len(fields["data"]) > 64000 {
-				return candidate, fmt.Errorf("%w: message %d visual_plan block %d data exceeds 64000 bytes", ErrInvalid, i, j)
-			}
-			var title, id string
-			_ = json.Unmarshal(fields["title"], &title)
+			var id string
 			_ = json.Unmarshal(fields["id"], &id)
-			if utf8.RuneCountInString(title) > 160 {
-				return candidate, fmt.Errorf("%w: message %d visual_plan block %d title exceeds 160 runes", ErrInvalid, i, j)
-			}
 			if id == "" {
 				fields["id"], _ = json.Marshal(fmt.Sprintf("block-%d", j))
 			}
-			fields["order"], _ = json.Marshal(j)
-			candidate.Messages[i].VisualPlan[j], _ = json.Marshal(fields)
-			if !knownVisualPlanType(kind) || !validVisualPlanData(kind, fields["data"]) {
-				candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d visual_plan block %d has an unknown shape; raw content preserved", i, j))
-			}
+			fields["order"], _ = json.Marshal(len(kept))
+			encoded, _ := json.Marshal(fields)
+			kept = append(kept, encoded)
 		}
-		total := 0
-		for j, page := range message.AppendixPages {
-			if len(page) > 128<<10 {
-				return candidate, fmt.Errorf("%w: message %d appendix page %d JSON exceeds 128 KiB", ErrInvalid, i, j)
-			}
-			var fields map[string]json.RawMessage
-			if json.Unmarshal(page, &fields) != nil || fields == nil {
-				candidate.Warnings = append(candidate.Warnings, fmt.Sprintf("message %d appendix page %d has an unknown shape; raw content preserved", i, j))
-				continue
-			}
-			var body string
-			var title string
-			_ = json.Unmarshal(fields["title"], &title)
-			if utf8.RuneCountInString(title) > 160 {
-				return candidate, fmt.Errorf("%w: message %d appendix page %d title exceeds 160 runes", ErrInvalid, i, j)
-			}
-			if json.Unmarshal(fields["body"], &body) != nil || len(body) > 32000 {
-				return candidate, fmt.Errorf("%w: message %d appendix page %d needs a body of at most 32000 bytes", ErrInvalid, i, j)
-			}
-			total += len(body)
-		}
-		if total > 128000 {
-			return candidate, fmt.Errorf("%w: message %d appendix body exceeds 128000 bytes", ErrInvalid, i)
+		message.VisualPlan = kept
+		if len(kept) == 0 {
+			message.VisualPlan = nil
 		}
 	}
-	return candidate, nil
+	if len(message.AppendixPages) > 10 {
+		warn("appendix_pages dropped: at most 10 pages, got %d", len(message.AppendixPages))
+		message.AppendixPages = nil
+	}
+	if len(message.AppendixPages) > 0 {
+		kept := make([]json.RawMessage, 0, len(message.AppendixPages))
+		total := 0
+		for j, page := range message.AppendixPages {
+			size, problem := checkAppendixPage(page)
+			if problem != "" {
+				warn("appendix_pages page %d dropped: %s", j, problem)
+				continue
+			}
+			total += size
+			kept = append(kept, page)
+		}
+		if total > 128000 {
+			warn("appendix_pages dropped: the page bodies together exceed 128000 bytes")
+			kept = nil
+		}
+		message.AppendixPages = kept
+		if len(kept) == 0 {
+			message.AppendixPages = nil
+		}
+	}
+}
+
+// checkVisualBlock decodes one visual_plan block and names the rule it breaks, if any.
+func checkVisualBlock(block json.RawMessage) (map[string]json.RawMessage, string) {
+	if len(block) > 64<<10 {
+		return nil, "the block exceeds 64 KiB"
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(block, &fields) != nil || fields == nil {
+		return nil, "a block must be an object with type and data"
+	}
+	var kind, title string
+	if json.Unmarshal(fields["type"], &kind) != nil || !knownVisualPlanType(kind) {
+		return nil, "unknown block type"
+	}
+	if len(fields["data"]) > 64000 {
+		return nil, "data exceeds 64000 bytes"
+	}
+	_ = json.Unmarshal(fields["title"], &title)
+	if utf8.RuneCountInString(title) > 160 {
+		return nil, "title exceeds 160 characters"
+	}
+	if !validVisualPlanData(kind, fields["data"]) {
+		return nil, "data does not fit the " + kind + " block shape"
+	}
+	return fields, ""
+}
+
+// checkAppendixPage names the rule one appendix page breaks, if any, and returns the size of its body.
+func checkAppendixPage(page json.RawMessage) (int, string) {
+	if len(page) > 128<<10 {
+		return 0, "the page exceeds 128 KiB"
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(page, &fields) != nil || fields == nil {
+		return 0, "a page must be an object with a body"
+	}
+	var title, body string
+	_ = json.Unmarshal(fields["title"], &title)
+	if utf8.RuneCountInString(title) > 160 {
+		return 0, "title exceeds 160 characters"
+	}
+	if json.Unmarshal(fields["body"], &body) != nil || len(body) > 32000 {
+		return 0, "a page needs a body of at most 32000 bytes"
+	}
+	return len(body), ""
 }
 
 // A model that reasons in its reply text (GLM and Qwen over an OpenAI-compatible provider, for one) puts the reasoning ahead of the

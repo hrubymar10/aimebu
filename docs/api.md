@@ -776,7 +776,7 @@ with nothing proving its process gone stays for a person, since only a
 decision can accept that overlap. The dispatcher also runs this settling (and
 the answered-question check above) every ten seconds, which catches a turn
 whose kill raises its recovery only after the stop, and items opened before
-the rule existed. A worker's malformed final answer never reaches people first. The author gets
+the rule existed. An invalid optional decoration (`proposed_answers`, `open_questions`, `visual_plan`, `appendix_pages`, or an `ask` with attention controls) never holds an answer: it is dropped and the receipt carries a warning naming the field and the rule. A malformed final answer never reaches people first, a lead's included (a lead with nobody above it is told the same way and gets the card and room notice only if its resend is held too). The author gets
 the system note "Your previous reply was held: <error>. Send your final answer
 again…" — the error names the exact cause (which message, which field, what was
 wrong and how to fix it, for example "message 0 is a handoff without an

@@ -36,14 +36,16 @@ func TestUnavailableCorrectionCreatesVisibleDeliveryFailureOnce(t *testing.T) {
 	if err != nil || first.Result != "held" || first.HeldReason != "correction_unavailable" {
 		t.Fatalf("held result=%+v err=%v", first, err)
 	}
+	// The lead is asked to resend first; people hear of it only when that repair fails too.
+	holdAgain(t, s, f, raw)
 	items, err := s.InboxForUser(ctx, "usr_answers")
 	if err != nil || len(items) != 1 || items[0].HeldReason != "correction_unavailable" ||
 		!strings.Contains(items[0].DeliveryError, "invalid") || !strings.Contains(items[0].CandidatePreview, "cedar lake") {
 		t.Fatalf("delivery failure=%+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) != 3 || !strings.Contains(messages[1].Body, "correction_unavailable") ||
-		strings.Contains(messages[1].Body, "cedar lake") || strings.Contains(messages[1].Body, "invalid") || strings.Contains(messages[2].Body, "cedar lake") {
+	if err != nil || len(messages) != 3 || !strings.Contains(messages[2].Body, "correction_unavailable") ||
+		strings.Contains(messages[2].Body, "cedar lake") || strings.Contains(messages[2].Body, "invalid") || strings.Contains(messages[1].Body, "cedar lake") {
 		t.Fatalf("system notice=%+v err=%v", messages, err)
 	}
 	if _, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil {
@@ -66,9 +68,7 @@ func TestDismissDeliveryFailure(t *testing.T) {
 	ctx := context.Background()
 	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Draft held for review"}]}`, f.room.ID)
 	// A malformed candidate reaches the informational delivery-failure item.
-	if _, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw[:len(raw)-1]); err != nil {
-		t.Fatal(err)
-	}
+	holdTwice(t, s, f, raw[:len(raw)-1])
 	items, err := s.InboxForUser(ctx, "usr_answers")
 	if err != nil || len(items) != 1 || items[0].Kind != "delivery_failed" {
 		t.Fatalf("inbox=%+v err=%v", items, err)
@@ -103,13 +103,14 @@ func TestDeliveryFailureNoticeOmitsPrivateParserField(t *testing.T) {
 	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "unknown field private?cedar?lake") || strings.Contains(receipt.Error, "private cedar lake") {
 		t.Fatalf("parse receipt=%+v err=%v", receipt, err)
 	}
+	holdAgain(t, s, f, raw)
 	items, err := s.InboxForUser(context.Background(), "usr_answers")
 	if err != nil || len(items) != 1 || strings.Contains(items[0].DeliveryError, "private cedar lake") {
 		t.Fatalf("private parser detail reached the Inbox: %+v err=%v", items, err)
 	}
 	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
-	if err != nil || len(messages) != 3 || strings.Contains(messages[1].Body, "private cedar lake") ||
-		!strings.Contains(messages[1].Body, "correction_unavailable") || !strings.Contains(messages[2].Body, "Your previous reply was held") || strings.Contains(messages[2].Body, "private cedar lake") {
+	if err != nil || len(messages) != 3 || strings.Contains(messages[2].Body, "private cedar lake") ||
+		!strings.Contains(messages[2].Body, "correction_unavailable") || !strings.Contains(messages[1].Body, "Your previous reply was held") || strings.Contains(messages[1].Body, "private cedar lake") {
 		t.Fatalf("room notice disclosed parser field: %+v err=%v", messages, err)
 	}
 }
@@ -221,9 +222,7 @@ func TestDismissNeedsAnOperatorInAnOrdinaryRoom(t *testing.T) {
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
 	ctx := context.Background()
-	if _, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, `{"messages":[{"room":"`+f.room.ID+`","body":"held"}`); err != nil {
-		t.Fatal(err)
-	}
+	holdTwice(t, s, f, `{"messages":[{"room":"`+f.room.ID+`","body":"held"}`)
 	items, err := s.InboxForUser(ctx, "usr_answers")
 	if err != nil || len(items) != 1 || items[0].Kind != "delivery_failed" {
 		t.Fatalf("inbox = %+v err=%v", items, err)

@@ -1122,7 +1122,10 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   `restart` and `abandon` only, no diagnostic turn); `restart` starts a fresh
   native session in the same checkout, requeues the turn's notes and sends it
   a `Handoff:` system note naming the last commit and the open commands. Only a lead's own failure, or a worker's with no lead
-  to hand to, is a card for people; `room_closed` and `not_member` holds always
+  to hand to, is a card for people, and only once its repair failed too: a lead
+  or a worker with no lead gets the same note and fresh turn first, so a hold
+  that the agent's own next answer settles raises no Inbox item and no room
+  notice; `room_closed` and `not_member` holds always
   stay with people. Every empty answer logs the harness exit
   code and the last stderr lines, and every answered turn logs one server line
   (`turn answered: agent=… turn=… mode=… result=… messages=N held_reason=…`,
@@ -2119,6 +2122,21 @@ CC/Codex, prompt-only on pi):
 "order":0?}]?,"appendix_pages":[{"title":"…"?,"body":"…"}]?}],
 "reconciliation":{"status":"clean|uncertain","findings":["…"]}?}`
 - A message may use `proposed_answers` or `open_questions`, but not both.
+  The optional decorations never hold the reply: one that breaks its rule is
+  dropped, the message is posted without it, and the receipt carries a warning
+  naming the field and the rule. They are `proposed_answers` (2 to 4 entries,
+  each non-empty and at most 500 characters), `open_questions` (at most 10
+  questions, each with text, a description of at most 1000 characters and 2 to
+  8 options), both set together (`proposed_answers` is dropped, `open_questions`
+  kept), `visual_plan` (a block of an unknown type, with data that does not fit
+  its type, a title over 160 characters or a size over its bound is dropped on
+  its own, and more than 80 blocks drop the whole field), and `appendix_pages`
+  (a page that is not an object with a body, with a title over 160 characters
+  or a body over 32000 bytes is dropped on its own; more than 10 pages, or
+  bodies over 128000 bytes together, drop the whole field). Faults in the core
+  still hold the reply: room, body, handoff without an outcome, an invalid
+  `outcome`, a bad `ask` kind or text, an unknown field in `ask`, a wrong JSON
+  shape, an attachment, a mention of an absent agent, and so on.
   An `ask` implies attention: `needs_attention`, `proposed_answers` and
   `open_questions` sent with it are dropped, with a receipt warning, instead of
   invalidating the reply.
@@ -2191,8 +2209,11 @@ CC/Codex, prompt-only on pi):
   v1 block vocabulary is supported; Codex and Claude structured-output
   schemas encode each block's `data` object as a JSON string. Unknown or
   mismatched shapes are kept in the message and outbox, exposed as escaped
-  raw content in the web UI, and named in receipt warnings. The server assigns
-  a missing block ID and replaces input `order` with its array index. An
+  raw content in the web UI, and named in receipt warnings. A block of an
+  unknown type or with data that does not fit its type is dropped from a new
+  answer (see the decorations rule above); an imported v1 message keeps such
+  blocks. The server assigns a missing block ID and replaces input `order` with
+  its array index among the kept blocks. An
   imported v1 message uses these native fields. Diagrams load the exact v1 vendored Mermaid bundle
   lazily with strict security; failed diagrams show their escaped source.
 
@@ -2221,13 +2242,15 @@ CC/Codex, prompt-only on pi):
   `message_get` returns the message's `appendix_pages` in full (and
   `appendix_page_count`); `room_history` and `referenced_messages` carry only
   `appendix_page_count`, so the pages are fetched on demand.
-  A malformed block remains visible as raw content and produces an answer
-  receipt warning when the browser would use its raw fallback.
+  A block the server drops produces an answer receipt warning; a stored block
+  the browser cannot draw (an imported one) stays visible as raw content.
 
 - Bounds: whole answer ≤ 2 MiB, ≤ 10 messages, body ≤ 32 KiB each,
   ≤ 80 visual blocks of ≤ 64 KiB each (≤ 64000 data bytes), ≤ 160 runes per
   block or page title, and ≤ 10 appendix pages of ≤ 32000 body bytes each
-  and ≤ 128000 body bytes total.
+  and ≤ 128000 body bytes total. An answer over these decoration bounds is not
+  rejected: the offending block, page or field is dropped with a receipt
+  warning (the 2 MiB, 10 message and 32 KiB body bounds still reject).
   Unknown top-level and nested
   `ask` fields are rejected. Unknown message-level fields are ignored only
   when the remaining answer is valid, with their names recorded as receipt

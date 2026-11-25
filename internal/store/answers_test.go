@@ -416,16 +416,6 @@ func TestAskAndAttentionControlsAreReducedToTheAsk(t *testing.T) {
 	}
 }
 
-func TestMixedAttentionControlsProduceClearReceiptError(t *testing.T) {
-	t.Parallel()
-	s, f := answerFixture(t, false)
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"Choose","proposed_answers":["Yes","No"],"open_questions":[{"question":"Scope?","options":["Small","Large"]}]}]}`, f.room.ID)
-	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
-	if err != nil || receipt.Result != "held" || !strings.Contains(receipt.Error, "cannot combine proposed answers with open questions") {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
-}
-
 func TestVisualPlanPersistsOnMessageAndOutbox(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
@@ -435,7 +425,7 @@ func TestVisualPlanPersistsOnMessageAndOutbox(t *testing.T) {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
-	if err != nil || len(messages) < 2 || !strings.Contains(messages[len(messages)-1].VisualPlanJSON, `"future"`) ||
+	if err != nil || len(messages) < 2 || strings.Contains(messages[len(messages)-1].VisualPlanJSON, `"future"`) ||
 		!strings.Contains(messages[len(messages)-1].AppendixPagesJSON, `"Full plan"`) {
 		t.Fatalf("messages=%+v err=%v", messages, err)
 	}
@@ -590,7 +580,7 @@ func TestStructuredAnswerHoldsUnavailableAndClosed(t *testing.T) {
 			messages, err := s.ListMessagesAfter(context.Background(), f.room.ID, 0)
 			wantMessages := 1
 			if test.reason == "correction_unavailable" {
-				wantMessages = 3 // the room notice, and the author's own note saying why
+				wantMessages = 2 // the author's own note saying why; the room is told only if the repair fails too
 			}
 			if err != nil || len(messages) != wantMessages {
 				t.Fatalf("unexpected message commit=%+v %v", messages, err)
@@ -848,16 +838,16 @@ func TestInvalidReplyWithoutCorrectionTellsTheAgentWhy(t *testing.T) {
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
 	ctx := context.Background()
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","ask":{"kind":"bad","text":"x"}}]}`, f.room.ID)
 	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
 	if err != nil || receipt.Result != "held" || receipt.HeldReason != "correction_unavailable" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) != 3 || messages[2].AuthorKind != "system" || !strings.Contains(messages[2].Body, "Your previous reply was held: ") || !strings.Contains(messages[2].Body, "at least two proposed answers") {
+	if err != nil || len(messages) != 2 || messages[1].AuthorKind != "system" || !strings.Contains(messages[1].Body, "Your previous reply was held: ") || !strings.Contains(messages[1].Body, "invalid ask kind") {
 		t.Fatalf("messages=%+v err=%v", messages, err)
 	}
-	if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[2].ID); err != nil {
+	if _, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[1].ID); err != nil {
 		t.Fatalf("author was not woken: %v", err)
 	}
 	replay, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
@@ -873,10 +863,8 @@ func TestCommittedReplyResolvesEarlierDeliveryFailuresInTheRoom(t *testing.T) {
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
 	ctx := context.Background()
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
-	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","ask":{"kind":"bad","text":"x"}}]}`, f.room.ID)
+	holdTwice(t, s, f, raw)
 	open := func() int {
 		var n int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE agent_id=? AND kind='delivery_failed' AND state='open'`, f.agent.ID).Scan(&n); err != nil {
@@ -902,15 +890,15 @@ func TestHeldReplyNoteDoesNotChain(t *testing.T) {
 	s, f := answerFixture(t, false)
 	asLead(t, s, f)
 	ctx := context.Background()
-	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","proposed_answers":["only one"]}]}`, f.room.ID)
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"x","ask":{"kind":"bad","text":"x"}}]}`, f.room.ID)
 	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw); err != nil || receipt.Result != "held" {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
 	}
 	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
-	if err != nil || len(messages) != 3 {
+	if err != nil || len(messages) != 2 {
 		t.Fatalf("messages=%+v err=%v", messages, err)
 	}
-	note, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[2].ID)
+	note, err := s.NoteForAgentMessage(ctx, f.agent.ID, messages[1].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -928,7 +916,7 @@ func TestHeldReplyNoteDoesNotChain(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE turn SET policy_json=? WHERE id=?`, string(policy), turn.ID); err != nil {
 		t.Fatal(err)
 	}
-	other := fmt.Sprintf(`{"messages":[{"room":%q,"body":"y","proposed_answers":["still one"]}]}`, f.room.ID)
+	other := fmt.Sprintf(`{"messages":[{"room":%q,"body":"y","ask":{"kind":"bad","text":"y"}}]}`, f.room.ID)
 	if receipt, err := applyCandidate(t, s, turn, f.agent.ID, 0, other); err != nil || receipt.Result != "held" {
 		t.Fatalf("second receipt=%+v err=%v", receipt, err)
 	}
