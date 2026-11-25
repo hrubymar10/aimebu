@@ -31,6 +31,19 @@ func roleBodies(t *testing.T, db *sql.DB) map[string]string {
 	return result
 }
 
+func resolvedRoleBodies(t *testing.T, s *Store) map[string]string {
+	t.Helper()
+	roles, err := s.ListRoles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(map[string]string, len(roles))
+	for _, role := range roles {
+		result[role.Key] = role.Body
+	}
+	return result
+}
+
 func priorRoleDatabase(t *testing.T) (*sql.DB, string) {
 	return roleDatabaseBefore(t, 32)
 }
@@ -63,7 +76,7 @@ func roleDatabaseBefore(t *testing.T, stop int) (*sql.DB, string) {
 // fixtures for migration 35 from the code that migration itself uses.
 const shippedPriorRoleSafety = `Read the project instructions and relevant docs before editing. Work only in your assigned checkout or worktree; never modify another agent's worktree. Run tests with isolated temporary HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, and AIMEBU2_CONFIG_DIR, preserving the Go cache paths. Hold the shared flock gate for the full test command so concurrent gates cannot interfere. Report the exact command, result, branch, commit SHA, and parent SHA; never invent a test result or source. Use a shell heredoc for a substantive commit message, with a conventional subject and a body explaining why. Check added lines and the commit message against the project's prohibited substring list before committing. Do not add dependencies without approval. Keep code and docs in the same commit when behavior or instructions change. Do not defer in-scope work just because it is difficult; state a concrete blocker or implement its mitigation.`
 
-func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
+func TestRoleFollowupMigrationArchivesEarlierBodies(t *testing.T) {
 	db, path := roleDatabaseBefore(t, 35)
 	prior := func(body string) string { return strings.Replace(body, roleSafety, shippedPriorRoleSafety, 1) }
 	oldReviewer := prior(strings.Replace(reviewerRoleBody, reviewerStart, priorReviewerStart, 1))
@@ -110,32 +123,28 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	for id, want := range map[string]string{
-		"role_leader_default": "owner lead edit", "role_reviewer_default": "owner reviewer edit",
+		"role_leader_default":       "owner lead edit",
+		"role_reviewer_default":     "owner reviewer edit",
 		"role_worker_default":       currentWorkerRoleBody,
 		"role_sec-reviewer_default": oldBodies["role_sec-reviewer_default"],
-		"role_scoped":               "scoped edit",
 	} {
-		var got string
-		if err := s.db.QueryRow(`SELECT body FROM role WHERE id=?`, id).Scan(&got); err != nil || got != want {
-			t.Errorf("%s body=%q err=%v", id, got, err)
+		var archived, stored string
+		if err := s.db.QueryRow(`SELECT body FROM builtin_role_body_archive WHERE role_id=?`, id).Scan(&archived); err != nil || archived != want {
+			t.Errorf("%s archived body differs: len=%d err=%v", id, len(archived), err)
+		}
+		if err := s.db.QueryRow(`SELECT body FROM role WHERE id=?`, id).Scan(&stored); err != nil || stored != "" {
+			t.Errorf("%s override=%q err=%v", id, stored, err)
 		}
 	}
-	for _, focus := range reviewerFocus {
-		id := "role_" + focus.key + "_default"
-		if focus.key == "sec-reviewer" {
-			continue
-		}
-		var got string
-		// Migration 54 then turns the unedited specialist into a role that extends reviewer, holding only its focus.
-		if err := s.db.QueryRow(`SELECT body FROM role WHERE id=?`, id).Scan(&got); err != nil || got != specialistFocus(focus.body) {
-			t.Errorf("%s body=%q err=%v", id, got, err)
-		}
+	var scoped string
+	if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_scoped'`).Scan(&scoped); err != nil || scoped != "scoped edit" {
+		t.Errorf("project role body=%q err=%v", scoped, err)
 	}
 }
 
 func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 	fresh, _ := testStore(t, Options{})
-	want := roleBodies(t, fresh.db)
+	want := resolvedRoleBodies(t, fresh)
 	if len(want) != 9 {
 		t.Fatalf("fresh global role count = %d, want 9", len(want))
 	}
@@ -164,7 +173,7 @@ func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer upgraded.Close()
-	got := roleBodies(t, upgraded.db)
+	got := resolvedRoleBodies(t, upgraded)
 	for key, body := range want {
 		if got[key] != body {
 			t.Errorf("upgraded %s differs from fresh default", key)
@@ -172,7 +181,7 @@ func TestRoleDefaultsFreshAndUpgradeMatch(t *testing.T) {
 	}
 }
 
-func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
+func TestRoleDefaultsUpgradeKeepsProjectRoles(t *testing.T) {
 	db, path := priorRoleDatabase(t)
 	if _, err := db.Exec(`UPDATE role SET body='owner edit',rev=rev+1 WHERE id='role_worker_default'`); err != nil {
 		t.Fatal(err)
@@ -194,7 +203,7 @@ func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
 	if _, err := s.db.Exec(roleDefaultsMigration()); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[string]string{"role_worker_default": "owner edit", "role_scoped": "scoped edit"} {
+	for id, want := range map[string]string{"role_worker_default": "", "role_scoped": "scoped edit"} {
 		var got string
 		if err := s.db.QueryRow(`SELECT body FROM role WHERE id=?`, id).Scan(&got); err != nil || got != want {
 			t.Errorf("%s body=%q err=%v", id, got, err)
@@ -404,6 +413,12 @@ func TestResearcherRoleMigrationIsFrozenAndKeepsOwnersRow(t *testing.T) {
 	}
 	if key != "researcher" || label != "Researcher" || emoji != "🔬" || card != "multi" || lead+spawn+writer != 0 {
 		t.Fatalf("researcher row = %q %q %q %q caps %d/%d/%d", key, label, emoji, card, lead, spawn, writer)
+	}
+	if body != "" {
+		t.Fatalf("researcher default stored an override: %q", body)
+	}
+	if err := fresh.db.QueryRow(`SELECT body FROM builtin_role_body_archive WHERE role_id='role_researcher_default'`).Scan(&body); err != nil {
+		t.Fatal(err)
 	}
 	if body != researcherRoleBody || !strings.HasSuffix(body, roomMentionGuidance) || !strings.Contains(body, roleSafety) || !strings.Contains(body, roleCommunication) {
 		t.Fatal("researcher body differs from the code default or lacks the shared paragraphs")

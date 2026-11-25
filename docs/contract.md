@@ -453,7 +453,7 @@ Roles, agents
   and agents retained. Project-scoped `leader` rows remain unchanged and are
   logged. There is no `lead` alias for the built-in role.
 - **role**(id, key UNIQUE (legacy internal key), project_id? (always NULL since migration 64), role_key,
-  label, emoji, body (editable instructions), extends (role_key of a parent
+  label, emoji, body (saved instructions; for a built-in role, an owner override), extends (role_key of a parent
   role, '' for none), cardinality[multi|singleton],
   cap_is_lead, cap_can_spawn, cap_singleton_writer, spawn_defaults_json,
   spawn_pick_mode[in_turn|randomly], rev, deleted_at?) — active
@@ -462,11 +462,14 @@ Roles, agents
   references and hides the role from new selection; stopped agents with a
   deleted role cannot reactivate. Existing agents retain their `role_id` until
   respawn or explicit role change. Editing a row's body affects its agents on their next
-  delivery. The instructions delivered are the role's *resolved* body: the
+  delivery. An empty built-in body (or NULL in legacy data) selects the shipped
+  instructions of the running build; a nonempty body overrides them. Saving the
+  shipped text unchanged clears the override. The instructions delivered are
+  the role's *resolved* body: the
   parent's resolved body, a blank line, then the role's own (trimmed); no cycles, at
   most five ancestors, and a role other roles extend cannot be deleted. A built-in
   global role (id `*_default`) can be reset to its shipped definition by the host
-  owner or an admin.
+  owner or an admin; reset clears the body override.
   Capability and cardinality changes are rejected while live agents use the
   row; `cap_*` changes require the host owner or an admin (roles are
   global, and for a global scope the capability flag is not consulted: any
@@ -488,8 +491,10 @@ Roles, agents
   resolved body — then the role's global extension, then the project's, each
   skipped when empty and joined by one blank line; the extension of the role an
   agent holds is the one that appends, so a parent's does not flow to roles that
-  extend it. An extension never counts as an edit: the role-body migrations keep
-  treating only `role.body` as edited or unedited. Resetting a built-in role
+  extend it. An extension does not replace the role's base body. Migration 139
+  archives every nonempty built-in body in `builtin_role_body_archive` with its
+  role ID and archive time, then clears the body so it uses the running default;
+  global and project extensions remain untouched. Resetting a built-in role
   leaves its extension; deleting a role removes its extensions. Roles have no
   change event, so an extension change shows in the row's revision and in the
   next delivery.

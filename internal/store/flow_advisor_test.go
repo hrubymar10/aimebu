@@ -228,8 +228,8 @@ func TestAdvisorMigrationPreservesCustomRole(t *testing.T) {
 	if err := db.QueryRow(`SELECT extends FROM role WHERE id='role_child_advisor'`).Scan(&parent); err != nil || parent != customKey {
 		t.Fatalf("child parent: %s %v", parent, err)
 	}
-	if err := db.QueryRow(`SELECT body FROM role WHERE id='role_advisor_default'`).Scan(&body); err != nil || body != advisorRoleBody {
-		t.Fatalf("built-in advisor: %s %v", body, err)
+	if err := db.QueryRow(`SELECT body FROM role WHERE id='role_advisor_default'`).Scan(&body); err != nil || body != "" {
+		t.Fatalf("built-in advisor override: %s %v", body, err)
 	}
 }
 

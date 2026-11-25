@@ -9,7 +9,7 @@ import (
 func TestFreshProjectRolesCarryTheApprovalRule(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
-	bodies := roleBodies(t, s.db)
+	bodies := resolvedRoleBodies(t, s)
 	for _, want := range []string{spawnApprovalRuleLead} {
 		if !strings.Contains(bodies["leader"], want) {
 			t.Errorf("fresh leader role lacks %q", want)
@@ -42,7 +42,7 @@ func TestUpgradedProjectRolesCarryTheApprovalRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	bodies := roleBodies(t, s.db)
+	bodies := resolvedRoleBodies(t, s)
 	if !strings.Contains(bodies["leader"], spawnApprovalRuleLead) || !strings.Contains(bodies["dispatcher"], spawnApprovalRuleDispatcher) {
 		t.Error("an upgraded database lacks the approval rules in the built-in roles")
 	}
@@ -124,68 +124,5 @@ func TestSpawnApprovalMigrationAddsTheResearcherRule(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestSpawnApprovalRoleFactsNameOnlyEditedBodies(t *testing.T) {
-	t.Parallel()
-	s, _ := testStore(t, Options{})
-	facts := func() []string {
-		t.Helper()
-		var got []string
-		if err := s.Tx(context.Background(), func(tx *Tx) error {
-			var err error
-			got, err = spawnApprovalRoleFacts(context.Background(), tx.tx)
-			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-		return got
-	}
-	// The bodies migrations 134 and 135 rewrite are not the owner's: no notice.
-	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=1 WHERE id='role_leader_default'`, currentLeadRoleBody); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=0 WHERE id='role_dispatcher_default'`, currentDispatcherRoleBody); err != nil {
-		t.Fatal(err)
-	}
-	if got := facts(); len(got) != 0 {
-		t.Errorf("unedited defaults drew facts: %v", got)
-	}
-	// An owner-edited leader body missing the approval sentence gets one notice.
-	if _, err := s.db.Exec(`UPDATE role SET body='owner edit',rev=2 WHERE id='role_leader_default'`); err != nil {
-		t.Fatal(err)
-	}
-	got := facts()
-	if len(got) != 1 || !strings.Contains(got[0], "role_leader_default") || !strings.Contains(got[0], "missing") {
-		t.Errorf("edited leader body: facts %v", got)
-	}
-	// An owner-edited body carrying the rule gets none.
-	owned := currentLeadRoleBody + "\n\nowner wording"
-	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=2 WHERE id='role_leader_default'`, owned); err != nil {
-		t.Fatal(err)
-	}
-	if got := facts(); len(got) != 0 {
-		t.Errorf("edited body with the sentence drew facts: %v", got)
-	}
-	// The dispatcher's notice names the researcher rule only when the edited
-	// body carries the approval rule but not the researcher rule; one missing
-	// everything just names the approval rule.
-	if _, err := s.db.Exec(`UPDATE role SET body='owner edit',rev=1 WHERE id='role_dispatcher_default'`); err != nil {
-		t.Fatal(err)
-	}
-	got = facts()
-	if len(got) != 1 || !strings.Contains(got[0], "role_dispatcher_default") || !strings.Contains(got[0], "the model-approval rule);") {
-		t.Errorf("edited dispatcher body: facts %v", got)
-	}
-	// A dispatcher body with the approval rule but not the researcher rule
-	// still gets its notice.
-	half := "owner wording\n\n" + spawnApprovalRuleDispatcher
-	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=1 WHERE id='role_dispatcher_default'`, half); err != nil {
-		t.Fatal(err)
-	}
-	got = facts()
-	if len(got) != 1 || !strings.Contains(got[0], "role_dispatcher_default") {
-		t.Errorf("edited dispatcher body with one sentence: facts %v", got)
 	}
 }

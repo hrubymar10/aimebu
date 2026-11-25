@@ -695,6 +695,10 @@ prompt** preview of what an agent of the role is told, extension included, as
 last saved. Each role picks defaults in turn (with a durable
 cursor per project and role) or randomly. Project settings can inherit or
 override each role's list and mode; an empty list leaves the choice manual.
+For built-in roles, the shipped instructions of the running build are used
+until the owner saves different text. Saving the shipped text or resetting the
+role returns to that default. On upgrade to this behavior, the prior saved
+body is archived for manual recovery as described in [upgrade notes](upgrade-notes.md#built-in-role-instructions-follow-the-running-build).
 Unavailable machines, unmapped project folders, launchers, and models are skipped. So is an entry whose provider's active login is already known rejected in the usage snapshot (`auth_missing`, or an expired token): the pool picks the next healthy entry in rotation order and the spawn notice names the skip ("skipped codex/native/gpt-6-sol: login rejected"); a stale, errored or unknown reading never skips. When every entry is rejected the pool does not loop: it falls back to the first skipped entry and the notice says every configured default entry is unhealthy. The Spawn dialog
 prefills the next available choice and remains editable. Roles are global
 only, with no per-project roles.

@@ -2172,6 +2172,26 @@ CREATE INDEX agent_launcher_active ON agent(launcher_id,desired,observed);
 -- the launcher forwards the key's variable by name. The seeded Pi Docker harness said it could not, so every preset one is told it can;
 -- a launcher the owner customised keeps what the owner chose.
 UPDATE machine_launcher SET supports_toolbox=1 WHERE preset=1 AND tool='pi' AND name='harness-docker';
+`}, {139, `
+-- Built-in role bodies are overrides. Keep the old text for manual recovery,
+-- then resolve an empty body from the running build's shipped definition.
+CREATE TABLE IF NOT EXISTS builtin_role_body_archive (
+  role_id TEXT PRIMARY KEY,
+  body TEXT NOT NULL,
+  archived_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO builtin_role_body_archive(role_id,body,archived_at)
+SELECT id,body,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM role
+WHERE id IN ('role_leader_default','role_dispatcher_default','role_advisor_default',
+  'role_worker_default','role_reviewer_default','role_researcher_default',
+  'role_sec-reviewer_default','role_test-reviewer_default','role_ux-reviewer_default')
+  AND project_id IS NULL AND body<>'';
+UPDATE role SET body='',rev=rev+1
+WHERE id IN ('role_leader_default','role_dispatcher_default','role_advisor_default',
+  'role_worker_default','role_reviewer_default','role_researcher_default',
+  'role_sec-reviewer_default','role_test-reviewer_default','role_ux-reviewer_default')
+  AND project_id IS NULL AND body<>''
+  AND body=(SELECT body FROM builtin_role_body_archive WHERE role_id=role.id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2298,10 +2318,6 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if err == nil && m.version == 102 {
 			leaderFacts, err = migrateLeaderRole(ctx, tx)
 		}
-		var approvalFacts []string
-		if err == nil && m.version == 135 {
-			approvalFacts, err = spawnApprovalRoleFacts(ctx, tx)
-		}
 		if err == nil && m.version == 112 {
 			err = moveCustomAdvisorRole(ctx, tx)
 		}
@@ -2344,11 +2360,6 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if m.version == 102 {
 			for _, line := range leaderFacts {
 				log.Printf("migration 102: %s", line)
-			}
-		}
-		if m.version == 135 {
-			for _, line := range approvalFacts {
-				log.Printf("migration 135: %s", line)
 			}
 		}
 	}

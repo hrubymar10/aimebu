@@ -3,6 +3,17 @@
 What changes for a running install when it is upgraded to a build with the security hardening of this series, and what to do about it.
 Each item names the document that describes the behaviour in full.
 
+## Built-in role instructions follow the running build
+
+Migration 139 makes every built-in role use the instructions shipped with the
+running build. It clears the saved body for each built-in role, including bodies
+the owner edited. Each nonempty old body is copied first to
+`builtin_role_body_archive` with its role ID and archive time, so it can be
+recovered manually from the database. User-created roles and global or project
+prompt extensions are left alone. After the upgrade, saving an edited body
+creates an override; saving the shipped text or resetting the role uses the
+running default again.
+
 ## Sign-in, setup, invites and pairing answer only expected host names
 
 Sign-in, the first-run setup, invites and machine pairing now answer `421 unexpected_host` for a `Host` that is not `localhost` (or

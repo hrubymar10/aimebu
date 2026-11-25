@@ -173,19 +173,22 @@ func TestRoleExtendsMigrationKeepsEditedSpecialists(t *testing.T) {
 	}
 	defer s.Close()
 	got := globalRoles(t, s)
-	if ux := got["ux-reviewer"]; ux.Body != "owner edit" || ux.Extends != "" || ux.Rev != 1 || ux.ResolvedBody != "owner edit" {
-		t.Errorf("a specialist with an edited body must stay as the owner left it: %+v", ux)
+	if ux := got["ux-reviewer"]; ux.Body != specialistFocus(reviewerFocus[2].body) || ux.Extends != "" || ux.Rev != 2 {
+		t.Errorf("an edited specialist uses the running default after upgrade: %+v", ux)
 	}
-	wantSec := reviewerRoleBody + "\n\nAdditional focus: " + reviewerFocus[0].body
-	if sec := got["sec-reviewer"]; sec.Label != "Security folk" || sec.Extends != "" || sec.Rev != 1 || sec.Body != wantSec {
-		t.Errorf("a specialist with an edited name counts as edited and stays complete: %+v", sec)
+	var archived string
+	if err := s.db.QueryRow(`SELECT body FROM builtin_role_body_archive WHERE role_id='role_ux-reviewer_default'`).Scan(&archived); err != nil || archived != "owner edit" {
+		t.Errorf("old owner text was not archived: %q %v", archived, err)
+	}
+	if sec := got["sec-reviewer"]; sec.Label != "Security folk" || sec.Extends != "" || sec.Rev != 2 || sec.Body != specialistFocus(reviewerFocus[0].body) {
+		t.Errorf("a specialist keeps its edited name and uses the running body: %+v", sec)
 	}
 	for _, focus := range reviewerFocus {
 		if focus.key != "test-reviewer" {
 			continue
 		}
 		r := got[focus.key]
-		if r.Extends != "reviewer" || r.Rev != 0 || r.Body != specialistFocus(focus.body) || r.ResolvedBody != currentReviewerRoleBody+"\n\nAdditional focus: "+focus.body {
+		if r.Extends != "reviewer" || r.Rev != 1 || r.Body != specialistFocus(focus.body) || r.ResolvedBody != currentReviewerRoleBody+"\n\nAdditional focus: "+focus.body {
 			t.Errorf("%s: unedited specialist not converted cleanly: extends=%q rev=%d", focus.key, r.Extends, r.Rev)
 		}
 	}

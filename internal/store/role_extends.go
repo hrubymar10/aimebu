@@ -30,13 +30,14 @@ func allLiveRoles(ctx context.Context, q roleQuerier) ([]RoleDefinition, error) 
 }
 
 func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) ([]RoleDefinition, error) {
-	rows, err := q.QueryContext(ctx, `SELECT id,role_key,label,emoji,body,cardinality,
+	rows, err := q.QueryContext(ctx, `SELECT id,role_key,label,emoji,COALESCE(body,''),cardinality,
  cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends,spawn_defaults_json,spawn_pick_mode FROM role`+where+` ORDER BY role_key`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := []RoleDefinition{}
+	defaults := builtinRoles()
 	for rows.Next() {
 		var r RoleDefinition
 		var defaultsJSON string
@@ -50,7 +51,11 @@ func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) (
 		if r.DefaultAgents == nil {
 			r.DefaultAgents = []SpawnDefaultChoice{}
 		}
-		r.Builtin = strings.HasSuffix(r.ID, "_default")
+		shipped, builtin := defaults[r.ID]
+		r.Builtin = builtin
+		if builtin && r.Body == "" {
+			r.Body = shipped.Body
+		}
 		result = append(result, r)
 	}
 	return result, rows.Err()
@@ -179,7 +184,7 @@ func (tx *Tx) effectiveRoleBody(roleID string) (string, error) {
 		}
 	}
 	var body string
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT body FROM role WHERE id=?`, roleID).Scan(&body)
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(body,'') FROM role WHERE id=?`, roleID).Scan(&body)
 	return body, err
 }
 
@@ -237,7 +242,7 @@ func (s *Store) ResetRole(ctx context.Context, actorID, id string, rev int64) (R
 		}
 		if _, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
    cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json='[]',spawn_pick_mode='in_turn',rev=rev+1 WHERE id=?`,
-			reset.Label, reset.Emoji, reset.Body, reset.Extends, reset.Cardinality, reset.Lead, reset.CanSpawn, reset.Writer, id); err != nil {
+			reset.Label, reset.Emoji, "", reset.Extends, reset.Cardinality, reset.Lead, reset.CanSpawn, reset.Writer, id); err != nil {
 			return err
 		}
 		reset.DefaultAgents, reset.PickMode = []SpawnDefaultChoice{}, "in_turn"

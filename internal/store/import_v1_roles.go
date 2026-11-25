@@ -214,21 +214,15 @@ func resolveV1Roles(source map[string]v1ImportRole, destination map[string]RoleD
 }
 
 func listGlobalRolesTx(ctx context.Context, tx *sql.Tx) (map[string]RoleDefinition, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,role_key,label,emoji,body,cardinality,cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends
-	FROM role WHERE project_id IS NULL AND deleted_at IS NULL ORDER BY role_key`)
+	roles, err := queryRoles(ctx, tx, ` WHERE project_id IS NULL AND deleted_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := map[string]RoleDefinition{}
-	for rows.Next() {
-		var role RoleDefinition
-		if err := rows.Scan(&role.ID, &role.Key, &role.Label, &role.Emoji, &role.Body, &role.Cardinality, &role.Lead, &role.CanSpawn, &role.Writer, &role.Rev, &role.Extends); err != nil {
-			return nil, err
-		}
+	for _, role := range roles {
 		result[role.Key] = role
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func importV1Roles(ctx context.Context, tx *sql.Tx, data *v1ImportData, mapping V1ImportMap, report *V1ImportReport) error {

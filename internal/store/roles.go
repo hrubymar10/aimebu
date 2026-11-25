@@ -92,7 +92,7 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 		if deleteRole || r.ID != "" {
 			var old RoleDefinition
 			var defaultsJSON string
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,role_key,label,emoji,body,cardinality,
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,role_key,label,emoji,COALESCE(body,''),cardinality,
    cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,spawn_defaults_json,spawn_pick_mode FROM role WHERE id=? AND deleted_at IS NULL`, r.ID).
 				Scan(&old.ID, &old.Key, &old.Label, &old.Emoji, &old.Body, &old.Cardinality,
 					&old.Lead, &old.CanSpawn, &old.Writer, &old.Rev, &defaultsJSON, &old.PickMode)
@@ -106,7 +106,7 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 				return ErrStaleRev
 			}
 			if deleteRole {
-				if strings.HasSuffix(old.ID, "_default") {
+				if _, builtin := builtinRoles()[old.ID]; builtin {
 					return ErrForbidden
 				}
 				var count int
@@ -221,10 +221,15 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 		if err := checkRoleExtends(r, visible); err != nil {
 			return err
 		}
+		storedBody := r.Body
+		if def, ok := builtinRoles()[r.ID]; ok && (storedBody == "" || storedBody == def.Body) {
+			storedBody = ""
+			r.Body = def.Body
+		}
 		if existing {
 			_, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
    cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json=?,spawn_pick_mode=?,rev=rev+1 WHERE id=?`,
-				r.Label, r.Emoji, r.Body, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode, r.ID)
+				r.Label, r.Emoji, storedBody, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode, r.ID)
 			if err != nil {
 				return err
 			}
