@@ -1320,7 +1320,10 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   whose branch is merged into its recorded base ref is removed and its branch
   remains. Dirty, ignored (except aimebu's own `.aimebu/` adapter files), or
   unmerged content is preserved with a room notice. Transient failures retain
-  ready state.
+  ready state. Reading a room's worktree checks that its path still exists:
+  a `ready` or `preserved` worktree whose directory is gone (removed outside
+  the API) is recorded as `removed`, with a `room_worktree_updated` event,
+  once; the room list does not check.
   Reopen restores the worktree from its retained branch. A user may
   explicitly remove preserved content from an archived room with a separate
   destructive confirmation, provided no active agent uses that checkout.

@@ -43,6 +43,8 @@ assert.deepEqual(plain(worktreeView({ enabled: true, state: 'failed', reason: 'g
   status: 'failed: x · git said no · The base has 2 uncommitted changes, which are not in the worktree.', createHidden: false, createLabel: 'Retry worktree', removeHidden: false, removeLabel: 'Cancel worktree' });
 assert.deepEqual(plain(worktreeView({ enabled: false }, { lifecycle: 'open' })), { status: 'Using the project folder.', createHidden: false, createLabel: 'Create worktree', removeHidden: true, removeLabel: 'Cancel worktree' });
 assert.deepEqual(plain(worktreeView(ready, { lifecycle: 'closed' })), { status: 'ready: /w/x', createHidden: true, createLabel: 'Create worktree', removeHidden: false, removeLabel: 'Remove worktree' });
+assert.deepEqual(plain(worktreeView({ enabled: true, state: "removed", reason: "worktree directory is missing", path: "/w/x" }, { lifecycle: "closed" })), { status: "removed: /w/x · worktree directory is missing", createHidden: true, createLabel: "Create worktree", removeHidden: true, removeLabel: "Remove worktree" });
+assert.equal(worktreeView({ enabled: true, state: "removed", path: "/w/x" }, { lifecycle: "open" }).createHidden, true);
 
 assert.deepEqual([{ memory_enabled: false }, { memory_enabled: true }, {}].map(memoryValue), ['off', 'inherit', 'inherit']);
 assert.deepEqual([plain(notesView({ kind: 'task' })), plain(notesView({ kind: 'home' })), notesView({ kind: 'dm' }).hidden], [

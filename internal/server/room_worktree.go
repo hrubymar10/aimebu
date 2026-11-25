@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -252,6 +253,7 @@ func (s *Server) roomWorktree(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, map[string]any{"enabled": false})
 			return
 		}
+		item = s.refreshMissingWorktree(r.Context(), room, machineID, item)
 		// A viewer sees where the worktree is under the project (relative_path), not the absolute path on the machine's disk.
 		if role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID); err != nil {
 			fail(w, err)
@@ -362,6 +364,45 @@ func (s *Server) roomWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, item)
+}
+
+// refreshMissingWorktree is the read-time check of A12-21: a worktree recorded as ready or preserved whose directory is gone (removed outside
+// the API, for example with `git worktree remove`) is recorded as removed, with the usual room_worktree_updated event. It looks at one room's
+// one path, so a read stays cheap, and once the record says removed it is not written again. Where the answer is not known (a machine that
+// cannot be asked, a path that cannot be inspected) the record is left alone.
+func (s *Server) refreshMissingWorktree(ctx context.Context, room store.Room, machineID string, item store.RoomWorktree) store.RoomWorktree {
+	if item.Path == "" || (item.State != "ready" && item.State != "preserved") {
+		return item
+	}
+	machine, err := s.Store.MachineByID(ctx, machineID)
+	if err != nil {
+		return item
+	}
+	missing := false
+	if machine.IsHost {
+		if _, err := os.Lstat(item.Path); err != nil {
+			missing = errors.Is(err, os.ErrNotExist)
+		}
+	} else {
+		root, err := s.selectedMachinePath(ctx, room.ProjectID, machine)
+		if err != nil {
+			return item
+		}
+		askCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		result, err := s.machineWorktree(askCtx, machine, root, room.ID, item.BaseRef, "inspect", false)
+		missing = err == nil && result.State == "removed"
+	}
+	if !missing {
+		return item
+	}
+	if err := s.Store.RecordRoomWorktree(ctx, room.ID, machine.ID, item.Path, item.BaseRef, item.BaseCommit, "removed", "worktree directory is missing", item.DirtyBaseCount); err != nil {
+		return item
+	}
+	if fresh, found, err := s.Store.RoomWorktree(ctx, room.ID, machineID); err == nil && found {
+		return fresh
+	}
+	return item
 }
 
 func worktreeError(w http.ResponseWriter, err error) {

@@ -52,7 +52,7 @@ export function worktreeView(item, room) {
     status: item.enabled === false ? 'Using the project folder.' : `${state}: ${item.path || item.relative_path}${item.reason ? ` · ${item.reason}` : ''}${item.dirty_base_count ? ` · The base has ${item.dirty_base_count} uncommitted changes, which are not in the worktree.` : ''}`,
     createHidden: room.lifecycle !== 'open' || (item.enabled !== false && state !== 'failed'),
     createLabel: state === 'failed' ? 'Retry worktree' : 'Create worktree',
-    removeHidden: item.enabled === false,
+    removeHidden: item.enabled === false || state === 'removed',
     removeLabel: (item.path || room.lifecycle === 'closed') ? 'Remove worktree' : 'Cancel worktree',
   };
 }
