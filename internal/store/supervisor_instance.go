@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// InstanceQuietFor is how long an instance must have been silent before a person may write it off: a hello within it proves the instance runs.
+// InstanceQuietFor is how long an instance must have been silent before a person may write it off: a hello or a live connection within it proves the instance runs.
 const InstanceQuietFor = time.Minute
 
 // ErrInstanceRecentlySeen means a write-off was refused because the instance said hello within the quiet period.
@@ -50,6 +50,17 @@ func (s *Store) SetSupervisorInstanceState(ctx context.Context, machineID, journ
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// TouchSupervisorInstanceSeen records that an instance's connection ended: its last_seen_at becomes now, so a write-off's quiet check counts a
+// recent disconnect the way it counts a recent hello (an instance that was connected for hours and dropped a second ago was just seen). An
+// instance the table does not hold was never seen, so there is nothing to record.
+func (s *Store) TouchSupervisorInstanceSeen(ctx context.Context, machineID, journalID string) error {
+	if machineID == "" || journalID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE supervisor_instance SET last_seen_at=? WHERE machine_id=? AND journal_id=?`, timestamp(), machineID, journalID)
+	return err
 }
 
 // SupervisorInstances lists a machine's instances, oldest first.
@@ -96,9 +107,9 @@ func (s *Store) MarkSupervisorInstanceGone(ctx context.Context, machineID, journ
 
 // MarkSupervisorInstanceGoneBy is MarkSupervisorInstanceGone for a person's decision: when actorID is not empty the write-off is recorded
 // as a supervisor_instance_gone event naming who did it and what it ended, in the same transaction. A second call finds the instance gone,
-// ends nothing and records nothing (AlreadyGone). With quiet above zero the instance is written off only when its last hello is older than
-// that, decided in the same transaction as the write-off (a hello updates last_seen_at in its own, and SQLite serializes the two): a live
-// instance that connected after the caller's own check is refused with ErrInstanceRecentlySeen and loses nothing.
+// ends nothing and records nothing (AlreadyGone). With quiet above zero the instance is written off only when its last sighting is older than
+// that, decided in the same transaction as the write-off (a hello or a disconnect updates last_seen_at in its own, and SQLite serializes the
+// two): a live instance that connected after the caller's own check is refused with ErrInstanceRecentlySeen and loses nothing.
 func (s *Store) MarkSupervisorInstanceGoneBy(ctx context.Context, machineID, journalID, actorID string, quiet time.Duration) (out InstanceGone, err error) {
 	err = s.Tx(ctx, func(tx *Tx) error {
 		out = InstanceGone{}

@@ -466,6 +466,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		c.stop()
 		c.workers.Wait()
+		// The instance was seen until its connection ended: record that, so a write-off's quiet check counts a recent disconnect (F005).
+		if err := s.Store.TouchSupervisorInstanceSeen(context.WithoutCancel(ctx), machineID, c.journalID); err != nil {
+			telemetry.ReportWarning(ctx, "machine", fmt.Errorf("recording that the supervisor instance disconnected: %w", err))
+		}
 		s.machineMu.Lock()
 		c.warmMu.Lock()
 		hasWarm := c.warm != nil && len(c.warm.Agents) > 0

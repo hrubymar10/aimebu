@@ -444,6 +444,37 @@ func ageInstance(t *testing.T, s *Store, machineID, journalID string) {
 
 // A hello within the quiet period proves the instance runs: a person's write-off is refused in the transaction itself, so what it owns is not
 // lost, nothing is recorded and the instance keeps its state. Once it has been silent long enough the same call goes through.
+// A recent disconnect is a recent sighting: an instance connected for hours that dropped a second ago is refused for the quiet period
+// (F005), and a write-off goes through once it has been silent long enough.
+func TestMarkSupervisorInstanceGoneByCountsARecentDisconnect(t *testing.T) {
+	t.Parallel()
+	x := newInstanceFixture(t)
+	ctx := context.Background()
+	if err := x.s.RecordSupervisorInstance(ctx, "mch_test", x.oldJournal, "build", "env"); err != nil {
+		t.Fatal(err)
+	}
+	// The hello is old, but the connection ended just now.
+	ageInstance(t, x.s, "mch_test", x.oldJournal)
+	if err := x.s.TouchSupervisorInstanceSeen(ctx, "mch_test", x.oldJournal); err != nil {
+		t.Fatal(err)
+	}
+	result, err := x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor)
+	if !errors.Is(err, ErrInstanceRecentlySeen) || result.Turns != 0 || result.Jobs != 0 {
+		t.Fatalf("recently disconnected: %+v err=%v", result, err)
+	}
+	if exec, _ := turnState(t, x.s, x.oldTurn); exec != "running" {
+		t.Fatalf("a refused write-off lost the turn: %s", exec)
+	}
+	ageInstance(t, x.s, "mch_test", x.oldJournal)
+	if result, err = x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor); err != nil || result.Turns != 1 || result.Jobs != 1 {
+		t.Fatalf("after the quiet period: %+v err=%v", result, err)
+	}
+	// An instance the table does not hold is not created by the touch.
+	if err := x.s.TouchSupervisorInstanceSeen(ctx, "mch_test", "journal-unknown"); err != nil {
+		t.Fatalf("unknown instance touch: %v", err)
+	}
+}
+
 func TestMarkSupervisorInstanceGoneByRefusesARecentlySeenInstance(t *testing.T) {
 	t.Parallel()
 	x := newInstanceFixture(t)

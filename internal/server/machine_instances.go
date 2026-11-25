@@ -94,8 +94,9 @@ func (s *Server) machineInstances(w http.ResponseWriter, r *http.Request) {
 // POST /api/machines/{id}/instances/{journal}/gone: the owner or an admin writes off one supervisor instance of a remote machine whose journal
 // is lost for good (a replaced disk, a reinstall). It goes through MarkSupervisorInstanceGone, so the open turns it owns become lost with the
 // recovery path and a supervisor_journal_changed event each, and its open commands end. It is refused with 409 instance_connected while the
-// instance is connected (it is alive; stop it instead) and with 409 instance_recently_seen when it said hello in the last minute, decided in
-// the write-off's own transaction so a hello that lands after the connected check cannot lose a live instance's turns, 404 for an instance the machine never had, and is idempotent: a second call answers
+// instance is connected (it is alive; stop it instead) and with 409 instance_recently_seen when it said hello or its connection ended in the
+// last minute, decided in
+// the write-off's own transaction so a hello or a disconnect that lands after the connected check cannot lose a live instance's turns, 404 for an instance the machine never had, and is idempotent: a second call answers
 // 200 with already_gone and ends nothing. The decision is recorded as a supervisor_instance_gone event with the person's id.
 func (s *Server) machineInstanceGone(w http.ResponseWriter, r *http.Request) {
 	machineID, ok := s.machineForInstances(w, r)
@@ -122,7 +123,7 @@ func (s *Server) machineInstanceGone(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.Store.MarkSupervisorInstanceGoneBy(r.Context(), machineID, journalID, userID(r), store.InstanceQuietFor)
 	if errors.Is(err, store.ErrInstanceRecentlySeen) {
-		// It said hello after the check above (or just before it disconnected): it runs, and the write-off was refused inside the transaction.
+		// It said hello after the check above, or its connection ended just now: it runs (or ran a moment ago), and the write-off was refused inside the transaction.
 		apiError(w, 409, "instance_recently_seen", "this instance was seen in the last minute, so it is not lost: wait until it has been silent for a minute")
 		return
 	}

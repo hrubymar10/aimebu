@@ -2306,7 +2306,8 @@ CC/Codex, prompt-only on pi):
    it reports, finishes, or its journal is marked gone.
    On a remote machine the owner or an admin can mark a disconnected instance
    gone by hand (`POST /api/machines/{id}/instances/{journal}/gone`, refused
-   with 409 while it is connected or was seen in the last minute). It takes the same path and gives each
+   with 409 while it is connected or was seen in the last minute, by a hello
+   or a connection that ended within it). It takes the same path and gives each
    affected turn its `supervisor_journal_changed` event, and the decision is
    recorded as a `supervisor_instance_gone` event naming the person. A `hello`
    from an instance marked gone makes it active again, as a hello proves it

@@ -208,6 +208,53 @@ func TestWritingOffARecentlySeenInstanceIsRefused(t *testing.T) {
 	}
 }
 
+// An instance connected long ago whose connection ends just now was seen until it dropped: the write-off is refused with
+// instance_recently_seen (the quiet check counts a disconnect as a sighting, F005/F006), and goes through after the quiet window.
+// An instance connected long ago whose connection ends just now was seen until it dropped: the write-off is refused with
+// instance_recently_seen (the quiet check counts a disconnect as a sighting, F005/F006), and goes through after the quiet window.
+func TestWritingOffAnInstanceThatJustDisconnected(t *testing.T) {
+	f := newFixture(t)
+	f.srv.Version = "matching"
+	agent, turn := remoteWithLostInstance(t, f)
+	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE machine SET is_host=0 WHERE id=?`, f.machineID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/machines/" + f.machineID + "/instances/journal-lost/gone"
+	post := func() (int, string) {
+		resp := f.request("POST", path, nil, true)
+		defer resp.Body.Close()
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body.Error
+	}
+	// The hello vouches for the open turn it owns, as a live instance would; the connection ran for hours until it drops now.
+	conn, _ := dialInstance(t, f, "journal-lost", "matching", nil, []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0,
+		OpenTurns: []protocol.OpenTurn{{TurnID: turn.ID, Exec: "running", ProcessAlive: true}}}})
+	// The hello is old; the instance was connected until now.
+	ageInstance(t, f, "journal-lost")
+	conn.CloseNow()
+	waitForGuard(t, 3*time.Second, func() bool {
+		f.srv.machineMu.Lock()
+		defer f.srv.machineMu.Unlock()
+		return f.srv.machines[f.machineID] == nil
+	})
+	if status, code := post(); status != 409 || code != "instance_recently_seen" {
+		t.Fatalf("just disconnected: %d %q", status, code)
+	}
+	if owner := turnOpen(t, f, agent.ID); owner != "journal-lost" {
+		t.Fatalf("a refused write-off lost the turn: %q", owner)
+	}
+	ageInstance(t, f, "journal-lost")
+	if status, _ := post(); status != 200 {
+		t.Fatalf("after the quiet period: %d", status)
+	}
+}
+
 // ageInstance makes the instance's last hello old enough for a person to write it off.
 func ageInstance(t *testing.T, f *fixture, journalID string) {
 	t.Helper()

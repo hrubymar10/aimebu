@@ -98,7 +98,7 @@ to the one that matches its build and environment (see above). The local manager
   turns (each agent gets the usual `supervisor_journal_changed` recovery notice
   and waits for recovery) and ends the commands, and records the decision with
   the person's id (`supervisor_instance_gone`). A connected instance, or one
-  that said hello in the last minute, is refused (409; the minute is checked in
+  that said hello or whose connection ended in the last minute, is refused (409; the minute is checked in
   the write-off's own transaction), a second call changes nothing, and the server's own instances are not
   offered: the local manager writes those off. If a written-off instance
   connects again, its hello makes it active (as it does for a local one); the
