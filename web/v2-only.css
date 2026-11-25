@@ -267,7 +267,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item:hover .room-item-actions, .room-item:focus-within .room-item-actions, .room-item .room-item-actions:has(.project-menu.is-open) { opacity: 1; pointer-events: auto; }
 .room-item:has(.room-collapse) .room-item-top { position: relative; }
 .room-item:has(.room-collapse) .room-item-actions-slot { position: static; }
-.room-item:has(.room-collapse) .room-item-actions { top: 0; right: 0; transform: none; background: var(--room-actions-bg, var(--bg-secondary)); }
+.room-item:has(.room-collapse) .room-item-actions { top: 9px; right: 0; transform: translateY(-50%); /* the centre of the name line (18px), not the top of the row */ background: var(--room-actions-bg, var(--bg-secondary)); }
 .room-item:has(.room-collapse) .room-item-actions::before { background: linear-gradient(to right, transparent, var(--room-actions-bg, var(--bg-secondary))); }
 .room-item:hover { --room-actions-bg: var(--bg-hover); }
 .room-item.active { --room-actions-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary)); }

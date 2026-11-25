@@ -453,11 +453,14 @@ function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom'
 async function openReferencedRoom(id, push) {
   const target = sidebar.rooms.get(id);
   if (!target) { chat.error.textContent = 'That room is no longer available.'; if (!push && chat.room) history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(chat.room.id)}`); return false; }
-  const previous = chat.room;
+  const previous = chat.room, selection = roomSelectionGeneration;
   if (push) history.pushState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(id)}`);
   try {
-    if (await selectByPerson(target)) return true;
+    if (await selectByPerson(target, undefined, { keepShown: true })) return true;
   } catch (error) { captureError(error, 'room reference'); }
+  // Another selection began while this one ran (a click, a history step, a second link): it owns the screen and the address now, so putting the
+  // previous room back or closing would undo it.
+  if (roomSelectionGeneration !== selection + 1) return false;
   if (previous && chat.room?.id !== previous.id) {
     try { await selectByPerson(previous); } catch (error) { captureError(error, 'room reference restore'); }
   }
@@ -468,8 +471,8 @@ async function openReferencedRoom(id, push) {
 }
 // A person's click on a room (the list, a breadcrumb, a notification). A room that cannot be opened because the server cannot be reached says so on the
 // chat's error line, in words, and the person tries again; left to reject, it would be an unhandled error and no message at all.
-function selectByPerson(room, messageID) {
-  return selectRoom(room, messageID).catch(error => {
+function selectByPerson(room, messageID, options) {
+  return selectRoom(room, messageID, options).catch(error => {
     if (!isNetworkError(error)) throw error;
     chat.error.textContent = 'The server cannot be reached. Try again in a moment.';
     return false;
@@ -480,7 +483,8 @@ async function selectRoom(room, messageID, options) {
   try { return await openRoom(room, messageID, options); } finally { selectionsInFlight--; }
 }
 // `listed`: the project's rooms were read a moment ago (the sign-in snapshot just did), so reading them again would only add a round trip.
-async function openRoom(room, messageID, { listed = false } = {}) {
+// `keepShown`: a room that cannot be opened is dropped from the list with a notice, and nothing else moves (the caller puts the room that was shown back).
+async function openRoom(room, messageID, { listed = false, keepShown = false } = {}) {
   const generation = sessionGeneration;
   const selection = ++roomSelectionGeneration;
   const current = () => generation === sessionGeneration && selection === roomSelectionGeneration;
@@ -511,6 +515,7 @@ async function openRoom(room, messageID, { listed = false } = {}) {
     // room. A 403 is the same: the person no longer reaches it.
     if (![403, 404].includes(error?.status) || !current()) throw error;
     handbook.setRoom(null);
+    if (keepShown) { showToast(`${room.title || 'That room'} no longer exists.`); sidebar.forgetRoom(room.id); sidebar.refreshProject(room.project_id).catch(() => {}); return false; }
     await roomGone(room);
     return false;
   }

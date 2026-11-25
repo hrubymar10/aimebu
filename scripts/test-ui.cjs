@@ -2588,7 +2588,7 @@ async function main() {
       }, other.roomID);
       try {
         await first.evaluate(id => [...document.querySelectorAll('#messages a.room-ref')].find(link => link.getAttribute('href') === `#${id}`).click(), other.roomID);
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        await first.waitForFunction(() => /could not be opened/.test(document.querySelector('#chat-error').textContent) && document.querySelector('#room-title').textContent !== 'Choose a room', { timeout: 8000 }).catch(async error => { throw new Error(`${error.message}: ${JSON.stringify(await first.evaluate(() => ({ hash: location.hash, title: document.querySelector('#room-title').textContent, error: document.querySelector('#chat-error').textContent, toast: document.querySelector('#app-toast').textContent })))}`); });
         const failedLink = await first.evaluate(() => ({ hash: location.hash, title: document.querySelector('#room-title').textContent, error: document.querySelector('#chat-error').textContent, toast: document.querySelector('#app-toast').textContent }));
         assert.equal(failedLink.hash, `#${originalRoomID}`, `the failed link restores the address: ${JSON.stringify(failedLink)}`);
         assert.match(failedLink.error, /could not be opened/, `the failed link reports an error: ${JSON.stringify(failedLink)}`);
@@ -4907,7 +4907,7 @@ async function main() {
         if (!row.getClientRects().length) continue;
         for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) {
           const axis = glyph.closest('.room-item-actions-slot') ? row.querySelector('.room-name-line') : row;
-          if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(axis)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(axis)).toFixed(1)}`);
+          if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(axis)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(axis)).toFixed(1)} (row ${row.className}, row h ${row.getBoundingClientRect().height}, axis ${axis.className}, axis h ${axis.getBoundingClientRect().height}, ${row.textContent.trim().slice(0, 30)})`);
         }
       }
       return { checked: document.querySelectorAll('.room-item .add-room .icon-mask').length, off };
@@ -8213,6 +8213,7 @@ async function main() {
       window.fetch = (input, options) => {
         if (String(input) === '/api/projects') return Promise.resolve(new Response(JSON.stringify([project]), { headers: { 'Content-Type': 'application/json' } }));
         if (String(input) === `/api/projects/${project.id}/rooms`) return Promise.resolve(new Response(JSON.stringify(rooms), { headers: { 'Content-Type': 'application/json' } }));
+        if (String(input) === '/api/agent-dms') return Promise.resolve(new Response('[]', { headers: { 'Content-Type': 'application/json' } })); // the chats list is read with the projects; a lost session there is the sign-in path
         return originalFetch(input, options);
       };
       const sidebar = new Sidebar(document.createElement('div'), () => {});
