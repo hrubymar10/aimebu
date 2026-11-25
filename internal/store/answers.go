@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
@@ -521,20 +522,30 @@ func safeReplyRef(ref string) string {
 //  3. when that note was already sent for this turn (the repair failed too), the failure goes to the lead.
 //
 // A lead (or a worker with no lead to hand to) has nobody above it, so it is told and woken the same way, and only its failed repair becomes
-// the delivery_failed card and room notice for people.
+// the delivery_failed card and room notice for people — except when the repair note cannot wake the agent into a repair turn at all: a
+// stopped or blocked agent, or one whose machine has not been seen for machineSeenWindow, can never hold again, so its failure reaches its
+// lead (or people, when it has nobody above it) at once. The note is still written and queued for when the agent can act again.
 func (tx *Tx) routeInvalidReply(parent answerTurn, input AnswerInput, detail string) error {
 	var isLead bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.cap_is_lead FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, parent.agentID).Scan(&isLead); err != nil {
 		return err
 	}
+	wakeable, err := tx.repairWakeable(parent.agentID)
+	if err != nil {
+		return err
+	}
 	if isLead {
 		// The lead is told why and woken to resend; its own next answer may settle the hold, so people hear of it (the Inbox card and the
-		// room notice) only once that repair has failed too: a turn already woken by the note is held again.
+		// room notice) only once that repair has failed too: a turn already woken by the note is held again. A lead the note cannot wake
+		// (stopped, blocked, its machine gone) never gets that second hold, so people hear of it now.
 		sent, err := tx.invalidReplyNote(parent, input, detail)
-		if err != nil || sent {
+		if err != nil {
 			return err
 		}
-		return tx.deliveryFailedInbox(parent, false)
+		if !sent || !wakeable {
+			return tx.deliveryFailedInbox(parent, false)
+		}
+		return nil
 	}
 	if strings.TrimSpace(string(input.Candidate)) == "" {
 		broken, err := tx.repeatedEmptyAnswer(parent)
@@ -546,10 +557,13 @@ func (tx *Tx) routeInvalidReply(parent answerTurn, input AnswerInput, detail str
 		}
 	}
 	sent, err := tx.invalidReplyNote(parent, input, detail)
-	if err != nil || sent {
+	if err != nil {
 		return err
 	}
-	return tx.deliveryFailedInbox(parent, true)
+	if !sent || !wakeable {
+		return tx.deliveryFailedInbox(parent, true)
+	}
+	return nil
 }
 
 // invalidReplyNote tells an agent why its previous reply was held, as a system turn note only it can see, and wakes it to resend it. It
@@ -567,6 +581,31 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 	body := heldReplyNotePrefix + detail + ". Your previous answer is in your session; send your final answer again as exactly one JSON object with a messages array."
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err == nil, err
+}
+
+// machineSeenWindow is how fresh a machine's last_seen must be for the repair note's wake to plausibly reach a running turn: supervisors
+// ping every 15 s and the stored timestamp is refreshed at most once a minute, so anything older is a machine that cannot take the turn now.
+const machineSeenWindow = 5 * time.Minute
+
+// repairWakeable says whether the held-reply repair note can actually wake the agent into a repair turn: an agent that is stopped or not
+// accepting, a blocked one, one already recorded lost, or one whose machine has not been seen for machineSeenWindow cannot take a turn,
+// so its failure reaches its lead — or people, when it has nobody above it — at once instead of waiting for a second hold that can never
+// happen. An agent in a turn is alive (the note queues behind it), and a machine with no recorded last_seen counts as gone.
+func (tx *Tx) repairWakeable(agentID string) (bool, error) {
+	var desired, observed, lastSeen string
+	var blocked bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.desired,a.observed,a.recovery_block,COALESCE(m.last_seen,'')
+		FROM agent a LEFT JOIN machine m ON m.id=a.machine_id WHERE a.id=?`, agentID).Scan(&desired, &observed, &blocked, &lastSeen); err != nil {
+		return false, err
+	}
+	if desired != "active" || blocked || observed == "stopped" || observed == "lost" || lastSeen == "" {
+		return false, nil
+	}
+	seen, err := time.Parse(timestampLayout, lastSeen)
+	if err != nil {
+		return false, nil
+	}
+	return time.Since(seen) < machineSeenWindow, nil
 }
 
 func (tx *Tx) missedMentionNote(turn answerTurn, input AnswerInput, detail string) error {

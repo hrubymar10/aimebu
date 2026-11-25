@@ -783,7 +783,12 @@ wrong and how to fix it, for example "message 0 is a handoff without an
 outcome; set outcome to done, partial or failed"), while
 anything that would quote the agent's own text stays out (the note is readable
 in the room) — and is woken by it to resend, and no
-card is raised. When that does not settle it (the resent answer is held too)
+card is raised. When the note cannot wake the agent into a repair turn at all
+(stopped or not accepting, blocked, recorded lost, or its machine unseen for
+five minutes), the failure surfaces at once instead — the card for a lead or a
+worker with no lead, the lead's `answer_held` recovery for a worker with a
+lead — since the second hold can never happen; the note still waits for when
+the agent can act again. When that does not settle it (the resent answer is held too)
 the failure goes to the project lead as a `delivery_failed` item with phase
 `answer_held` (choices Retry and Abandon, for the lead through `resolve_recovery` and for people after escalation), routed and
 escalated like any worker recovery; the lead's note carries the same reason

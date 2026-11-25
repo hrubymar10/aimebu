@@ -145,6 +145,99 @@ func TestWorkerFailedCorrectionGoesToLeadAsRecovery(t *testing.T) {
 	}
 }
 
+// heldNotice counts the delivery-failure room notices a room's messages carry.
+func heldNotice(t *testing.T, s *Store, roomID string) int {
+	t.Helper()
+	messages, err := s.ListMessagesAfter(context.Background(), roomID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := 0
+	for _, m := range messages {
+		if strings.Contains(m.Body, "Review the delivery failure") {
+			notices++
+		}
+	}
+	return notices
+}
+
+// A lead stopped before it can act on the repair note never resends, so the second hold that raises the card for people cannot happen: its
+// first held answer reaches people at once. The repair note stays queued for when the lead resumes.
+func TestStoppedLeadHoldReachesPeopleAtOnce(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	asLead(t, s, f)
+	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, "prose from a lead"); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	heldNote(t, s, f.room.ID) // the repair note is still queued for the resumed lead
+	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
+		t.Fatalf("people see %q, want delivery_failed", got)
+	}
+	if notices := heldNotice(t, s, f.room.ID); notices != 1 {
+		t.Fatalf("room notices=%d, want 1", notices)
+	}
+}
+
+// A lead whose machine is lost cannot be woken either: the card and the room notice come at once, not after a repair that cannot run.
+func TestLostMachineLeadHoldReachesPeopleAtOnce(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	asLead(t, s, f)
+	if _, err := s.db.Exec(`UPDATE agent SET recovery_block=1,observed='lost' WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, "prose from a lead"); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
+		t.Fatalf("people see %q, want delivery_failed", got)
+	}
+	if notices := heldNotice(t, s, f.room.ID); notices != 1 {
+		t.Fatalf("room notices=%d, want 1", notices)
+	}
+}
+
+// A stopped worker with no lead has nobody to wake it either: its first held answer reaches people at once.
+func TestStoppedWorkerWithoutLeadHoldReachesPeopleAtOnce(t *testing.T) {
+	t.Parallel()
+	s, f := answerFixture(t, false)
+	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, "prose from a worker"); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if got := strings.Join(openInboxKinds(t, s, "usr_answers"), ","); got != "delivery_failed" {
+		t.Fatalf("people see %q, want delivery_failed", got)
+	}
+}
+
+// A stopped worker with a lead hands the failure to its lead as designed: the lead decides, people stay out of it for now.
+func TestStoppedWorkerWithLeadHoldGoesToItsLead(t *testing.T) {
+	t.Parallel()
+	s, f, owner, lead := workerRecoveryFixture(t)
+	if _, err := s.db.Exec(`UPDATE turn SET exec='running' WHERE id=?`, f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, "not json"); err != nil || receipt.Result != "held" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if got := openInboxKinds(t, s, owner); len(got) != 0 {
+		t.Fatalf("people see %v, want nothing while the lead decides", got)
+	}
+	recoveries, err := s.ListLeadRecoveries(context.Background(), lead.ID, f.project.ID)
+	if err != nil || len(recoveries) != 1 {
+		t.Fatalf("lead items=%+v err=%v", recoveries, err)
+	}
+}
+
 // A lead's own malformed answer is the one that reaches people.
 func TestLeadMalformedAnswerReachesPeople(t *testing.T) {
 	t.Parallel()

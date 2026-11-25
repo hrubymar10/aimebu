@@ -1126,7 +1126,11 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   to hand to, is a card for people, and only once its repair failed too: a lead
   or a worker with no lead gets the same note and fresh turn first, so a hold
   that the agent's own next answer settles raises no Inbox item and no room
-  notice; `room_closed` and `not_member` holds always
+  notice; when the repair note cannot wake the agent into a repair turn at all
+  (it is stopped or not accepting, blocked, recorded lost, or its machine has
+  not been seen for five minutes), the card — or the lead's `answer_held`
+  recovery for a worker with a lead — comes at once, and the note still waits
+  for when the agent can act again; `room_closed` and `not_member` holds always
   stay with people. Every empty answer logs the harness exit
   code and the last stderr lines, and every answered turn logs one server line
   (`turn answered: agent=… turn=… mode=… result=… messages=N held_reason=…`,

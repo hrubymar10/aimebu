@@ -24,7 +24,7 @@ func seedExecution(t *testing.T, s *Store) executionFixture {
 	project, room, message := fixture(t, s)
 	for _, statement := range []string{
 		`INSERT OR REPLACE INTO role(id,key,label,body,role_key) VALUES ('role_test','worker','Worker','body','worker')`,
-		`INSERT INTO machine(id,name,key_hash,approved,is_host) VALUES ('mch_test','host','hash',1,1)`,
+		`INSERT INTO machine(id,name,key_hash,approved,is_host,last_seen) VALUES ('mch_test','host','hash',1,1,'` + timestamp() + `')`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
