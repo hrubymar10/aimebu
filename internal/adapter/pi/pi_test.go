@@ -21,6 +21,34 @@ import (
 
 const testSession = "123e4567-e89b-42d3-a456-426614174000"
 
+func TestSessionRecreatedOnANativeStartedTurn(t *testing.T) {
+	for name, started := range map[string]bool{"resumed": true, "fresh": false} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "pi")
+			script := "#!/bin/sh\ncat >/dev/null\n" +
+				"printf '%s\\n' \"Warning: No project session found with id '" + testSession + "'; creating a new session with that id.\" >&2\n" +
+				"printf '%s\\n' '{\"type\":\"session\",\"id\":\"" + testSession + "\"}' '{\"type\":\"turn_start\"}'\n"
+			if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			turn, err := (&Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), adapter.TurnSpec{TurnID: "recreated-" + name, Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"}, CheckoutPath: root, AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, NativeSessionStarted: started, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range turn.Events() {
+			}
+			exit, err := turn.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exit.SessionRecreated != started {
+				t.Fatalf("session recreated = %t, want %t", exit.SessionRecreated, started)
+			}
+		})
+	}
+}
+
 func TestTurnPromptSeparatesInboxAskFromAttention(t *testing.T) {
 	prompt, err := turnInput(adapter.TurnSpec{TurnID: "prompt", Agent: adapter.AgentSpec{ID: "agt_prompt"}, NotesJSON: json.RawMessage(`[]`)})
 	if err != nil {

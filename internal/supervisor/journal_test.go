@@ -44,6 +44,33 @@ func TestExitStderrReplaysAfterJournalReopen(t *testing.T) {
 	}
 }
 
+func TestSessionRecreatedReplaysAfterJournalReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "journal.sqlite")
+	j, err := OpenJournal(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecordStart(ctx, StartRecord{TurnID: "turn-recreated", AgentID: "agent-1", Mode: "normal", SpecJSON: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RecordExitInfo(ctx, "turn-recreated", adapter.ExitInfo{TerminalEvent: true, SessionRecreated: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenJournal(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	exits, err := j.PendingExits(ctx)
+	if err != nil || len(exits) != 1 || !exits[0].Exit.SessionRecreated || !exits[0].Exit.TerminalEvent {
+		t.Fatalf("replayed exits=%+v err=%v", exits, err)
+	}
+}
+
 func TestNativeSessionEventReplaysUntilTerminalReceipt(t *testing.T) {
 	ctx := context.Background()
 	j, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))

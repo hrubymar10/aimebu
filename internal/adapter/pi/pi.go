@@ -280,7 +280,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted,
+	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, resumedSession: spec.NativeSessionStarted,
 		cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: spec.StderrSink, conv: adapter.ConversationFor(spec)}
 	go func() {
 		select {
@@ -405,6 +405,7 @@ type turn struct {
 	lastOutput          atomic.Int64 // unix nanos of the last stdout line
 	id, expectedSession string
 	started             bool
+	resumedSession      bool
 	cmd                 *exec.Cmd
 	events              chan adapter.Event
 	done                chan struct{}
@@ -568,6 +569,11 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		if lastError != "" {
 			exit.ErrorEvent = adapter.SanitizeStderr("Pi provider error: " + lastError)
 		}
+	}
+	// Pi prints this notice for a fresh start too. Only a turn that was asked to
+	// resume a native session has lost context when Pi creates it again.
+	if t.resumedSession && strings.Contains(tail.String(), "Warning: No project session found with id '"+t.expectedSession+"'; creating a new session") {
+		exit.SessionRecreated = true
 	}
 	t.mu.Lock()
 	exit.CancelIntent = t.cancel

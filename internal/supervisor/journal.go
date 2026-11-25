@@ -455,7 +455,7 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 	if count == 0 {
 		return sql.ErrNoRows
 	}
-	if !exit.TerminalEvent && (exit.StderrTail != "" || exit.ErrorEvent != "") {
+	if exit.SessionRecreated || !exit.TerminalEvent && (exit.StderrTail != "" || exit.ErrorEvent != "") {
 		diagnostic := map[string]any{"stderr_tail": adapter.SanitizeStderr(exit.StderrTail), "error_event": adapter.SanitizeStderr(exit.ErrorEvent)}
 		if exit.ErrorSummary != "" {
 			diagnostic["error_summary"] = adapter.SanitizeStderr(exit.ErrorSummary)
@@ -471,6 +471,9 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 		}
 		if exit.Interrupted {
 			diagnostic["interrupted"] = true
+		}
+		if exit.SessionRecreated {
+			diagnostic["session_recreated"] = true
 		}
 		data, err := json.Marshal(diagnostic)
 		if err != nil {
@@ -624,6 +627,7 @@ func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 		COALESCE((SELECT json_extract(e.payload_json,'$.definite_failure') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
 		COALESCE((SELECT json_extract(e.payload_json,'$.limit_stall') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
 		COALESCE((SELECT json_extract(e.payload_json,'$.interrupted') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
+		COALESCE((SELECT json_extract(e.payload_json,'$.session_recreated') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0),
 		COALESCE((SELECT json_extract(e.payload_json,'$.work_tree') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),'')
 		FROM turn_start t WHERE t.exec='exited' AND t.exit_acked=0 ORDER BY t.started_at,t.turn_id`)
 	if err != nil {
@@ -633,7 +637,7 @@ func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 	exits := []PendingExit{}
 	for rows.Next() {
 		var exit PendingExit
-		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent, &exit.Exit.ErrorSummary, &exit.Exit.DefiniteFailure, &exit.Exit.LimitStall, &exit.Exit.Interrupted, &exit.Exit.WorkTree); err != nil {
+		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent, &exit.Exit.ErrorSummary, &exit.Exit.DefiniteFailure, &exit.Exit.LimitStall, &exit.Exit.Interrupted, &exit.Exit.SessionRecreated, &exit.Exit.WorkTree); err != nil {
 			return nil, err
 		}
 		exits = append(exits, exit)

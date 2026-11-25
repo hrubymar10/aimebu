@@ -667,6 +667,11 @@ Pi reported in the exit evidence, so recovery shows the real cause rather than
 a clean exit code. Only that provider error counts, and only wording such as
 `usage limit`, `usage_limit` or a weekly, hourly, monthly or daily limit (never a
 plain `rate limit`) routes into the provider-limit gate.
+If Pi reports that the native session it was asked to resume is missing and
+creates a new one with the same ID, the adapter marks the exit as a recreated
+session. The server clears the old native handle and context delivery state,
+then sends full context on the next wake. The same notice on a first turn is
+expected and does not reset its session.
 
 Normal native turns allow the built-in action tools and aimebu MCP tools over
 HTTP. Their MCP config is a private 0600 file under the supervisor's Pi

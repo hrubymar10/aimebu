@@ -505,8 +505,11 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 			providerLimited = !hasReceipt
 		}
+		// Pi can recreate a missing session and still finish the turn. Its adapter
+		// reports that separately from stderr, which is stripped for fresh turns.
+		sessionRecreated := info.SessionRecreated && tool == "pi" && mode == "normal" && !cancel
 		threadMissing := !providerLimited && !terminal && !cancel && mode == "normal" && nativeSessionMissingEvidence(tool, stderr, errorEvent)
-		if threadMissing {
+		if threadMissing || sessionRecreated {
 			var started sql.NullString
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT s.native_session_started_at FROM turn t JOIN session s ON s.id=t.session_id WHERE t.id=?`, turnID).Scan(&started); err != nil {
 				return err
@@ -521,8 +524,10 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE turn_id=? AND kind='native_session_started')`, turnID).Scan(&ownThread); err != nil {
 				return err
 			}
-			threadMissing = started.Valid && !hasReceipt && !ownThread
+			threadMissing = threadMissing && started.Valid && !hasReceipt && !ownThread
+			sessionRecreated = sessionRecreated && started.Valid && !ownThread
 		}
+		threadMissing = threadMissing || (sessionRecreated && !terminal && !providerLimited)
 		// An interrupted turn (the harness process was cut off and said nothing about why) is continued once too, unless the evidence
 		// shows a lost thread, which has its own handling; a repeat falls back to the ordinary recovery card.
 		// An interrupt the server asked for (a turn_interrupt_requested event on the turn) says itself what becomes of the turn: continued
@@ -542,6 +547,13 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				limitContinued, err = tx.createInterruptedContinuation(turnID, errorEvent, exitCode)
 			}
 			if err != nil {
+				return err
+			}
+		}
+		if sessionRecreated && terminal {
+			// The answer receipt may arrive after the process exit. Reset the
+			// lost native context now without changing that answer's outcome.
+			if err := tx.resetNativeSessionState(turnID, agentID, projectID, roomID, tool); err != nil {
 				return err
 			}
 		}

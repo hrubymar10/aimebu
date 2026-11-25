@@ -193,6 +193,8 @@ type ExitInfo struct {
 	// the session restarted, the container stopped) and said nothing about why: the turn was cut off, not answered badly. Set by the
 	// supervisor, never guessed from evidence text; the server continues the turn once on its own.
 	Interrupted bool `json:"interrupted,omitempty"`
+	// SessionRecreated says the harness continued with a new session after losing the native session it was asked to resume.
+	SessionRecreated bool `json:"session_recreated,omitempty"`
 	// WorkTree describes the turn's checkout when the turn-limit watchdog killed it ("tip ab31772 <subject>, tree clean", or "N dirty
 	// files"), so the automatic continuation and the room's event say at once whether the killed turn had committed its work. Set by the
 	// supervisor on a LimitStall exit; "" when the folder is not a git checkout or git did not answer.
