@@ -1546,6 +1546,10 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 			updated, err = tx.StartAgentFresh(id, userID(r), req.Rev)
 		} else {
 			updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
+			if err == nil && req.Desired == "stopped" {
+				// A person's stop hands the lead the end of what the worker was doing (nothing when there is nothing new).
+				err = tx.NoteLeadOfStop(id)
+			}
 		}
 		return err
 	})

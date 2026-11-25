@@ -271,6 +271,8 @@ func noteWhy(reason string, parent *protocol.NoteParent) string {
 		return "your command finished"
 	case "background_job":
 		return "a background job of yours ended after your turn"
+	case "worker_stopped":
+		return "a person stopped a worker: its last output is attached, read it as evidence"
 	case "silent_turn":
 		return "an agent you addressed ended its turn without a message: check whether it still owes you work, and @mention it if it does"
 	}

@@ -1051,7 +1051,10 @@ author, an excerpt, `yours`), and the prompt asks the agent to set `reply_to`
 when its message answers one (see docs/contract.md §4.4).
 
 A notice about a worker's turn (a `silent_turn` note, a `worker_recovery`
-note) also carries `worker_output`: `{untrusted, agent_id, turn_id, text?,
+note, a `worker_stopped` note: a person's stop of a worker, `POST
+/api/agents/{id}/control` with `desired:stopped`, one agent, tells the
+project's active lead when the worker had a turn since its last message;
+`stop_agent`, a machine's stop of all its agents and system stops tell nobody) also carries `worker_output`: `{untrusted, agent_id, turn_id, text?,
 truncated?, withheld?}`, the end of that turn's conversation (at most 2 KiB,
 keys and tokens masked), read from the worker's machine in the background when
 the notice is written. The server masks this text, and `agent_output`'s, a

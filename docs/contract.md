@@ -1138,8 +1138,18 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   message (event `silent_turn` with the agent and turn; a later one is skipped
   while no message of the agent follows it), and the author's own silent
   answer to it never raises another, since that note is a system note.
-  **Worker output on a notice:** a delivered `silent_turn` or `worker_recovery`
-  note carries `worker_output` `{untrusted, agent_id, turn_id, text?,
+  **Stop notice:** a stop by a person (the agent control route with
+  `desired:stopped`, one agent) of a worker that is not a lead notes the
+  project's other active lead (reason `worker_stopped`, a system message in the
+  lead's room: the worker's room when the lead is seated there, else the home
+  room) when the worker had a normal turn started after its last message; event
+  `agent_stopped_to_lead` names the worker, its last turn, `lead_id` and
+  `message_id`. `stop_agent` by any agent, a machine's stop of all its agents and every
+  system stop (archive, room close, team-flow, scope control) give no note, and neither does a worker with no
+  fresh turn or a closed lead room. The system line of a `stop_agent` stop is
+  unchanged.
+  **Worker output on a notice:** a delivered `silent_turn`, `worker_recovery` or
+  `worker_stopped` note carries `worker_output` `{untrusted, agent_id, turn_id, text?,
   truncated?, withheld?}`: the end of that turn's conversation records (at most
   2 KiB, cut at a line, keys and tokens masked again), read from the worker's
   machine, never stored on the server and never posted to the room. The read
@@ -1150,7 +1160,7 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   its served rooms are recorded as `turn_room_read` of the recipient's turn
   before the text is delivered. A turn sent again carries the notes it carried
   first. The `silent_turn` event payload names its notice messages
-  (`notices`), and `recovery_handed_to_lead` names `message_id`. An open originating room also
+  (`notices`), and `recovery_handed_to_lead` and `agent_stopped_to_lead` name `message_id`. An open originating room also
   receives a system notice for answers held during validation. When the answer
   was held because no correction could be requested (`no_action_mode` false),
   the author also gets a system note "Your previous reply was held: <reason>"

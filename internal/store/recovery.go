@@ -405,20 +405,9 @@ func (tx *Tx) workerRecoveryLead(projectID, roomID, workerID string) (string, st
 	if err != nil {
 		return "", "", "", err
 	}
-	var joined bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, leadID).Scan(&joined); err != nil {
+	leadRoom, err := tx.leadRoomFor(projectID, roomID, leadID)
+	if err != nil || leadRoom == "" {
 		return "", "", "", err
-	}
-	leadRoom := roomID
-	if !joined {
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' LIMIT 1`, projectID).Scan(&leadRoom)
-		if errors.Is(err, sql.ErrNoRows) {
-			// A lead outside the worker's room, in a project with no home room, has nowhere to be told: the person decides, as with no lead.
-			return "", "", "", nil
-		}
-		if err != nil {
-			return "", "", "", err
-		}
 	}
 	return leadID, leadRoom, time.Now().UTC().Add(time.Duration(minutes) * time.Minute).Format(timestampLayout), nil
 }
@@ -739,4 +728,22 @@ func (tx *Tx) resolveQuiescenceWaitingItems(originID, actor, choice, source stri
 		}
 	}
 	return nil
+}
+
+// leadRoomFor is the room a notice about a worker of roomID reaches the lead in: roomID when the lead is seated there, else the project's
+// home room. It is empty when the lead outside the worker's room has no home room to be told in.
+func (tx *Tx) leadRoomFor(projectID, roomID, leadID string) (string, error) {
+	var joined bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, roomID, leadID).Scan(&joined); err != nil {
+		return "", err
+	}
+	if joined {
+		return roomID, nil
+	}
+	var home string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home' LIMIT 1`, projectID).Scan(&home)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return home, err
 }

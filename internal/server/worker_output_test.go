@@ -633,3 +633,122 @@ func TestAgentOutputToolLeadReadsWorkerSpawnedByDispatcher(t *testing.T) {
 		t.Fatalf("lead reads itself: %d", status)
 	}
 }
+
+// A person's stop notes the lead, and the note carries the end of the worker's last turn under the same rules as a recovery's: text for an
+// ordinary room, nothing for a turn that served a private chat, no failure when the worker's log is gone.
+func TestStopNoticeCarriesTheWorkersLastTurnOnlyWhereTheLeadMayRead(t *testing.T) {
+	o := newOutputFixture(t)
+	lead, _ := o.createToolAgentNamed(t, "role_leader_default", "stoplead")
+	if in, err := o.db.AgentInRoom(t.Context(), lead.ID, o.room.ID); err != nil {
+		t.Fatal(err)
+	} else if !in {
+		if err := o.db.AddMember(t.Context(), o.room.ID, "agent", lead.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, dm := workerLog(t, o)
+	ctx := t.Context()
+	_, start, err := o.db.NoticeSourcesAfter(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := func() []store.NoticeSource {
+		t.Helper()
+		if err := o.db.Tx(ctx, func(tx *store.Tx) error { return tx.NoteLeadOfStop(o.agent.ID) }); err != nil {
+			t.Fatal(err)
+		}
+		notices, _, err := o.db.NoticeSourcesAfter(ctx, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return notices
+	}
+	carried := func(source store.NoticeSource) *protocol.WorkerOutput {
+		t.Helper()
+		if _, err := o.exec(`UPDATE turn SET exec='exited' WHERE agent_id=?`, lead.ID); err != nil {
+			t.Fatal(err)
+		}
+		leadTurn(t, o, lead.ID, "trn_stop_"+source.TurnID)
+		delivery := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_stop_" + source.TurnID, Notes: []protocol.DeliveryNote{{NoteID: "note_stop_" + source.TurnID, OutputSource: &protocol.OutputSource{AgentID: source.AgentID, TurnID: source.TurnID}}}}
+		prefetchForDelivery(t, o, &delivery)
+		o.srv.addWorkerOutput(ctx, &delivery)
+		return delivery.Notes[0].WorkerOutput
+	}
+	// The worker's last turn is an ordinary one: the lead is told and gets the masked tail.
+	if _, err := o.exec(`UPDATE turn SET started_at=? WHERE id='trn_last'`, time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+		t.Fatal(err)
+	}
+	notices := stop()
+	if len(notices) != 1 || notices[0].RecipientID != lead.ID || notices[0].TurnID != "trn_last" {
+		t.Fatalf("notices=%+v", notices)
+	}
+	if out := carried(notices[0]); out == nil || out.Withheld != "" || !strings.Contains(out.Text, "turn trn_last") || strings.Contains(out.Text, leakedKey) {
+		t.Fatalf("ordinary turn: %+v", out)
+	}
+	// The last turn served a private chat the lead may not read: no text.
+	if _, err := o.exec(`UPDATE turn SET started_at=?,room_id=? WHERE id='trn_private'`, time.Now().Add(time.Second).UTC().Format("2006-01-02T15:04:05.000000000Z"), dm.ID); err != nil {
+		t.Fatal(err)
+	}
+	start = notices2seq(t, o)
+	notices = stop()
+	if len(notices) != 1 || notices[0].TurnID != "trn_private" {
+		t.Fatalf("private notices=%+v", notices)
+	}
+	if out := carried(notices[0]); out == nil || out.Text != "" || out.Withheld != noticeOutputWithheld {
+		t.Fatalf("private turn: %+v", out)
+	}
+	// The log is gone: the note still names the turn and says why it has no text; nothing fails.
+	o.mu.Lock()
+	o.answer = func(request protocol.Frame) protocol.Frame {
+		return protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: request.ReqID, Code: "no_log", Message: "gone"}
+	}
+	o.mu.Unlock()
+	if out := carried(store.NoticeSource{AgentID: o.agent.ID, TurnID: "trn_first"}); out == nil || out.Text != "" || out.Withheld != noticeOutputUnreadable {
+		t.Fatalf("no log: %+v", out)
+	}
+}
+
+// notices2seq is the event cursor after everything written so far, so a scan sees only what follows.
+func notices2seq(t *testing.T, o *outputFixture) int64 {
+	t.Helper()
+	_, last, err := o.db.NoticeSourcesAfter(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return last
+}
+
+// A machine's stop of all its agents is bulk maintenance: it gives the lead no stop note, even for a worker with a fresh turn.
+func TestMachineStopGivesTheLeadNoStopNote(t *testing.T) {
+	o := newOutputFixture(t)
+	lead, _ := o.createToolAgentNamed(t, "role_leader_default", "machinestoplead")
+	if in, err := o.db.AgentInRoom(t.Context(), lead.ID, o.room.ID); err != nil {
+		t.Fatal(err)
+	} else if !in {
+		if err := o.db.AddMember(t.Context(), o.room.ID, "agent", lead.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workerLog(t, o)
+	if _, err := o.exec(`UPDATE turn SET started_at=? WHERE id='trn_last'`, time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+		t.Fatal(err)
+	}
+	_, start, err := o.db.NoticeSourcesAfter(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.machine.boundMu.Lock()
+	o.machine.bound = map[string]int{}
+	o.machine.boundMu.Unlock()
+	resp := o.request("POST", "/api/machines/"+o.machineID+"/agents/stop", nil, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("machine stop: %d", resp.StatusCode)
+	}
+	if got, err := o.db.AgentCardByID(t.Context(), o.agent.ID); err != nil || got.Desired != "stopped" {
+		t.Fatalf("the worker was not stopped: %+v %v", got, err)
+	}
+	if notices, _, err := o.db.NoticeSourcesAfter(t.Context(), start); err != nil || len(notices) != 0 {
+		t.Fatalf("notices=%+v err=%v", notices, err)
+	}
+}

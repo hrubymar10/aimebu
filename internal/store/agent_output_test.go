@@ -196,3 +196,102 @@ func TestNoticeSourcesAfterNamesTheRecoveryLead(t *testing.T) {
 		t.Fatalf("notices=%+v err=%v", notices, err)
 	}
 }
+
+// stopNoticeCount counts the stop notes a lead was given.
+func stopNoticeCount(t *testing.T, s *Store, leadID string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM note WHERE agent_id=? AND wake_reason='worker_stopped'`, leadID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// personStop stops the worker the way a person's stop does: the desired state, then the lead's note.
+func personStop(t *testing.T, s *Store, workerID, owner string) {
+	t.Helper()
+	card, err := s.AgentCardByID(context.Background(), workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(context.Background(), func(tx *Tx) error {
+		if _, err := tx.SetAgentDesired(workerID, owner, "stopped", card.DesiredRev); err != nil {
+			return err
+		}
+		return tx.NoteLeadOfStop(workerID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A person's stop of a worker that has had a turn since its last message notes the lead, and the note names that turn so the server can add
+// the end of its output; the notice is prefetched for the lead like a recovery's.
+func TestPersonStopNotesTheLeadWithTheWorkersLastTurn(t *testing.T) {
+	s, f, owner, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	_, start, err := s.NoticeSourcesAfter(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE turn SET started_at='2026-11-24T10:00:00.000000000Z' WHERE id=?`, f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	personStop(t, s, f.agent.ID, owner)
+	notes := outputSources(t, s, lead.ID, "worker_stopped")
+	if len(notes) != 1 || notes[0].OutputSource == nil || notes[0].OutputSource.AgentID != f.agent.ID || notes[0].OutputSource.TurnID != f.turn.ID {
+		t.Fatalf("notes=%+v", notes)
+	}
+	notices, _, err := s.NoticeSourcesAfter(ctx, start)
+	if err != nil || len(notices) != 1 || notices[0] != (NoticeSource{AgentID: f.agent.ID, TurnID: f.turn.ID, RecipientID: lead.ID}) {
+		t.Fatalf("notices=%+v err=%v", notices, err)
+	}
+}
+
+// Nothing new to hand over, no stop note: the worker spoke after its last turn began, never ran a turn, or is itself a lead.
+func TestPersonStopGivesNoNoteWithoutAFreshTurn(t *testing.T) {
+	ctx := context.Background()
+	t.Run("answered since", func(t *testing.T) {
+		s, f, owner, lead := workerRecoveryFixture(t)
+		if _, err := s.db.Exec(`UPDATE turn SET started_at='2026-11-24T10:00:00.000000000Z' WHERE id=?`, f.turn.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "agent", AuthorID: f.agent.ID, Body: "done", OnlyTargets: []string{}}); err != nil {
+			t.Fatal(err)
+		}
+		personStop(t, s, f.agent.ID, owner)
+		if n := stopNoticeCount(t, s, lead.ID); n != 0 {
+			t.Fatalf("notes=%d", n)
+		}
+	})
+	t.Run("no turn", func(t *testing.T) {
+		s, f, owner, lead := workerRecoveryFixture(t)
+		if _, err := s.db.Exec(`UPDATE turn SET started_at=NULL`); err != nil {
+			t.Fatal(err)
+		}
+		personStop(t, s, f.agent.ID, owner)
+		if n := stopNoticeCount(t, s, lead.ID); n != 0 {
+			t.Fatalf("notes=%d", n)
+		}
+	})
+}
+
+// A stop_agent stop (a lead's or a coordinator's) gives the lead no note, even for a worker with a fresh turn.
+func TestStopAgentToolGivesNoStopNote(t *testing.T) {
+	s, f, _, lead := workerRecoveryFixture(t)
+	if _, err := s.db.Exec(`UPDATE turn SET started_at='2026-11-24T10:00:00.000000000Z' WHERE id=?`, f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	card, err := s.AgentCardByID(context.Background(), f.agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(context.Background(), func(tx *Tx) error {
+		_, err := tx.StopAgentAsTool(f.agent.ID, lead.ID, card.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := stopNoticeCount(t, s, lead.ID); n != 0 {
+		t.Fatalf("notes=%d", n)
+	}
+}

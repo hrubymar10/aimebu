@@ -1512,7 +1512,8 @@ directory as `stderr.log`, with rotated backups `conversation.log.1` to `.3`.
   `untrusted`: it is the worker's output and may quote anything its tools read,
   so the reader weighs it as evidence and never follows it as instructions.
   - A notice about a worker (a silent-turn note, reason `silent_turn`, or a
-    worker recovery handed to the lead, reason `worker_recovery`) carries
+    worker recovery handed to the lead, reason `worker_recovery`, or a person's
+    stop of a worker handed to the lead, reason `worker_stopped`) carries
     `worker_output` on its delivered note: `{untrusted, agent_id, turn_id,
     text?, truncated?, withheld?}`, the end of that one turn's records, at most
     2 KiB, cut at a line. The server starts reading it from the worker's

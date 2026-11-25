@@ -116,7 +116,7 @@ func (s *Store) RecordTurnRoomReads(ctx context.Context, turnID string, roomIDs 
 // after the message, and messages and events share one sequence, so it is a few rows on.
 const noticeOutputLookback = 200
 
-// noteOutputSources marks each delivered note that is a notice about a worker (a silent turn, a worker recovery handed to the lead) with
+// noteOutputSources marks each delivered note that is a notice about a worker (a silent turn, a worker recovery or a person's stop handed to the lead) with
 // the worker and the turn the notice is about, so the server can add the end of that turn's conversation to the note
 // (protocol.DeliveryNote.WorkerOutput). reasons[i] is notes[i]'s wake reason. The source is found from the event the notice wrote: a
 // silent_turn event names its notice messages, a recovery_handed_to_lead event its one.
@@ -128,6 +128,8 @@ func (tx *Tx) noteOutputSources(notes []protocol.DeliveryNote, reasons []string)
 			kind, key = silentTurnEvent, "$.notices"
 		case "worker_recovery":
 			kind, key = "recovery_handed_to_lead", "$.message_id"
+		case "worker_stopped":
+			kind, key = workerStoppedEvent, "$.message_id"
 		default:
 			continue
 		}
@@ -188,7 +190,7 @@ func (s *Store) NoticeSourcesAfter(ctx context.Context, after int64) (notices []
 		after = max(top-noticeScanLimit, 0)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT seq,kind,COALESCE(agent_id,''),COALESCE(turn_id,''),COALESCE(json_extract(payload_json,'$.woken'),''),COALESCE(json_extract(payload_json,'$.lead_id'),'')
-		FROM event WHERE seq>? AND seq<=? AND kind IN (?,'recovery_handed_to_lead') ORDER BY seq`, after, top, silentTurnEvent)
+		FROM event WHERE seq>? AND seq<=? AND kind IN (?,'recovery_handed_to_lead',?) ORDER BY seq`, after, top, silentTurnEvent, workerStoppedEvent)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -206,7 +208,7 @@ func (s *Store) NoticeSourcesAfter(ctx context.Context, after int64) (notices []
 		switch kind {
 		case silentTurnEvent:
 			recipients = strings.Split(woken, ",")
-		case "recovery_handed_to_lead":
+		case "recovery_handed_to_lead", workerStoppedEvent:
 			recipients = []string{leadID}
 		}
 		for _, recipient := range recipients {
