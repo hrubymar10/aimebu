@@ -46,6 +46,7 @@ export function initUIVariants(template = document.querySelector('#ui-variant-to
 }
 
 export function initUIVariant(button = document.querySelector('#ui-variant-toggle'), key = Array.isArray(ACTIVE) ? ACTIVE[0] : ACTIVE) {
+  try { localStorage.removeItem('aimebu2.ui.variant.answered-choices'); } catch { /* the saved choice of the retired answered-choices experiment (it kept nothing on the server) */ }
   try { localStorage.removeItem('aimebu2.ui.variant'); } catch { /* the single key of the message-actions trial: a stale choice must not seed the next experiment */ }
   const experiment = key ? experiments[key] : null;
   if (!experiment) {

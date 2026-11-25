@@ -529,7 +529,9 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
 .answer-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-width: 100%; }
 /* A proposed answer, as v1 draws it: a compact button that wraps long text. */
-.proposed-answer-btn { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
+/* The answered receipt's options (.answer-choice-pill) have the shape of the buttons they replace: one rule, so they cannot drift apart. */
+.proposed-answer-btn, .answer-choice-pill { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; }
+.proposed-answer-btn { background: var(--bg-tertiary); color: var(--text-primary); white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
 .proposed-answer-btn:hover:not(:disabled), .proposed-answer-btn:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .proposed-answer-btn:disabled { cursor: default; opacity: .52; }
 .answer-controls > .open-questions-open { display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); font: 700 11.8px var(--font-sans); }
@@ -1347,26 +1349,15 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .answer-history-status { color: var(--text-secondary); }
 .answer-controls-resolved { color: var(--text-secondary); font: 11.5px/1.35 var(--font-sans); }
 .answer-controls-resolved .icon-mask { display: inline-block; flex: none; width: 13px; height: 13px; background-color: currentColor; }
-.answer-choice-compact, .answer-choice-row, .answer-choice-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; max-width: 100%; }
-.answer-choice-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 26px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-secondary); color: var(--text-secondary); font: inherit; cursor: pointer; }
-.answer-choice-chip strong { min-width: 0; max-width: min(45vw, 330px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.answer-choice-chip:hover, .answer-choice-chip:focus-visible { border-color: var(--accent); }
-.answer-choice-options { display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 5px; padding: 3px 0; }
-.answer-choice-options .proposed-answer-btn:disabled { opacity: 1; color: var(--text-secondary); background: var(--bg-secondary); }
-.answer-choice-row { gap: 4px; }
-.answer-choice-pill { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; max-width: min(45vw, 330px); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--bg-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.answer-choice-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; max-width: 100%; }
+.answer-choice-pill { display: inline-flex; align-items: center; gap: 4px; max-width: min(45vw, 330px); color: var(--text-secondary); background: var(--bg-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .answer-choice-pill.chosen { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .answer-controls-resolved button.answer-choice-pill:disabled { cursor: default; opacity: 1; }
 .answer-controls-resolved button.answer-choice-pill.chosen:disabled { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .answer-choice-by { padding-left: 2px; white-space: nowrap; }
-.answer-choice-inline { position: relative; gap: 5px; min-height: 23px; }
-.answer-choice-inline strong { min-width: 0; max-width: min(45vw, 330px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-.answer-choice-inline .receipt-avatar { width: 18px; height: 18px; font-size: 8px; }
 .answer-choice-reply { display: inline-flex; align-items: center; color: var(--text-secondary); padding: 2px; border-radius: 3px; }
 .answer-choice-reply:hover, .answer-choice-reply:focus-visible { color: var(--accent); }
-.answer-choice-tooltip { display: none; position: absolute; z-index: 8; top: 100%; left: 0; width: max-content; max-width: min(360px, 80vw); flex-direction: column; gap: 3px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 4px 12px var(--overlay-shadow, #0004); }
-.answer-choice-inline:hover .answer-choice-tooltip, .answer-choice-inline:focus-within .answer-choice-tooltip { display: flex; }
-[data-theme^="high-contrast"] .answer-choice-chip, [data-theme^="high-contrast"] .answer-choice-pill { border-color: var(--border-hover); }
+[data-theme^="high-contrast"] .answer-choice-pill { border-color: var(--border-hover); }
 [data-theme^="high-contrast"] .answer-choice-pill.chosen { border-color: var(--accent); }
 [data-theme="high-contrast-dark"] .answer-controls-resolved button.answer-choice-pill.chosen:disabled { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 

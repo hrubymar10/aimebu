@@ -1,4 +1,4 @@
-// Render the four question states in Chromium, exercise each answered style, and keep comparison screenshots.
+// Render the four question states in Chromium, check the answered receipt's shape against the unanswered buttons in four themes (ANSWER_SHOTS_DIR keeps screenshots).
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -49,50 +49,42 @@ async function main() {
       </div>`, host);
       window.drawAnswers();
     });
-    const shots = path.join(__dirname, '..', '.aimebu', 'answer-style-shots');
-    fs.mkdirSync(shots, { recursive: true });
-    for (const theme of ['dark', 'high-contrast-dark', 'high-contrast-light']) for (const variant of ['a', 'b', 'c']) {
-      await page.evaluate(({ theme, variant }) => {
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.setAttribute('data-ui-answered-choices', variant);
-        document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant } }));
-      }, { theme, variant });
-      await page.waitForFunction(variant => document.querySelectorAll(`#answer-style-fixture .answer-variant-${variant}`).length === 4, {}, variant);
+    const shots = process.env.ANSWER_SHOTS_DIR || '';
+    if (shots) fs.mkdirSync(shots, { recursive: true });
+    for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      await page.waitForFunction(() => document.querySelectorAll('#answer-style-fixture .answer-choice-row').length === 4);
       await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running'));
       const states = await page.$$eval('#answer-style-fixture section', sections => sections.map(section => ({
-        text: section.querySelector('.answer-controls')?.textContent || '',
+        text: [...section.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-count, .answer-choice-by')].map(node => node.textContent.trim()).join(' '),
         resolved: !!section.querySelector('.answer-controls-resolved'),
         check: !!section.querySelector('.icon-mask-check'),
+        pills: [...section.querySelectorAll('.answer-choice-pill')].map(pill => [pill.textContent.trim(), pill.disabled, pill.classList.contains('chosen')]),
         buttons: [...section.querySelectorAll('.answer-controls button')].map(button => button.disabled),
       })));
       assert.deepEqual(states.map(state => state.resolved), [true, true, false, false, true, true]);
       // A set of questions shows its count; an answer that is not loaded yet names who answered, never "Answer recorded".
-      assert.ok(states[1].text.includes('(2/2)') && !states[0].text.includes('('), 'only a set of questions carries a count');
-      assert.ok(states[4].text.includes('Answered by owner') && states[4].text.includes('(2/2)') && states[5].text.includes('Answered by owner') && !/Answer recorded/.test(states[4].text + states[5].text));
-      assert.ok(states[0].text.includes('Ship now') && states[1].text.includes('North') && states[1].text.includes('Later'));
-      assert.ok(states[0].text.includes('owner') && states[1].text.includes('owner') && states[0].check && states[1].check);
+      assert.equal(states[0].text, 'Ship now by owner');
+      assert.equal(states[1].text, 'Q1) a) North · Q2) b) Later (2/2) by owner', 'only a set of questions carries a count');
+      assert.equal(states[4].text, 'Answered by owner (2/2)');
+      assert.equal(states[5].text, 'Answered by owner');
+      assert.deepEqual(states[0].pills, [['Ship now', true, true], ['Wait for review', true, false]], 'the offered options stay, disabled, the chosen one marked');
+      assert.equal(states[1].pills.length, 1, 'a set of questions is one chosen row');
+      assert.ok(states[0].check && states[1].check);
       assert.ok(states[2].buttons.some(disabled => !disabled) && states[3].buttons.some(disabled => !disabled));
-      if (variant === 'b') {
-        const colors = await page.$$eval('.answer-choice-pill.chosen', nodes => nodes.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).color, getComputedStyle(node).backgroundColor]));
-        assert.deepEqual(colors.map(color => color[0]), ['1', '1', '1', '1']);
-        assert.ok(colors.every(color => color.join() === colors[0].join()), 'every chosen pill retains the same contrast');
-      }
-      if (theme === 'dark' || theme === 'high-contrast-dark') await (await page.$('#answer-style-fixture')).screenshot({ path: path.join(shots, `${variant}-${theme}.png`) });
+      // The receipt's options have the shape of the unanswered buttons: the same radius, height, padding and font.
+      const shape = await page.evaluate(() => {
+        const read = node => { const style = getComputedStyle(node); return { radius: style.borderRadius, minHeight: style.minHeight, padding: style.padding, font: `${style.fontSize} ${style.fontWeight} ${style.fontFamily}`, lineHeight: style.lineHeight }; };
+        return { open: read(document.querySelector('.proposed-answer-btn:not(:disabled)')), answered: [...document.querySelectorAll('.answer-choice-pill')].map(read) };
+      });
+      assert.equal(shape.open.radius, '5px');
+      for (const answered of shape.answered) assert.deepEqual(answered, shape.open, `${theme}: an answered option has the shape of an unanswered one`);
+      const colors = await page.$$eval('.answer-choice-pill.chosen', nodes => nodes.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).color, getComputedStyle(node).backgroundColor]));
+      assert.deepEqual(colors.map(color => color[0]), ['1', '1', '1', '1']);
+      assert.ok(colors.every(color => color.join() === colors[0].join()), 'every chosen option retains the same contrast');
+      assert.notEqual(colors[0][1], colors[0][2], 'the chosen option is readable: text differs from its background');
+      if (shots) await (await page.$('#answer-style-fixture')).screenshot({ path: path.join(shots, `${theme}.png`) });
     }
-    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; document.documentElement.setAttribute('data-ui-answered-choices', 'a'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant: 'a' } })); });
-    await page.waitForSelector('.answer-choice-chip');
-    // The two receipts A12-4b changed, in the dark theme.
-    const changed = path.join(__dirname, '..', '.aimebu', 'a124b-shots');
-    fs.mkdirSync(changed, { recursive: true });
-    const sections = await page.$$('#answer-style-fixture section');
-    await sections[1].screenshot({ path: path.join(changed, 'multi-question-answered-dark.png') });
-    await sections[4].screenshot({ path: path.join(changed, 'body-not-loaded-dark.png') });
-    await page.evaluate(() => document.querySelector('.answer-choice-chip').click());
-    assert.deepEqual(await page.$$eval('.answer-choice-options button', buttons => buttons.map(button => button.disabled)), [true, true]);
-    await page.evaluate(() => { document.documentElement.setAttribute('data-ui-answered-choices', 'c'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant: 'c' } })); });
-    await page.waitForSelector('.answer-choice-inline');
-    await page.focus('.answer-choice-inline');
-    assert.equal(await page.$eval('.answer-choice-tooltip', node => getComputedStyle(node).display), 'flex');
     assert.deepEqual(errors, []);
     await page.close();
     console.log('answer styles page: ok');

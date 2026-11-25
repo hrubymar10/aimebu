@@ -1148,8 +1148,8 @@ async function main() {
       const same = bubble.querySelector('.answer-history') === block;
       // A person replies to it: the next draw says Answered.
       chat.repliedTo.set('ask-1', new Set(['someone'])); chat.listUpdate();
-      // Since A12-4 an answered ask is the style A chip (a check, the answer, who answered); the offered options stay folded behind it.
-      const answered = { text: bubble.querySelector('.answer-choice-chip')?.textContent || '', buttons: bubble.querySelectorAll('.answer-choice-options button').length, blocks: bubble.querySelectorAll('.answer-choice-compact').length, history: bubble.querySelectorAll('.answer-history').length };
+      // Since A12-4 an answered ask is the quiet row (a rectangular option with a check, the count, who answered).
+      const answered = { text: [...bubble.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-count, .answer-choice-by')].map(node => node.textContent.trim()).join(' '), buttons: bubble.querySelectorAll('.answer-choice-pill').length, blocks: bubble.querySelectorAll('.answer-choice-row').length, history: bubble.querySelectorAll('.answer-history').length };
       // It becomes open again: the live buttons replace the history.
       chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
       const reopened = { history: bubble.querySelectorAll('.answer-history').length, live: bubble.querySelectorAll('.answer-controls').length };
@@ -1164,7 +1164,7 @@ async function main() {
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
     assert.deepEqual(askHistory.rowEnd, { askEndsAtItsCard: true, plainEndsAtItsCard: true }, 'each row ends at its own card');
     assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit just below the bubble, before seen-by markers');
-    assert.deepEqual(askHistory.answered, { text: 'Answered (1/1)', buttons: 0, blocks: 1, history: 0 }, 'an answered ask shows one compact chip: the answer and who answered, offered options folded, no old history line');
+    assert.deepEqual(askHistory.answered, { text: 'Answered (1/1)', buttons: 1, blocks: 1, history: 0 }, 'an answered ask shows one quiet row: the answer and who answered, no old history line');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
     await first.evaluate(() => { window.__priorTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'high-contrast-dark'; const button = document.createElement('button'); button.id = 'answer-hover-check'; button.className = 'btn proposed-answer-btn'; button.textContent = 'Proceed'; button.style.cssText = 'position:fixed;top:80px;left:80px;z-index:100'; document.body.append(button); });
     await first.hover('#answer-hover-check');

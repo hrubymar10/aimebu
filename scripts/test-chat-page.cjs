@@ -840,11 +840,11 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = '@zed beta'; question.answer_author_name = 'owner'; question.answer_message_no = 4242;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForSelector('#messages [data-message-id=rm_a_m119] .answer-choice-chip');
-    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => [chip.textContent.trim(), chip.getAttribute('aria-expanded')]), ['beta by owner', 'false'], 'answered: a compact receipt replaces the option row');
-    await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => chip.click());
-    assert.deepEqual(await state(), { buttons: [['alpha', true, false], ['beta', true, false]], line: '' }, 'expanded options are disabled');
-    await page.$$eval('#messages [data-message-id=rm_a_m119] .proposed-answer-btn', buttons => buttons.forEach(button => button.click()));
+    await page.waitForSelector('#messages [data-message-id=rm_a_m119] .answer-choice-row');
+    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-row', row => ({ pills: [...row.querySelectorAll('.answer-choice-pill')].map(pill => [pill.textContent.trim(), pill.disabled, pill.classList.contains('chosen')]), by: row.querySelector('.answer-choice-by')?.textContent.trim() })),
+      { pills: [['alpha', true, false], ['beta', true, true]], by: 'by owner' }, 'answered: the options stay, disabled, the chosen one marked, and who answered');
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-pill', pill => getComputedStyle(pill).borderRadius), '5px', 'an answered option is a rectangle like the unanswered buttons');
+    await page.$$eval('#messages [data-message-id=rm_a_m119] .answer-choice-pill', buttons => buttons.forEach(button => button.click()));
     assert.equal(await page.evaluate(() => window.__answered.length), 1, 'no answering again through the buttons');
     await page.close();
     // a reload, or another device: the page opens the room with the answered state already on the message
@@ -858,7 +858,7 @@ async function main() {
       const row = document.querySelector('#messages [data-message-id=rm_a_m119]');
       return { buttons: [...row.querySelectorAll('.answer-controls .proposed-answer-btn')].map(button => [button.textContent, button.disabled, button.classList.contains('chosen')]), line: row.querySelector('.answer-history-link')?.textContent.trim() || '' };
     }), { buttons: [], line: '' }, 'the answered state comes from the server and starts collapsed');
-    assert.equal(await other.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => chip.textContent.trim()), 'beta by owner');
+    assert.equal(await other.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-row', row => [...row.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-by')].map(node => node.textContent.trim()).join(' ')), 'beta by owner');
     await other.close();
   }
 
@@ -880,23 +880,20 @@ async function main() {
     await page.waitForSelector('#messages [data-message-id=rm_a_m119] .open-questions-open');
     const shots = path.join(__dirname, '..', '.aimebu', 'answer-style-shots');
     fs.mkdirSync(shots, { recursive: true });
-    for (const theme of ['dark', 'high-contrast-dark']) for (const variant of ['a', 'b', 'c']) {
-      await page.evaluate(({ theme, variant }) => {
+    for (const theme of ['dark', 'high-contrast-dark']) {
+      await page.evaluate(theme => {
         document.querySelector('#boot-view').style.display = 'none';
         document.documentElement.dataset.theme = theme;
-        document.documentElement.setAttribute('data-ui-answered-choices', variant);
-        document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant } }));
-      }, { theme, variant });
-      await page.waitForFunction(variant => [...document.querySelectorAll('#messages .answer-controls-resolved')].every(node => node.classList.contains(`answer-variant-${variant}`)), {}, variant);
+      }, theme);
       const result = await page.evaluate(() => [116, 117, 118, 119].map(no => {
         const row = document.querySelector(`#messages [data-message-id=rm_a_m${no}]`);
         return { resolved: !!row.querySelector('.answer-controls-resolved'), text: row.querySelector('.answer-controls')?.textContent || '', buttons: [...row.querySelectorAll('.answer-controls button')].map(button => button.disabled), check: !!row.querySelector('.answer-controls .icon-mask-check') };
       }));
-      assert.equal(result[0].resolved && result[1].resolved, true, `${variant}: both answered kinds use a receipt`);
-      assert.ok(result[0].text.includes('Ship') && result[1].text.includes('North') && result[0].text.includes('owner') && result[1].text.includes('owner'), `${variant}: both answers and answerer are shown`);
-      assert.ok(result[0].check && result[1].check, `${variant}: SVG checks mark answers`);
-      assert.deepEqual(result.slice(2).map(entry => entry.resolved), [false, false], `${variant}: open cards stay open`);
-      const image = path.join(shots, `${variant}-${theme}.png`);
+      assert.equal(result[0].resolved && result[1].resolved, true, `${theme}: both answered kinds use a receipt`);
+      assert.ok(result[0].text.includes('Ship') && result[1].text.includes('North') && result[0].text.includes('owner') && result[1].text.includes('owner'), `${theme}: both answers and answerer are shown`);
+      assert.ok(result[0].check && result[1].check, `${theme}: SVG checks mark answers`);
+      assert.deepEqual(result.slice(2).map(entry => entry.resolved), [false, false], `${theme}: open cards stay open`);
+      const image = path.join(shots, `${theme}.png`);
       await page.screenshot({ path: image });
     }
     await page.close();
@@ -1004,7 +1001,7 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = '@zed beta'; question.answer_author_name = 'owner'; question.answer_message_no = window.__data.rooms.rm_a.messages[120].no;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-chip');
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-row');
     const history = async (body, values, questions = []) => {
       await page.evaluate(({ body, values, questions }) => {
         const question = window.__chat.store.messages.get('rm_a_m120');
@@ -1013,21 +1010,21 @@ async function main() {
       }, { body, values, questions });
       await settle(page);
       return page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => ({
-        text: box.querySelector('.answer-choice-chip')?.textContent.trim(), href: box.querySelector('a')?.getAttribute('href'),
+        text: [...box.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-count, .answer-choice-by')].map(node => node.textContent.trim()).join(' '), href: box.querySelector('a')?.getAttribute('href'),
         buttons: box.querySelectorAll('button').length, icon: !!box.querySelector('.icon-mask-check'),
       }));
     };
     assert.deepEqual(await history('@zed beta', ['alpha', 'beta']),
-      { text: 'beta by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'a resolved answer is one chip with an SVG check');
+      { text: 'beta by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 2, icon: true }, 'a resolved answer keeps the offered options, the chosen one with an SVG check');
     const choices = ['B after alpha.3', 'B after alpha.3 (trial)', 'Stay on D'];
     assert.deepEqual(await history('@zed B after alpha.3 (trial) - remind me pls', choices),
-      { text: 'B after alpha.3 (trial) by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'an edited answer uses the longest matching option without repeating the note');
+      { text: 'B after alpha.3 (trial) by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 3, icon: true }, 'an edited answer uses the longest matching option without repeating the note');
     assert.deepEqual(await history('@zed B after alpha.3 (trialist)', choices),
-      { text: 'B after alpha.3 by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'a proposed answer must end at a word or punctuation boundary');
+      { text: 'B after alpha.3 by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 3, icon: true }, 'a proposed answer must end at a word or punctuation boundary');
     assert.deepEqual(await history('@zed something else entirely', choices),
       { text: 'something else entirely by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'free text omits the leading mention');
     const longAnswer = `@zed ${'a'.repeat(65)}`;
-    assert.equal((await history(longAnswer, choices)).text, `${'a'.repeat(65)} by owner`, 'a long free-text answer remains available in the chip');
+    assert.equal((await history(longAnswer, choices)).text, `${'a'.repeat(65)} by owner`, 'a long free-text answer remains available in the receipt');
     assert.equal((await history('@zed Q1) a) A\nQ2) a) Now', [], [{ question: 'Route?' }, { question: 'When?' }])).text,
       'Q1) a) A · Q2) a) Now (2/2) by owner', 'Open Questions show the submitted answers');
     // A single-question ask shows no count; an answer whose body the page has not read yet says who answered (never "Answer recorded").
@@ -1081,11 +1078,11 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = 'Q1) a) A\nQ2) a) Now'; question.answer_author_name = 'owner'; question.answer_message_no = 121;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-chip');
-    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => [box.querySelector('.answer-choice-chip')?.textContent.trim(), box.querySelector('a')?.getAttribute('href'), box.querySelectorAll('button').length]),
-      ['Q1) a) A · Q2) a) Now (2/2) by owner', '#121', 1], 'a submitted Open Questions answer is one compact chip');
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-row');
+    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => [[...box.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-count, .answer-choice-by')].map(node => node.textContent.trim()).join(' '), box.querySelector('a')?.getAttribute('href'), box.querySelectorAll('button').length, getComputedStyle(box.querySelector('.answer-choice-pill')).borderRadius]),
+      ['Q1) a) A · Q2) a) Now (2/2) by owner', '#121', 1, '5px'], 'a submitted Open Questions answer is one rectangular row: the answers, the count, who answered');
     await openRoom(page, 'rm_b'); await opened(page); await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-chip', node => node.textContent.trim()), 'Q1) a) A · Q2) a) Now (2/2) by owner', 'the answer summary survives a room change from message state');
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => [...box.querySelectorAll('.answer-choice-pill.chosen, .answer-choice-count, .answer-choice-by')].map(node => node.textContent.trim()).join(' ')), 'Q1) a) A · Q2) a) Now (2/2) by owner', 'the answer summary survives a room change from message state');
     await page.close();
   }
 
