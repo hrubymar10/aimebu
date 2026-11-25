@@ -26,6 +26,8 @@ new turns and commands. A mismatched or drain-only instance retires: it accepts
 no new work, retires idle warm processes, and keeps its current turns and all
 command jobs, including native jobs, until their results and acknowledgements
 are complete. A new matching instance can serve other agents immediately.
+During a swap, dispatch keeps using the connected old instance until the new
+instance's `hello_ack` is queued; only then is the old one told to retire.
 For each agent, the server waits for the retiring instance's open turn and warm
 process to end before sending that agent's next turn to the new instance.
 There is no replacement grace or automatic interruption of a turn during a

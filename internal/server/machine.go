@@ -41,6 +41,7 @@ type machineConn struct {
 	stopOnce                   sync.Once
 	connectedAt                atomic.Int64 // unix nanoseconds when this connection replaced the last one: a request older than it went out on another one
 	helloAcked                 atomic.Bool
+	pendingRetire              *machineConn   // guarded by machineMu; remains dispatchable until this connection is ready
 	workers                    sync.WaitGroup // helpers may read the store after the socket handler exits
 	bound                      map[string]int
 	boundMu                    sync.RWMutex
@@ -445,6 +446,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			previous.retiring = true
 			s.retiringMachines[machineID][previous.journalID] = previous
 			retiring = previous
+			c.pendingRetire = previous
 		}
 		s.machines[machineID] = c
 	}
@@ -452,10 +454,6 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	s.machineMu.Unlock()
 	if replaced != nil {
 		replaced.stop()
-	}
-	if retiring != nil {
-		_ = s.Store.SetSupervisorInstanceState(ctx, machineID, retiring.journalID, "retiring")
-		_ = retiring.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle})
 	}
 	if localSupervisor {
 		s.localSupervisorPending.Store(!active)
@@ -474,6 +472,12 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		c.warmMu.Unlock()
 		if s.machines[machineID] == c {
 			delete(s.machines, machineID)
+			if !c.helloAcked.Load() && c.pendingRetire != nil && !connectionClosed(c.pendingRetire) {
+				previous := c.pendingRetire
+				previous.retiring = false
+				delete(s.retiringMachines[machineID], previous.journalID)
+				s.machines[machineID] = previous
+			}
 			if hasWarm {
 				if s.retiringMachines[machineID] == nil {
 					s.retiringMachines[machineID] = make(map[string]*machineConn)
@@ -527,6 +531,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.helloAcked.Store(true)
+	if retiring != nil {
+		_ = s.Store.SetSupervisorInstanceState(ctx, machineID, retiring.journalID, "retiring")
+		_ = retiring.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle})
+	}
 	if localSupervisor {
 		// Once per build, so the swap shows in the log and the supervisor's regular reconnects do not.
 		if previous, _ := s.localSupervisorLoggedBuild.Load().(string); previous != hello.SupervisorVersion {
@@ -1294,9 +1302,14 @@ func (s *Server) handoverBlocked(ctx context.Context, machineID, agentID string)
 }
 
 func (s *Server) machineForDispatch(id string) (*machineConn, error) {
-	c, err := s.machineForID(id)
-	if err != nil {
-		return nil, err
+	s.machineMu.Lock()
+	c := s.machines[id]
+	if c != nil && c.conn != nil && !c.helloAcked.Load() && c.pendingRetire != nil && !connectionClosed(c.pendingRetire) {
+		c = c.pendingRetire
+	}
+	s.machineMu.Unlock()
+	if c == nil {
+		return nil, ErrMachineUnavailable
 	}
 	if connectionClosed(c) {
 		return nil, ErrMachineUnavailable
