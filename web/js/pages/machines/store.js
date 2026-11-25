@@ -1,12 +1,14 @@
 import { batch, signal } from '../../ui.js';
 import { request, rights } from '../../api.js';
 import { confirmDialog } from '../../dialogs.js';
+import { writeOffWarning } from './model.js';
 
 const COPIED_MS = 2000;
 
 export class MachinesStore {
   constructor() {
     this.machines = signal(undefined);
+    this.instances = signal({});
     this.owner = signal(false);
     this.addHidden = signal(false);
     this.addDisabled = signal(null);
@@ -31,10 +33,30 @@ export class MachinesStore {
       const result = await request('/api/machines');
       if (!this.alive || generation !== this.generation) return;
       batch(() => { this.error.value = ''; this.owner.value = rights.owner; this.addDisabled.value = !rights.owner; this.addHidden.value = false; this.machines.value = result.machines || []; });
+      await this.loadInstances(result.machines || [], generation);
     } catch (failure) {
       if (!this.alive || generation !== this.generation) return;
       batch(() => { this.error.value = failure.status === 403 ? 'Machines are for the owner and the admins.' : failure.message; this.addHidden.value = failure.status === 403; });
     }
+  }
+
+  // A remote machine's supervisor instances sit next to its card; a machine that cannot answer simply shows none.
+  async loadInstances(machines, generation) {
+    const remote = machines.filter(machine => !machine.is_host && machine.approved && !machine.revoked_at);
+    const results = await Promise.all(remote.map(machine => request(`/api/machines/${encodeURIComponent(machine.id)}/instances`).then(result => [machine.id, result.instances || []], () => [machine.id, []])));
+    if (this.alive && generation === this.generation) this.instances.value = Object.fromEntries(results);
+  }
+
+  async writeOff(machine, instance) {
+    if (!await confirmDialog(writeOffWarning(machine, instance), { title: 'Mark instance as gone', confirm: 'Mark as gone', danger: true })) return;
+    if (!this.alive) return;
+    batch(() => { this.error.value = ''; this.note.value = ''; });
+    try {
+      const result = await request(`/api/machines/${encodeURIComponent(machine.id)}/instances/${encodeURIComponent(instance.journal_id)}/gone`, { method: 'POST' });
+      if (!this.alive) return;
+      this.note.value = result.already_gone ? 'That instance was already gone.' : `Instance marked as gone: ${result.turns_lost} turn${result.turns_lost === 1 ? '' : 's'} lost, ${result.commands_ended} command${result.commands_ended === 1 ? '' : 's'} ended.`;
+      await this.load();
+    } catch (failure) { if (this.alive) this.error.value = failure.message; }
   }
 
   async change(machine, action) {

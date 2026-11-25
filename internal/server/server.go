@@ -285,6 +285,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/machine-pairings/redeem", s.hostChecked(s.redeemMachinePairing))
 	mux.HandleFunc("GET /api/machines/{id}/pair-status", s.machinePairStatus)
 	mux.Handle("POST /api/machines/{id}/agents/stop", s.Auth.RequireUser(http.HandlerFunc(s.machineStopAgents)))
+	mux.Handle("GET /api/machines/{id}/instances", s.Auth.RequireUser(http.HandlerFunc(s.machineInstances)))
+	mux.Handle("POST /api/machines/{id}/instances/{journal}/gone", s.Auth.RequireUser(http.HandlerFunc(s.machineInstanceGone)))
 	mux.Handle("POST /api/machines/{id}/approve", s.Auth.RequireUser(http.HandlerFunc(s.machineApproval)))
 	mux.Handle("POST /api/machines/{id}/revoke", s.Auth.RequireUser(http.HandlerFunc(s.machineRevocation)))
 	mux.Handle("GET /api/projects/{project}/machine-folders", s.Auth.RequireUser(http.HandlerFunc(s.machineFolders)))

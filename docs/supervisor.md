@@ -87,6 +87,22 @@ to the one that matches its build and environment (see above). The local manager
   retires the old instance, which finishes its work and exits. No manager runs
   there, so a crashed instance's journal is finished by starting `aimebu
   supervisor --journal <path> --drain` by hand.
+  Nothing writes a remote instance off by itself: when its journal is lost for
+  good (a replaced disk, a reinstall) its turns and commands stay owned by an
+  instance that will never come back, and the server keeps refusing delivery to
+  those agents. The owner or an admin ends that under Settings → Machines: each
+  remote machine lists its instances, and an instance that is neither connected
+  nor gone has a trash icon, "Mark instance as gone". Its dialog first says how
+  many open turns and running commands the instance owns and which agents they
+  belong to, and that the action is irreversible. Confirming loses the open
+  turns (each agent gets the usual `supervisor_journal_changed` recovery notice
+  and waits for recovery) and ends the commands, and records the decision with
+  the person's id (`supervisor_instance_gone`). A connected instance, or one
+  that said hello in the last minute, is refused (409; the minute is checked in
+  the write-off's own transaction), a second call changes nothing, and the server's own instances are not
+  offered: the local manager writes those off. If a written-off instance
+  connects again, its hello makes it active (as it does for a local one); the
+  work it lost stays lost.
 - **A pre-feature supervisor** (one on `journal.sqlite` that does not write its
   journal ID in the lock file) is treated as retiring when the server holds it
   so, and is waited for by the same rules. The manager works out which server
@@ -458,6 +474,9 @@ requeued from another journal's empty inventory. The server emits a visible
 `supervisor_journal_changed` event for each affected turn.
 A dispatched turn with no recorded owner keeps the earlier rule: a hello with
 a journal other than the last accepted one makes it uncertain.
+The owner or an admin can also mark a remote machine's disconnected instance
+gone by hand (see "Remote hosts" under Side by side); the effect on its turns
+and jobs is the one above.
 
 The journal uses SQLite WAL with `synchronous=FULL`. On `deliver`, the
 supervisor sends `ack persisted`, commits `turn_start`, sends `ack accepted`,

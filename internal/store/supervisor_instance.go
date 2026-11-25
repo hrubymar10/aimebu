@@ -4,7 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
+	"strconv"
+	"time"
 )
+
+// InstanceQuietFor is how long an instance must have been silent before a person may write it off: a hello within it proves the instance runs.
+const InstanceQuietFor = time.Minute
+
+// ErrInstanceRecentlySeen means a write-off was refused because the instance said hello within the quiet period.
+var ErrInstanceRecentlySeen = errors.New("the supervisor instance was seen recently, so it is not lost")
 
 // SupervisorInstance is one supervisor process of a machine, named by the journal it owns. A machine can run several at once while an older
 // build finishes the work it holds and a newer one takes new work. State is active (takes new work), retiring (finishes what it holds) or
@@ -69,25 +78,53 @@ func (s *Store) MachineJournalID(ctx context.Context, machineID string) (string,
 	return id.String, err
 }
 
+// InstanceGone is what marking an instance gone did: the open turns and command jobs it ended, and whether the instance was already gone
+// (then nothing was ended and nothing was recorded).
+type InstanceGone struct {
+	Turns, Jobs int
+	AlreadyGone bool
+}
+
 // MarkSupervisorInstanceGone records that an instance is finished for good (its journal is gone or replaced) and loses what it still holds:
 // every open turn it owns becomes lost, with the recovery path and the supervisor_journal_changed event a journal change always had, and every
 // open command job ends (failed when it never started, lost otherwise). Other instances of the machine are untouched. It returns the number
 // of turns and jobs it ended. Marking an instance already gone is a no-op.
 func (s *Store) MarkSupervisorInstanceGone(ctx context.Context, machineID, journalID string) (turns, jobs int, err error) {
+	result, err := s.MarkSupervisorInstanceGoneBy(ctx, machineID, journalID, "", 0)
+	return result.Turns, result.Jobs, err
+}
+
+// MarkSupervisorInstanceGoneBy is MarkSupervisorInstanceGone for a person's decision: when actorID is not empty the write-off is recorded
+// as a supervisor_instance_gone event naming who did it and what it ended, in the same transaction. A second call finds the instance gone,
+// ends nothing and records nothing (AlreadyGone). With quiet above zero the instance is written off only when its last hello is older than
+// that, decided in the same transaction as the write-off (a hello updates last_seen_at in its own, and SQLite serializes the two): a live
+// instance that connected after the caller's own check is refused with ErrInstanceRecentlySeen and loses nothing.
+func (s *Store) MarkSupervisorInstanceGoneBy(ctx context.Context, machineID, journalID, actorID string, quiet time.Duration) (out InstanceGone, err error) {
 	err = s.Tx(ctx, func(tx *Tx) error {
-		turns, jobs = 0, 0
-		result, err := tx.Exec(`UPDATE supervisor_instance SET state='gone',gone_at=? WHERE machine_id=? AND journal_id=? AND state<>'gone'`, timestamp(), machineID, journalID)
+		out = InstanceGone{}
+		cutoff := "9999-12-31T23:59:59.999999999Z"
+		if quiet > 0 {
+			cutoff = time.Now().UTC().Add(-quiet).Format(timestampLayout)
+		}
+		result, err := tx.Exec(`UPDATE supervisor_instance SET state='gone',gone_at=? WHERE machine_id=? AND journal_id=? AND state<>'gone' AND last_seen_at<?`, timestamp(), machineID, journalID, cutoff)
 		if err != nil {
 			return err
 		}
 		if n, _ := result.RowsAffected(); n == 0 {
 			// Unknown to the table (it predates it, or never said hello): its work is still lost, but only once.
-			var known bool
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM supervisor_instance WHERE machine_id=? AND journal_id=?)`, machineID, journalID).Scan(&known); err != nil {
+			var state string
+			known := true
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT state FROM supervisor_instance WHERE machine_id=? AND journal_id=?`, machineID, journalID).Scan(&state); errors.Is(err, sql.ErrNoRows) {
+				known = false
+			} else if err != nil {
 				return err
 			}
-			if known {
+			if known && state == "gone" {
+				out.AlreadyGone = true
 				return nil
+			}
+			if known {
+				return ErrInstanceRecentlySeen
 			}
 			now := timestamp()
 			if _, err := tx.Exec(`INSERT INTO supervisor_instance(machine_id,journal_id,state,first_seen_at,last_seen_at,gone_at) VALUES (?,?,'gone',?,?,?)`,
@@ -120,7 +157,7 @@ func (s *Store) MarkSupervisorInstanceGone(ctx context.Context, machineID, journ
 			if err := tx.loseOpenTurn(item, machineID, true); err != nil {
 				return err
 			}
-			turns++
+			out.Turns++
 		}
 		jobRows, err := tx.tx.QueryContext(tx.ctx, `SELECT `+commandColumns+` FROM command_job WHERE machine_id=? AND journal_id=? AND state IN ('queued','running')`, machineID, journalID)
 		if err != nil {
@@ -148,9 +185,79 @@ func (s *Store) MarkSupervisorInstanceGone(ctx context.Context, machineID, journ
 			if _, err := finishCommand(tx, job.ID, result); err != nil {
 				return err
 			}
-			jobs++
+			out.Jobs++
 		}
-		return nil
+		if actorID == "" {
+			return nil
+		}
+		_, err = tx.AppendEvent(Event{Kind: "supervisor_instance_gone", PayloadJSON: payloadJSON(map[string]string{"machine_id": machineID, "journal_id": journalID, "actor_id": actorID, "turns": strconv.Itoa(out.Turns), "jobs": strconv.Itoa(out.Jobs)})})
+		return err
 	})
-	return turns, jobs, err
+	return out, err
+}
+
+// InstanceLoad is what an instance still owns: its open turns and command jobs, and the agents they belong to. It is what marking the instance
+// gone would lose.
+type InstanceLoad struct {
+	Turns, Commands int
+	Agents          []InstanceAgent
+}
+
+// InstanceAgent names an agent that owns work on an instance.
+type InstanceAgent struct{ ID, Slug string }
+
+// SupervisorInstanceLoad counts the open turns and command jobs an instance owns, by the same rule MarkSupervisorInstanceGone uses to end them,
+// with the agents they belong to (each once, in slug order).
+func (s *Store) SupervisorInstanceLoad(ctx context.Context, machineID, journalID string) (InstanceLoad, error) {
+	var load InstanceLoad
+	agents := map[string]string{}
+	turns, err := s.db.QueryContext(ctx, `SELECT a.id,a.slug FROM turn t JOIN agent a ON a.id=t.agent_id
+		WHERE a.machine_id=? AND t.journal_id=? AND t.exec IN ('pending','running')
+			AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')`, machineID, journalID)
+	if err != nil {
+		return load, err
+	}
+	for turns.Next() {
+		var id, slug string
+		if err := turns.Scan(&id, &slug); err != nil {
+			turns.Close()
+			return load, err
+		}
+		agents[id] = slug
+		load.Turns++
+	}
+	err = turns.Err()
+	turns.Close()
+	if err != nil {
+		return load, err
+	}
+	jobs, err := s.db.QueryContext(ctx, `SELECT a.id,a.slug FROM command_job j JOIN agent a ON a.id=j.agent_id
+		WHERE j.machine_id=? AND j.journal_id=? AND j.state IN ('queued','running')`, machineID, journalID)
+	if err != nil {
+		return load, err
+	}
+	for jobs.Next() {
+		var id, slug string
+		if err := jobs.Scan(&id, &slug); err != nil {
+			jobs.Close()
+			return load, err
+		}
+		agents[id] = slug
+		load.Commands++
+	}
+	err = jobs.Err()
+	jobs.Close()
+	if err != nil {
+		return load, err
+	}
+	for id, slug := range agents {
+		load.Agents = append(load.Agents, InstanceAgent{ID: id, Slug: slug})
+	}
+	sort.Slice(load.Agents, func(i, j int) bool {
+		if load.Agents[i].Slug != load.Agents[j].Slug {
+			return load.Agents[i].Slug < load.Agents[j].Slug
+		}
+		return load.Agents[i].ID < load.Agents[j].ID
+	})
+	return load, nil
 }

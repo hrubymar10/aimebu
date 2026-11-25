@@ -38,3 +38,28 @@ export function cardView(machine, owner) {
     locked: !owner,
   };
 }
+
+// A journal ID is long; the card shows its first part, the dialog and the tooltip say which.
+const shortJournal = id => (id.length > 12 ? `${id.slice(0, 12)}…` : id);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// One supervisor instance of a remote machine, as its row shows it. Only an instance that is neither connected nor gone can be written off.
+export function instanceView(instance, now = Date.now()) {
+  const gone = instance.state === 'gone';
+  const status = gone ? 'Gone' : instance.connected ? (instance.state === 'retiring' ? 'Connected, retiring' : 'Connected') : `Not connected, last seen ${ago(instance.last_seen_at, now)}`;
+  const owns = gone ? '' : instance.turns + instance.commands > 0 ? `owns ${plural(instance.turns, 'turn')} and ${plural(instance.commands, 'command')}` : 'owns no work';
+  return {
+    title: `Instance ${shortJournal(instance.journal_id)}`,
+    detail: [instance.build && `Build ${instance.build}`, status, owns].filter(Boolean).join(' · '),
+    canWriteOff: !gone && !instance.connected,
+  };
+}
+
+// What the confirmation says before an instance is written off: what is lost, whose it is, and that it cannot be undone.
+export function writeOffWarning(machine, instance) {
+  const agents = instance.agents.map(agent => agent.slug).join(', ');
+  const owned = instance.turns + instance.commands > 0
+    ? `It owns ${plural(instance.turns, 'open turn')} and ${plural(instance.commands, 'running command')}${agents ? `, from the agents ${agents}` : ''}. The turns are lost and each of those agents is held for recovery; the commands end and will never report a result.`
+    : 'It owns no open turns or commands.';
+  return `Mark instance ${instance.journal_id} of ${machine.name} as gone? Do this only when its journal is lost for good (a replaced disk or a reinstall). ${owned} This is irreversible.`;
+}

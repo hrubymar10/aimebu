@@ -34,7 +34,7 @@ var systemEventKinds = []string{
 	"usage_limit_threshold", "usage_limit_reset", "usage_limit_decided",
 	"usage_login_rejected",
 	"scope_control_requested", "notes_dropped",
-	"machine_created", "machine_approved", "machine_revoked", "machine_key_rotated", "machine_pairing_created",
+	"machine_created", "machine_approved", "machine_revoked", "machine_key_rotated", "machine_pairing_created", "supervisor_instance_gone",
 	"user_created", "user_deactivated", "user_admin_changed", "user_invite_created", "user_invite_redeemed",
 	"credential_alert",
 	"update_status",

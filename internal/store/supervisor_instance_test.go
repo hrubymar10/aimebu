@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
@@ -362,5 +365,111 @@ func TestSupervisorInstanceMigrationBackfillsOpenWork(t *testing.T) {
 	var version int
 	if err := x.s.db.QueryRow(`SELECT MAX(version) FROM schema_version`).Scan(&version); err != nil || version != LatestSchemaVersion() {
 		t.Fatalf("version=%d err=%v", version, err)
+	}
+}
+
+func TestSupervisorInstanceLoadCountsWhatAWriteOffLoses(t *testing.T) {
+	t.Parallel()
+	x := newInstanceFixture(t)
+	ctx := context.Background()
+	load, err := x.s.SupervisorInstanceLoad(ctx, "mch_test", x.oldJournal)
+	if err != nil || load.Turns != 1 || load.Commands != 1 || len(load.Agents) != 1 || load.Agents[0].ID != x.oldAgent.ID {
+		t.Fatalf("old instance load=%+v err=%v", load, err)
+	}
+	empty, err := x.s.SupervisorInstanceLoad(ctx, "mch_test", "journal-empty")
+	if err != nil || empty.Turns != 0 || empty.Commands != 0 || len(empty.Agents) != 0 {
+		t.Fatalf("an instance owning nothing: %+v err=%v", empty, err)
+	}
+}
+
+func TestMarkSupervisorInstanceGoneByRecordsWhoDidItOnce(t *testing.T) {
+	t.Parallel()
+	x := newInstanceFixture(t)
+	ctx := context.Background()
+	if err := x.s.RecordSupervisorInstance(ctx, "mch_test", x.oldJournal, "build", "env"); err != nil {
+		t.Fatal(err)
+	}
+	ageInstance(t, x.s, "mch_test", x.oldJournal)
+	events := func(kind string) (n int, payload string) {
+		rows, err := x.s.db.Query(`SELECT payload_json FROM event WHERE kind=?`, kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			n++
+			if err := rows.Scan(&payload); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return n, payload
+	}
+	result, err := x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor)
+	if err != nil || result.AlreadyGone || result.Turns != 1 || result.Jobs != 1 {
+		t.Fatalf("first mark %+v err=%v", result, err)
+	}
+	if n, payload := events("supervisor_instance_gone"); n != 1 || !strings.Contains(payload, `"actor_id":"usr_test"`) || !strings.Contains(payload, x.oldJournal) || !strings.Contains(payload, `"turns":"1"`) {
+		t.Fatalf("record n=%d payload=%s", n, payload)
+	}
+	if n, _ := events("supervisor_journal_changed"); n != 1 {
+		t.Fatalf("recovery notices: %d", n)
+	}
+	result, err = x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor)
+	if err != nil || !result.AlreadyGone || result.Turns != 0 || result.Jobs != 0 {
+		t.Fatalf("second mark %+v err=%v", result, err)
+	}
+	if n, _ := events("supervisor_instance_gone"); n != 1 {
+		t.Fatalf("a second write-off recorded again: %d", n)
+	}
+	// The local manager's write-off has no person and records no decision.
+	if err := x.s.RecordSupervisorInstance(ctx, "mch_test", x.newJournal, "build", "env"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := x.s.MarkSupervisorInstanceGone(ctx, "mch_test", x.newJournal); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := events("supervisor_instance_gone"); n != 1 {
+		t.Fatalf("an automatic write-off recorded a decision: %d", n)
+	}
+}
+
+// ageInstance makes the instance's last hello old enough for a person to write it off.
+func ageInstance(t *testing.T, s *Store, machineID, journalID string) {
+	t.Helper()
+	old := time.Now().UTC().Add(-2 * InstanceQuietFor).Format(timestampLayout)
+	if _, err := s.db.Exec(`UPDATE supervisor_instance SET last_seen_at=? WHERE machine_id=? AND journal_id=?`, old, machineID, journalID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A hello within the quiet period proves the instance runs: a person's write-off is refused in the transaction itself, so what it owns is not
+// lost, nothing is recorded and the instance keeps its state. Once it has been silent long enough the same call goes through.
+func TestMarkSupervisorInstanceGoneByRefusesARecentlySeenInstance(t *testing.T) {
+	t.Parallel()
+	x := newInstanceFixture(t)
+	ctx := context.Background()
+	if err := x.s.RecordSupervisorInstance(ctx, "mch_test", x.oldJournal, "build", "env"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor)
+	if !errors.Is(err, ErrInstanceRecentlySeen) || result.Turns != 0 || result.Jobs != 0 {
+		t.Fatalf("recently seen: %+v err=%v", result, err)
+	}
+	if exec, _ := turnState(t, x.s, x.oldTurn); exec != "running" {
+		t.Fatalf("a refused write-off lost the turn: %s", exec)
+	}
+	if state := jobState(t, x.s, x.oldJob.ID); state != "running" {
+		t.Fatalf("a refused write-off ended the job: %s", state)
+	}
+	var events int
+	if err := x.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind IN ('supervisor_instance_gone','supervisor_journal_changed')`).Scan(&events); err != nil || events != 0 {
+		t.Fatalf("a refused write-off recorded %d events (%v)", events, err)
+	}
+	if list, err := x.s.SupervisorInstances(ctx, "mch_test"); err != nil || len(list) != 1 || list[0].State != "active" || list[0].GoneAt != "" {
+		t.Fatalf("instance after a refusal: %+v %v", list, err)
+	}
+	ageInstance(t, x.s, "mch_test", x.oldJournal)
+	if result, err = x.s.MarkSupervisorInstanceGoneBy(ctx, "mch_test", x.oldJournal, "usr_test", InstanceQuietFor); err != nil || result.Turns != 1 || result.Jobs != 1 {
+		t.Fatalf("after the quiet period: %+v err=%v", result, err)
 	}
 }

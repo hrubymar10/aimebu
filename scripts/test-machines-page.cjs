@@ -121,6 +121,44 @@ async function main() {
       assert.equal(await admin.$eval('.machine-card-actions', el => el.textContent.includes('Restart now')), false);
       await admin.close();
     }
+    // A remote machine lists its supervisor instances; only one that is not connected and not gone has the write-off icon, and its dialog says what is lost.
+    {
+      const lost = { journal_id: 'journal-lost-0123456789', build: '1.0', state: 'active', connected: false, last_seen_at: '2026-02-03T04:05:06Z', turns: 2, commands: 1, agents: [{ id: 'agt_1', slug: 'vince' }, { id: 'agt_2', slug: 'nora' }] };
+      const live = { journal_id: 'journal-live-0123456789', build: '2.0', state: 'active', connected: true, last_seen_at: '2026-02-03T04:05:06Z', turns: 1, commands: 0, agents: [{ id: 'agt_3', slug: 'ida' }] };
+      const gone = { journal_id: 'journal-done-0123456789', build: '0.9', state: 'gone', connected: false, last_seen_at: '2026-01-03T04:05:06Z', gone_at: '2026-01-04T00:00:00Z', turns: 0, commands: 0, agents: [] };
+      const gonePath = 'POST /api/machines/mch_away/instances/journal-lost-0123456789/gone';
+      const auto = { [MACHINES]: { machines: [host, away] }, 'GET /api/machines/mch_away/instances': { instances: [lost, live, gone] }, [gonePath]: { journal_id: lost.journal_id, already_gone: false, turns_lost: 2, commands_ended: 1 } };
+      const page = await mount({ auto });
+      await page.waitForSelector('.machine-instance');
+      assert.deepEqual(await page.$$eval('.machine-card[data-machine-id="mch_away"] .machine-instance', rows => rows.map(row => [row.querySelector('.machine-instance-title').textContent, row.querySelector('small').textContent.replace(/last seen .+? ·/, 'last seen X ·').replace(/last seen [^·]+$/, 'last seen X'), [...row.querySelectorAll('button')].map(b => [b.title, b.getAttribute('aria-label'), b.className, b.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), b.textContent])])),
+        [['Instance journal-lost…', 'Build 1.0 · Not connected, last seen X · owns 2 turns and 1 command', [['Mark instance as gone', 'Mark instance as gone', 'btn-icon btn-danger machine-instance-gone', 'icon-mask-trash', '']]],
+          ['Instance journal-live…', 'Build 2.0 · Connected · owns 1 turn and 0 commands', []],
+          ['Instance journal-done…', 'Build 0.9 · Gone', []]], 'one icon, on the instance that is neither connected nor gone');
+      assert.equal(await page.$eval('.machine-card[data-machine-id="mch_host"]', card => card.querySelectorAll('.machine-instance').length), 0, 'the host lists none');
+      // Cancel sends nothing; the dialog names what is lost, whose it is and that it is irreversible.
+      await page.$eval('.machine-instance-gone', el => el.click());
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      const text = await page.$eval('#app-dialog', el => el.textContent);
+      for (const part of ['Mark instance as gone', 'journal-lost-0123456789', 'Box', '2 open turns', '1 running command', 'vince, nora', 'held for recovery', 'irreversible']) assert.ok(text.includes(part), `the dialog says ${part}: ${text}`);
+      assert.equal(await page.$eval('#app-dialog .app-dialog-ok', el => [el.textContent, el.classList.contains('btn-danger')].join()), 'Mark as gone,true');
+      await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
+      await settle(page);
+      assert.equal((await calls(page, 'POST')).length, 0, 'cancel sends no request');
+      // Confirm writes it off and says what happened.
+      await page.$eval('.machine-instance-gone', el => el.click());
+      await confirmOk(page);
+      await page.waitForFunction(() => document.querySelector('#machines-note').textContent.startsWith('Instance marked as gone'));
+      assert.equal(await page.$eval('#machines-note', el => el.textContent), 'Instance marked as gone: 2 turns lost, 1 command ended.');
+      assert.deepEqual(await calls(page, 'POST'), [['/api/machines/mch_away/instances/journal-lost-0123456789/gone', null]]);
+      await page.close();
+      // A refusal (the instance connected meanwhile) shows its reason.
+      const refused = await mount({ auto: { ...auto, [gonePath]: { status: 409, body: { error: 'instance_connected', message: 'this instance is connected, so it is not lost' } } } });
+      await refused.waitForSelector('.machine-instance-gone');
+      await refused.$eval('.machine-instance-gone', el => el.click());
+      await confirmOk(refused);
+      await refused.waitForFunction(() => document.querySelector('#machines-error').textContent.includes('is connected'));
+      await refused.close();
+    }
     // An admin who is not the owner sees the machines with pairing, approving and revoking off and the reason on each; stopping stays on.
     {
       const page = await mount({ owner: false });
