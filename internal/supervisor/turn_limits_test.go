@@ -325,7 +325,7 @@ type probedTurn struct {
 	done    chan struct{}
 	once    sync.Once
 	running atomic.Bool
-	asked   atomic.Int64
+	probes  chan struct{}
 }
 
 func (t *probedTurn) Events() <-chan adapter.Event { return t.events }
@@ -337,7 +337,13 @@ func (t *probedTurn) Wait() (adapter.ExitInfo, error) {
 	<-t.done
 	return adapter.ExitInfo{ExitCode: 137}, nil
 }
-func (t *probedTurn) ToolProcessSince(time.Time) bool { t.asked.Add(1); return t.running.Load() }
+func (t *probedTurn) ToolProcessSince(time.Time) bool {
+	select {
+	case t.probes <- struct{}{}:
+	default:
+	}
+	return t.running.Load()
+}
 
 func runProbedTurn(t *testing.T, running bool) (*probedTurn, *Journal, <-chan struct{}) {
 	t.Helper()
@@ -352,7 +358,7 @@ func runProbedTurn(t *testing.T, running bool) (*probedTurn, *Journal, <-chan st
 	}
 	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
 	client.TurnLimits = TurnLimitOverrides{Idle: durationPtr(80 * time.Millisecond), Max: durationPtr(0)}
-	turn := &probedTurn{events: make(chan adapter.Event), done: make(chan struct{})}
+	turn := &probedTurn{events: make(chan adapter.Event), done: make(chan struct{}), probes: make(chan struct{}, 16)}
 	turn.running.Store(running)
 	client.active["agent"] = "turn-probe"
 	client.running["agent"] = turn
@@ -367,13 +373,19 @@ func runProbedTurn(t *testing.T, running bool) (*probedTurn, *Journal, <-chan st
 // it gets one fresh idle period and is then killed as before.
 func TestRunTurnToolProcessSuspendsIdleKill(t *testing.T) {
 	turn, journal, finished := runProbedTurn(t, true)
+	for range 2 {
+		select {
+		case <-turn.probes:
+		case <-finished:
+			t.Fatal("a turn with a running tool process was killed as idle")
+		case <-time.After(10 * time.Second):
+			t.Fatal("the tool process was not checked again")
+		}
+	}
 	select {
 	case <-finished:
 		t.Fatal("a turn with a running tool process was killed as idle")
-	case <-time.After(700 * time.Millisecond):
-	}
-	if turn.asked.Load() < 2 {
-		t.Fatalf("the process must be looked at again while it runs, asked %d times", turn.asked.Load())
+	default:
 	}
 	turn.running.Store(false)
 	select {

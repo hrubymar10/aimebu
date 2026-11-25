@@ -71,7 +71,7 @@ func fakeDockerLauncher(t *testing.T, features []string, mode string) (path, dir
 		leftover +
 		"  sh -c \"$HARNESS_DOCKER_RUN_COMMAND\" </dev/null &\n" +
 		"  child=$!\n" +
-		"  trap ': > " + dir + "/termed; killtree $child; wait $child 2>/dev/null; exit " + stop + "' TERM\n" +
+		"  trap ': > " + dir + "/termed; killtree $child; wait $child 2>/dev/null; : > " + dir + "/confirmed; exit " + stop + "' TERM\n" +
 		"  : > '" + dir + "/trapped'\n" +
 		"  wait $child\n" +
 		"  exit $?\n" +
@@ -327,7 +327,6 @@ func TestDockerCommandUnjournaledStartIsStoppedThroughTheLauncher(t *testing.T) 
 		}
 		return "start"
 	}
-	started := time.Now()
 	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_unjournaled", AgentID: "agt_one", Generation: 1,
 		LauncherID: "ln_docker", CheckoutPath: checkout, Cmd: "echo $$ > '" + dir + "/inner.tmp'; mv '" + dir + "/inner.tmp' '" + dir +
 			"/inner'; exec sleep 60", TimeoutSeconds: 300})
@@ -337,8 +336,8 @@ func TestDockerCommandUnjournaledStartIsStoppedThroughTheLauncher(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(dir, "termed")); err != nil {
 		t.Fatal("the launcher was not sent the TERM that ends the command in the container")
 	}
-	if elapsed := time.Since(started); elapsed >= commandKillGrace {
-		t.Fatalf("the launcher's confirmed stop was not waited for, only the grace: %s", elapsed)
+	if _, err := os.Stat(filepath.Join(dir, "confirmed")); err != nil {
+		t.Fatal("the launcher did not finish ending its command")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "inner"))
 	if err != nil {

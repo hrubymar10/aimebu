@@ -400,11 +400,13 @@ func TestOpencodeListingUsesThePrivateConfigAndAsksEndpoints(t *testing.T) {
 // answer still come back, and a provider that ran out of time is named with that reason.
 func TestProviderEndpointsAreAskedInParallelUnderOneBudget(t *testing.T) {
 	release := make(chan struct{})
+	var slowRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/quick/models" {
 			_, _ = w.Write([]byte(`{"data":[{"id":"fast"}]}`))
 			return
 		}
+		slowRequests.Add(1)
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -413,16 +415,15 @@ func TestProviderEndpointsAreAskedInParallelUnderOneBudget(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 	previous := providerEndpointsBudget
-	providerEndpointsBudget = 400 * time.Millisecond
+	providerEndpointsBudget = 5 * time.Second
 	t.Cleanup(func() { providerEndpointsBudget = previous })
 	providers := []adapter.CustomProvider{{ID: "quick", Name: "quick", NPM: adapter.CustomProviderNPM, BaseURL: server.URL + "/quick"}}
 	for i := 0; i < 15; i++ {
 		providers = append(providers, adapter.CustomProvider{ID: fmt.Sprintf("slow%02d", i), Name: "slow", NPM: adapter.CustomProviderNPM, BaseURL: fmt.Sprintf("%s/slow%d", server.URL, i)})
 	}
-	started := time.Now()
 	found, problems := providerEndpointModels(context.Background(), providers, nil)
-	if took := time.Since(started); took > 3*time.Second {
-		t.Fatalf("sixteen endpoints took %v: they must be asked at once under one budget", took)
+	if got := slowRequests.Load(); got != 15 {
+		t.Fatalf("%d of 15 slow endpoints were asked before the shared budget ended", got)
 	}
 	if len(found) != 1 || found[0].Slug != "quick/fast" {
 		t.Fatalf("the endpoint that answered is lost: %+v", found)

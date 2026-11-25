@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -631,22 +633,36 @@ func TestLoginRejectedBellEventAndInboxItem(t *testing.T) {
 func TestStartUsageAlertsWiresTheRejectionTimes(t *testing.T) {
 	f := newFixture(t)
 	root := t.TempDir()
-	var err error
+	rejected := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
+		Profiles: []usages.Profile{{ProfileName: "work", Active: true, Email: "work@example.test", Status: "auth_missing",
+			Error: "Codex usage request failed with HTTP 401."}}}}}
+	cache, err := json.Marshal(rejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cache.json"), cache, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	f.srv.Usages, err = usages.New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	snapshot := f.srv.Usages.Snapshot()
+	if got := snapshot.Providers[0].Profiles[0]; got.ProfileName != "work" || got.Status != "auth_missing" || got.Email != "work@example.test" {
+		t.Fatalf("cached rejection: %+v", got)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	changed, unsubscribe := f.srv.watchUsages()
+	defer unsubscribe()
 	if err := f.srv.StartUsageAlerts(ctx, root); err != nil {
 		t.Fatal(err)
 	}
 	tracker := f.srv.usageAlerts
-	rejected := usages.Response{Providers: []usages.Provider{{ProviderName: "codex", Enabled: true, Available: true,
-		Profiles: []usages.Profile{{ProfileName: "work", Active: true, AlertIdentity: "ident\x00work", Status: "auth_missing",
-			Error: "Codex usage request failed with HTTP 401."}}}}}
-	if _, err := tracker.Observe(rejected); err != nil {
-		t.Fatal(err)
+	select {
+	case <-changed:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("the usage alert observer did not process the cached rejection: snapshot=%+v times=%+v", f.srv.Usages.Snapshot().Providers[0], tracker.RejectionTimes())
 	}
 	// The server's snapshot answers through the tracker's RejectionTimes
 	// without an extra wiring step.

@@ -1335,6 +1335,21 @@ func TestReconnectReplaysUsageAndCompactionOnce(t *testing.T) {
 		exits, err := journal.PendingExits(ctx)
 		return err == nil && len(exits) == 0
 	})
+	waitFor("replayed usage and compaction", func() bool {
+		if costSoFar() != 0.75 {
+			return false
+		}
+		messages, err := f.db.ListMessagesAfter(ctx, f.room.ID, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, message := range messages {
+			if strings.Contains(message.Body, "context was compacted") {
+				return true
+			}
+		}
+		return false
+	})
 	if got := costSoFar(); got != 0.75 {
 		t.Fatalf("cost after replay=%v, want each usage counted once (0.75)", got)
 	}

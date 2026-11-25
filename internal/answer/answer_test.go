@@ -242,16 +242,65 @@ func TestParseStripsLeadingReasoningBlocks(t *testing.T) {
 }
 
 // Many tiny blocks and a long run of trailing spaces, still under the size limit: the stripping must not rescan the tail once per block.
-func TestStripLeadingReasoningIsLinear(t *testing.T) {
+func TestStripLeadingReasoningManyBlocks(t *testing.T) {
 	const body = `{"messages":[{"room":"room-1","body":"done"}]}`
 	raw := []byte(strings.Repeat("<a></a>", 120_000) + body + strings.Repeat(" ", 1_000_000))
 	if len(raw) >= MaxAnswerBytes {
 		t.Fatalf("the input is %d bytes, over the answer limit", len(raw))
 	}
-	started := time.Now()
 	parsed, err := Parse(raw, false)
-	if elapsed := time.Since(started); err != nil || len(parsed.Messages) != 1 || elapsed > 2*time.Second {
-		t.Fatalf("parsed=%d messages err=%v after %s", len(parsed.Messages), err, elapsed)
+	if err != nil || len(parsed.Messages) != 1 || parsed.Messages[0].Room != "room-1" {
+		t.Fatalf("parsed=%+v err=%v", parsed, err)
+	}
+}
+
+// Comparing inputs in one run catches repeated rescans without depending on
+// the absolute speed of the test machine. A quadratic scan grows about 64x
+// when the input grows 8x; normal parsing has ample room below 30x.
+func TestStripLeadingReasoningScalesWithInput(t *testing.T) {
+	input := func(blocks int) []byte {
+		const body = `{"messages":[{"room":"room-1","body":"done"}]}`
+		return []byte(strings.Repeat("<a></a>", blocks) + body + strings.Repeat(" ", blocks*5))
+	}
+	measure := func(raw []byte) time.Duration {
+		t.Helper()
+		best := time.Duration(1<<63 - 1)
+		for range 3 {
+			start := time.Now()
+			parsed, err := Parse(raw, false)
+			elapsed := time.Since(start)
+			if err != nil || len(parsed.Messages) != 1 {
+				t.Fatalf("parsed=%+v err=%v", parsed, err)
+			}
+			if elapsed < best {
+				best = elapsed
+			}
+		}
+		return best
+	}
+	small := input(8_000)
+	large := input(64_000)
+	if len(large) >= MaxAnswerBytes {
+		t.Fatal("large input exceeds answer limit")
+	}
+	measure(small) // warm up decoder and allocations before comparing runs
+	smallCost := measure(small)
+	largeCost := measure(large)
+	if largeCost > 30*smallCost {
+		t.Fatalf("8x input took more than 30x as long: %s versus %s", largeCost, smallCost)
+	}
+}
+
+// Report the absolute cost alongside the relative scaling test.
+func BenchmarkStripLeadingReasoningManyBlocks(b *testing.B) {
+	const body = `{"messages":[{"room":"room-1","body":"done"}]}`
+	raw := []byte(strings.Repeat("<a></a>", 120_000) + body + strings.Repeat(" ", 1_000_000))
+	b.SetBytes(int64(len(raw)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Parse(raw, false); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
