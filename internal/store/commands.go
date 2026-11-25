@@ -188,13 +188,31 @@ func (tx *Tx) CreateCommandJob(job CommandJob) (CommandJob, error) {
 	if running >= CommandMaxPerAgent {
 		return CommandJob{}, fmt.Errorf("%w: %d commands already queued or running", ErrCommandLimit, running)
 	}
-	var desired, roomLifecycle, roomProject string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.desired,r.lifecycle,r.project_id FROM agent a JOIN room r ON r.id=?
-		WHERE a.id=?`, job.RoomID, job.AgentID).Scan(&desired, &roomLifecycle, &roomProject); err != nil {
+	var desired, roomLifecycle, roomProject, roomKind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.desired,r.lifecycle,r.project_id,r.kind FROM agent a JOIN room r ON r.id=?
+		WHERE a.id=?`, job.RoomID, job.AgentID).Scan(&desired, &roomLifecycle, &roomProject, &roomKind); err != nil {
 		return CommandJob{}, err
 	}
+	// The command runs in the agent's own checkout, so the room only decides where the completion note goes: a room of the agent's project, or a
+	// chat between agents every one of which belongs to that project (its people are members of it, or the instance owner, who may read every
+	// project anyway). A chat with an agent of another project is refused: the note carries this checkout's output tail, and it would land in a
+	// room another project's agent reads.
+	if roomKind == "dm" && roomProject == AgentDMProjectID {
+		var foreign int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member m WHERE m.room_id=? AND m.left_at IS NULL AND (
+			(m.member_kind='agent' AND EXISTS (SELECT 1 FROM agent a WHERE a.id=m.member_id AND a.project_id<>?))
+		 OR (m.member_kind='user' AND NOT EXISTS (SELECT 1 FROM membership mb WHERE mb.user_id=m.member_id AND mb.project_id=?)
+			 AND m.member_id<>`+firstUserSQL+`))`,
+			job.RoomID, job.ProjectID, job.ProjectID).Scan(&foreign); err != nil {
+			return CommandJob{}, err
+		}
+		if foreign > 0 {
+			return CommandJob{}, fmt.Errorf("%w: run commands from a room of your own project; this chat includes another project's agent", ErrScopeMismatch)
+		}
+		roomProject = job.ProjectID
+	}
 	if roomProject != job.ProjectID {
-		return CommandJob{}, fmt.Errorf("%w: room differs from the agent's project", ErrScopeMismatch)
+		return CommandJob{}, fmt.Errorf("%w: that room is in another project: run commands from a room of your own project or one of your project's chats", ErrScopeMismatch)
 	}
 	if desired == "stopped" {
 		return CommandJob{}, fmt.Errorf("%w: stopped agent cannot start commands", ErrCommandInvalid)

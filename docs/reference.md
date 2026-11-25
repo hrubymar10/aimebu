@@ -1290,7 +1290,14 @@ that was used, and names the pool entries skipped because their provider's activ
 supervisor in the agent's own checkout (the same rights its Bash has there,
 with none of its keys), and when it ends the agent is woken with a note — exit
 code, duration, the tail of the output and the path to the full log in
-`<checkout>/.aimebu/commands/`. `list_commands`, `command_log` and
+`<checkout>/.aimebu/commands/`. The completion note lands in the room the call
+was made from: a turn served from a room of the agent's project, or from a chat
+whose other agent members all belong to that project (its people are members of
+it, or the instance owner), may run commands in the
+agent's checkout, while a chat with an agent of another project (a cross-project
+lead-to-lead chat included) is refused with what is wrong and what to do — the
+scope is the agent and its checkout, not the room's project, and one project's
+output never lands in another project's room. `list_commands`, `command_log` and
 `cancel_command` list, read and end them; at most two run at a time per agent.
 An agent in Docker needs a launcher whose harness-docker has the `run_command`
 feature, and is refused with the update to make until it does (see

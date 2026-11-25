@@ -286,3 +286,93 @@ func TestInferredCommandEndGivesWayToTheMachinesEvidence(t *testing.T) {
 		t.Fatalf("a refusal is the machine's own answer, not an inference: %+v", job)
 	}
 }
+
+// A turn served from one of the agent's chats may start a command in the agent's checkout when every other agent of the chat belongs to the
+// agent's project (a person joined to it is a member of that project), and the end wakes the agent in that chat. The room only decides where
+// the note goes; the checkout is the agent's own either way.
+func TestCommandFromAnAgentChatRunsAndWakesInTheChat(t *testing.T) {
+	t.Parallel()
+	f := newDMFixture(t)
+	ctx := context.Background()
+	chat := f.open(t, f.worker1, f.lead1)
+	f.join(t, chat.ID, f.alice) // a person of the agent's project may read the note
+	job, reused, err := f.s.CreateCommandJob(ctx, CommandJob{AgentID: f.worker1.ID, Generation: 0, MachineID: "mch_wake",
+		ProjectID: f.p1.ID, RoomID: chat.ID, Cmd: "go test ./...", Cwd: ".", CheckoutPath: "/tmp/wake"},
+		RequestKey{ActorKind: "agent", ActorID: f.worker1.ID, Kind: "command_run", Key: "dm-1", Digest: "d1"})
+	if err != nil || reused || job.ID == "" {
+		t.Fatalf("create: %+v reused=%v err=%v", job, reused, err)
+	}
+	if job.ProjectID != f.p1.ID || job.RoomID != chat.ID {
+		t.Fatalf("job project/room %s/%s", job.ProjectID, job.RoomID)
+	}
+	code := 0
+	if _, err := f.s.FinishCommand(ctx, job.ID, CommandResult{State: "done", ExitCode: &code, Tail: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	note, err := f.s.NoteForAgentMessage(ctx, f.worker1.ID, lastMessageID(t, f.s, chat.ID))
+	if err != nil {
+		t.Fatalf("nothing woke the agent: %v", err)
+	}
+	if note.RoomID != chat.ID || note.WakeReason != "command_finished" {
+		t.Fatalf("note %+v", note)
+	}
+}
+
+// A chat with an agent of another project is refused (a lead-to-lead chat, a worker to another project's lead): the note would move this
+// checkout's output into a room another project's agent reads. A person of no project joined to a chat is refused with it, but the instance
+// owner is not (they may already read every project).
+func TestCommandFromACrossProjectChatIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newDMFixture(t)
+	ctx := context.Background()
+	run := func(roomID string) error {
+		_, _, err := f.s.CreateCommandJob(ctx, CommandJob{AgentID: f.worker1.ID, Generation: 0, MachineID: "mch_wake",
+			ProjectID: f.p1.ID, RoomID: roomID, Cmd: "go test ./...", CheckoutPath: "/tmp/wake"},
+			RequestKey{ActorKind: "agent", ActorID: f.worker1.ID, Kind: "command_run", Key: "refused-" + roomID, Digest: "d"})
+		return err
+	}
+	cross := f.open(t, f.worker1, f.lead2) // worker1 of p1, lead2 of p2
+	if err := run(cross.ID); !errors.Is(err, ErrScopeMismatch) || !strings.Contains(err.Error(), "another project's agent") {
+		t.Fatalf("a cross-project chat must be refused with why: %v", err)
+	}
+	withOwner := f.open(t, f.worker1, f.lead1)
+	f.join(t, withOwner.ID, f.owner) // the instance owner, a member of no project
+	job, reused, err := f.s.CreateCommandJob(ctx, CommandJob{AgentID: f.worker1.ID, Generation: 0, MachineID: "mch_wake",
+		ProjectID: f.p1.ID, RoomID: withOwner.ID, Cmd: "go test ./...", CheckoutPath: "/tmp/wake"},
+		RequestKey{ActorKind: "agent", ActorID: f.worker1.ID, Kind: "command_run", Key: "owner-chat", Digest: "d"})
+	if err != nil || reused || job.ID == "" {
+		t.Fatalf("the instance owner may read every project, so the chat is allowed: %+v err=%v", job, err)
+	}
+	noProject := f.open(t, f.worker1, f.lead1)
+	f.join(t, noProject.ID, f.carol) // a person of no project
+	if err := run(noProject.ID); !errors.Is(err, ErrScopeMismatch) || !strings.Contains(err.Error(), "another project's agent") {
+		t.Fatalf("a chat with a person of another (no) project must be refused: %v", err)
+	}
+}
+
+// A room of another project is refused, a private chat of its people included, with what is wrong and what to do; a room of the agent's
+// own project keeps working.
+func TestCommandFromAnotherProjectsRoomIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newDMFixture(t)
+	ctx := context.Background()
+	theirChat, err := f.s.CreateRoom(ctx, Room{ProjectID: f.p2.ID, Kind: "dm", DMKey: "users:usr_alice:usr_bob", Title: "theirs", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(roomID string) error {
+		_, _, err := f.s.CreateCommandJob(ctx, CommandJob{AgentID: f.worker1.ID, Generation: 0, MachineID: "mch_wake",
+			ProjectID: f.p1.ID, RoomID: roomID, Cmd: "go test ./...", CheckoutPath: "/tmp/wake"},
+			RequestKey{ActorKind: "agent", ActorID: f.worker1.ID, Kind: "command_run", Key: "refused-" + roomID, Digest: "d"})
+		return err
+	}
+	for _, roomID := range []string{theirChat.ID, f.task2.ID} {
+		err := run(roomID)
+		if !errors.Is(err, ErrScopeMismatch) {
+			t.Fatalf("room %s: %v", roomID, err)
+		}
+		if !strings.Contains(err.Error(), "another project") || !strings.Contains(err.Error(), "your own project") {
+			t.Fatalf("the refusal must say what is wrong and what to do: %v", err)
+		}
+	}
+}

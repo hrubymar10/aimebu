@@ -594,3 +594,123 @@ func TestCommandLostInASwapWakesTheAgent(t *testing.T) {
 		t.Fatal("the agent was not woken by its command's end")
 	}
 }
+
+// A turn served from one of the agent's chats (between agents) may start a command: it runs in the agent's own checkout, and its end wakes
+// the agent in that chat.
+func TestCommandFromAnAgentChatTurnRunsInTheCheckout(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	peer, _ := f.createToolAgentNamed(t, "role_worker_default", "chatpeer")
+	var chat store.Room
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		var err error
+		chat, _, err = tx.OpenAgentDM(agent.ID, peer.ID, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_cmd',?,0,'fresh_with_history',?)`,
+			agent.ID, "2026-01-01T00:00:00.000Z"); err != nil {
+			return err
+		}
+		_, err := tx.RecordTurn(store.Turn{AgentID: agent.ID, SessionID: "ses_cmd", Generation: 0, RoomID: chat.ID,
+			Attempt: 1, Mode: "normal", Exec: "running"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conn := f.dialCommandMachine(t, nil, nil)
+	answer := make(chan commandCall, 1)
+	go func() {
+		resp := f.toolPost(t, "/api/agent/commands", key, "cmd-dm-1", map[string]any{"cmd": "go test ./..."})
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		answer <- commandCall{resp.StatusCode, body}
+	}()
+	run := readCommandFrame(t, conn, func(frame protocol.Frame) bool { return frame.Type == protocol.CommandRun })
+	if run.Command == nil || run.AgentID != agent.ID || run.Command.CheckoutPath != "/tmp/toolbox" {
+		t.Fatalf("run frame %+v", run)
+	}
+	writeCommandFrame(t, conn, commandStartedFrame(run))
+	call := waitCommandCall(t, answer)
+	if call.status != 201 {
+		t.Fatalf("run_command %d %s", call.status, call.body)
+	}
+	var job store.CommandJob
+	if err := json.Unmarshal(call.body, &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.RoomID != chat.ID || job.ProjectID != f.project.ID {
+		t.Fatalf("job room/project %s/%s", job.RoomID, job.ProjectID)
+	}
+	writeCommandFrame(t, conn, commandEndedFrame(run, 0, 0))
+	waitCommandAck(t, conn, job.ID)
+	if commandNotes(t, f, agent.ID) != 1 {
+		t.Fatal("the agent was not woken by its command's end")
+	}
+	var inChat int64
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		result, err := tx.Exec(`UPDATE message SET body=body WHERE room_id=? AND author_kind='system'`, chat.ID)
+		if err != nil {
+			return err
+		}
+		inChat, err = result.RowsAffected()
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if inChat != 1 {
+		t.Fatalf("the wake note did not land in the chat: %d system messages", inChat)
+	}
+}
+
+// A private chat of another project is refused, with what is wrong and what to do.
+func TestCommandFromAnotherProjectsChatIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgent(t, "role_worker_default")
+	project, _ := f.otherProjectAgent(t)
+	var theirChat store.Room
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		var err error
+		theirChat, err = tx.CreateRoom(store.Room{ProjectID: project.ID, Kind: "dm", DMKey: "users:usr_owner:usr_nobody",
+			Title: "theirs", CreatedBy: "test"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/commands", key, "cmd-foreign-1", map[string]any{"cmd": "go test ./...", "room_id": theirChat.ID})
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 403 || !strings.Contains(string(body), "not a member") || !strings.Contains(string(body), "your project's chats") {
+		t.Fatalf("a chat of another project must be refused with what to do: %d %s", resp.StatusCode, body)
+	}
+}
+
+// A real chat between agents of two projects (lead to lead, worker to another project's lead) is refused: the completion note would move one
+// project's output into a room the other project's agent reads.
+func TestCommandFromACrossProjectAgentChatIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	agent, key := f.createToolAgent(t, "role_worker_default")
+	_, peer := f.otherProjectAgent(t)
+	var chat store.Room
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		var err error
+		chat, _, err = tx.OpenAgentDM(agent.ID, peer.ID, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/commands", key, "cmd-cross-1", map[string]any{"cmd": "go test ./...", "room_id": chat.ID})
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 403 || !strings.Contains(string(body), "another project's agent") {
+		t.Fatalf("a cross-project agent chat must be refused with why: %d %s", resp.StatusCode, body)
+	}
+}

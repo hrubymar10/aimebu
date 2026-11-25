@@ -1858,8 +1858,15 @@ it never silently reruns a turn with uncertain effects.
   variant?,checkout_path,cmd,cwd,timeout_seconds,log_path}`; M→S
   `command_started{v,req_id,job_id,agent_id,generation,result[ok|error],
   message?,log_path?,visible_log_path?,visible_cwd?}`. One long command
-  outside a turn, started by the agent's own toolbox (`run_command`); the
-  server sends it only when the hello advertised `supports_commands`. The
+  outside a turn, started by the agent's own toolbox (`run_command`); the room
+  the completion note goes to (the turn's room, or the `room_id` the call
+  names) must be one of the agent's project or a chat whose other agent members
+  all belong to that project and whose people are members of it, or the
+  instance owner — a chat with an agent of another project is refused
+  (`403 forbidden`: the note carries this checkout's output tail, and one
+  project's output never lands in another project's room), and so is any other
+  room of another project; the server
+  sends it only when the hello advertised `supports_commands`. The
   supervisor runs it in its own process group in the agent's checkout (`cwd`
   is relative to it and may not leave it), captures stdout and stderr into the
   job's log (redacted, capped, in `<checkout>/.aimebu/commands/`), and records
