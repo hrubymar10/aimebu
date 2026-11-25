@@ -97,11 +97,21 @@ func TestLivePiDockerToolbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	answer := ""
 	for event := range turn.Events() {
 		t.Logf("event %v answer=%s tools=%+v", event.Kind, event.Answer, event.Tools)
+		if event.Kind == adapter.EventFinalAnswer {
+			answer = string(event.Answer)
+		}
 	}
 	exit, err := turn.Wait()
 	t.Logf("exit=%+v err=%v", exit, err)
+	if err != nil || exit.ExitCode != 0 || !exit.TerminalEvent {
+		t.Errorf("the turn must end cleanly: exit=%+v err=%v", exit, err)
+	}
+	if strings.TrimSpace(answer) == "" {
+		t.Error("the turn gave no final answer")
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	t.Logf("MCP methods the stand-in server saw: %v", seen)

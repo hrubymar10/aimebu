@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,26 +25,40 @@ src="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 [ -d "$src" ] || { echo "no Pi agent directory at $src" >&2; exit 3; }
 [ "$src" != "$dst" ] || { echo "the private Pi agent directory is the container's own" >&2; exit 4; }
 mkdir -p "$dst" || exit 5
-find "$dst" -maxdepth 1 -type l -exec rm -f {} + || exit 5
+for l in "$dst"/* "$dst"/.[!.]*; do
+  if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l" || exit 5; fi
+done
 for e in "$src"/* "$src"/.[!.]*; do
   [ -e "$e" ] || [ -L "$e" ] || continue
   b=${e##*/}
   case "$b" in mcp.json|sessions) continue ;; esac
-  ln -s "$e" "$dst/$b" || exit 6
+  if [ -e "$dst/$b" ] && [ ! -L "$dst/$b" ]; then continue; fi
+  ln -sfn "$e" "$dst/$b" || exit 6
 done
 `
 
 // layerAgentDir runs layerScript through the launcher's command mode (HARNESS_DOCKER_RUN_COMMAND), in the checkout, with nothing forwarded
-// into the container: no key, no toolbox. dir is the private directory as the container sees it.
+// into the container: no key, no toolbox. dir is the private directory as the container sees it. The run writes its exit code to a marker, as
+// the supervisor's commands do, so that a 126 without one (the launcher refusing a container image from before command runs) is told from the
+// script's own failure. A real file or directory already in the private directory under a linked entry's name is left alone, like a native
+// turn's; only links are replaced.
 func layerAgentDir(ctx context.Context, command string, args []string, checkout, dir string, refs map[string]string) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	marker := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+".layer-exit")
+	hostMarker := filepath.Join(checkout, ".aimebu", "pi", filepath.Base(marker))
+	_ = os.Remove(hostMarker)
+	line := "aimebu_exit_marker=" + shellQuote(marker) + "; ( sh -c " + shellQuote(layerScript) + " sh " + shellQuote(dir) + ` ); rc=$?; printf %s "$rc" > "$aimebu_exit_marker"; exit $rc`
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = checkout
-	cmd.Env = append(adapter.DockerControlEnv(refs), "HARNESS_DOCKER_RUN_COMMAND=sh -c "+shellQuote(layerScript)+" sh "+shellQuote(dir),
-		"HARNESS_DOCKER_CWD=", "HARNESS_DOCKER_TIMEOUT_SECONDS=60")
+	cmd.Env = append(adapter.DockerControlEnv(refs), "HARNESS_DOCKER_RUN_COMMAND="+line, "HARNESS_DOCKER_CWD=",
+		"HARNESS_DOCKER_EXIT_MARKER="+hostMarker, "HARNESS_DOCKER_TIMEOUT_SECONDS=60")
 	out, err := cmdprobe.CombinedOutput(cmd)
 	if err != nil {
+		var exit *exec.ExitError
+		if _, marked := os.Stat(hostMarker); errors.As(err, &exit) && exit.ExitCode() == 126 && marked != nil {
+			return errors.New("Pi Docker agent directory: the harness container cannot run commands outside a turn; rebuild the harness image (`bin/harness-docker-ctrl rebuild` in harness-docker), then retry")
+		}
 		return fmt.Errorf("Pi Docker agent directory: %s: %w", adapter.SanitizeStderr(string(out)), err)
 	}
 	return nil

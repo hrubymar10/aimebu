@@ -133,6 +133,19 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 		t.Run(variant, func(t *testing.T) {
 			checkout := t.TempDir()
 			a := &Adapter{Command: path, Variant: variant, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
+			// A real file and a real directory already under the names of linked entries are left as they are; the other links are made.
+			realEntries := map[string]bool{}
+			if variant == "docker" {
+				sumReal := sha256.Sum256([]byte("agt_test"))
+				pre := filepath.Join(checkout, ".aimebu", "pi", hex.EncodeToString(sumReal[:]))
+				if err := os.MkdirAll(filepath.Join(pre, "git", "mine"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(pre, "settings.json"), []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				realEntries["settings.json"], realEntries["git"] = true, true
+			}
 			turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: variant, Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
 				CheckoutPath: checkout, AgentTools: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
 			if err != nil {
@@ -191,11 +204,30 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 					}
 					continue
 				}
+				if realEntries[entry.Name()] {
+					if entry.Type()&os.ModeSymlink != 0 {
+						t.Fatalf("a real %s in the private directory must be left alone, not replaced by a link", entry.Name())
+					}
+					delete(wantLinked, entry.Name())
+					continue
+				}
 				target, err := os.Readlink(filepath.Join(privateDir, entry.Name()))
 				if err != nil || target != filepath.Join(realDir, entry.Name()) || !wantLinked[entry.Name()] {
 					t.Fatalf("unexpected entry %q in the private agent directory: target=%q err=%v", entry.Name(), target, err)
 				}
 				delete(wantLinked, entry.Name())
+			}
+			if variant == "docker" {
+				// The real file and the real directory survive unchanged: same type, same content, nothing linked into the directory.
+				if data, err := os.ReadFile(filepath.Join(privateDir, "settings.json")); err != nil || string(data) != "{}" {
+					t.Fatalf("the real settings.json must be untouched: %q err=%v", data, err)
+				}
+				if info, err := os.Lstat(filepath.Join(privateDir, "git")); err != nil || !info.IsDir() {
+					t.Fatalf("the real git directory must stay a directory: %v err=%v", info, err)
+				}
+				if inner, err := os.ReadDir(filepath.Join(privateDir, "git")); err != nil || len(inner) != 1 || inner[0].Name() != "mine" {
+					t.Fatalf("nothing may be linked into the real git directory: %v err=%v", inner, err)
+				}
 			}
 			if len(wantLinked) != 0 {
 				t.Fatalf("missing links in the private agent directory: %v", wantLinked)
@@ -617,5 +649,23 @@ func TestLinkUserFilesReplacesStaleLinks(t *testing.T) {
 	}
 	if got, err := os.Readlink(filepath.Join(dir, "models.json")); err != nil || got != filepath.Join(source, "models.json") {
 		t.Fatalf("models.json link=%q err=%v", got, err)
+	}
+}
+
+// A launcher that refuses the layering run with 126 and no exit marker is a container image from before command runs: the way out is named.
+func TestDockerLayeringRefusedByAnOldImageNamesTheRebuild(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "pi-docker")
+	script := "#!/bin/sh\n" +
+		`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; echo run_command; exit 0; fi` + "\n" +
+		`if [ -n "${HARNESS_DOCKER_RUN_COMMAND+x}" ]; then [ -n "$HARNESS_DOCKER_EXIT_MARKER" ] || exit 99; echo refused >&2; exit 126; fi` + "\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	_, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "old-image", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
+		CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
+	if err == nil || !strings.Contains(err.Error(), "rebuild the harness image") {
+		t.Fatalf("an old image must be refused with the rebuild hint: %v", err)
 	}
 }

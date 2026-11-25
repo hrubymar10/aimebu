@@ -164,7 +164,7 @@ backup in `.old-v1-bkp/`, and you can roll back to them.
 | --- | :---: | :---: | --- |
 | Claude Code | yes | yes | stream-JSON print mode, resumed by session id |
 | Codex | yes | yes | resumes its JSONL thread |
-| Pi | yes | yes | Docker has no toolbox, attachments by turn-scoped URL |
+| Pi | yes | yes | Docker runs against the container's own Pi configuration and has the toolbox, attachments by turn-scoped URL |
 | OpenCode | yes | yes | custom OpenAI-compatible providers supported |
 | Mistral Vibe | yes | yes | private `VIBE_HOME` per agent |
 

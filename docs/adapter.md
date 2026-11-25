@@ -697,7 +697,10 @@ launcher's command mode (nothing forwarded, no key) that links every entry of th
 container's agent directory (`$PI_CODING_AGENT_DIR` as the container sees it, else
 `~/.pi/agent`) into the private one, except `mcp.json` (the adapter's own file) and
 `sessions` (the turn has its own `--session-dir`). Links, not copies: Pi writes
-`auth.json` through a link, so a refreshed login stays in the one file. Pi's built-in
+`auth.json` through a link, so a refreshed login stays in the one file. A real file or
+directory already in the private one under a linked entry's name is left as it is
+(only links are replaced, with `ln -sfn`); the run writes an exit marker, and a 126
+without it (a container image from before command runs) is reported with the rebuild hint. Pi's built-in
 MCP support has no flag for an extra config file, and trusting the project's
 `.pi/mcp.json` would also load the repository's own Pi extensions, so the directory is
 the one lever. The container may run the person's configuration with the pi-mcp-adapter
