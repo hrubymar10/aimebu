@@ -448,10 +448,16 @@ frame for that new generation. A successful Stop or Reactivate clears a
 failed switch record; the same target can also be retried.
 
 The journal generates a random identity once and sends it in each `hello`.
-The server remembers the last identity per machine. If the journal is replaced,
-all open dispatched turns on that machine become uncertain and block recovery;
-none is requeued from the replacement journal's empty inventory. The server
-emits a visible `supervisor_journal_changed` event for each affected turn.
+Each `hello` reconciles only the turns and jobs owned by that journal. A new
+remote instance leaves an older one listed, even when it is disconnected;
+its open work stays with it until it reports, finishes, or its journal is
+marked gone. On the local machine, the manager marks a missing journal gone
+after its instance has not connected for a minute. Marking an instance gone
+makes only its open turns uncertain and ends only its open jobs; none is
+requeued from another journal's empty inventory. The server emits a visible
+`supervisor_journal_changed` event for each affected turn.
+A dispatched turn with no recorded owner keeps the earlier rule: a hello with
+a journal other than the last accepted one makes it uncertain.
 
 The journal uses SQLite WAL with `synchronous=FULL`. On `deliver`, the
 supervisor sends `ack persisted`, commits `turn_start`, sends `ack accepted`,

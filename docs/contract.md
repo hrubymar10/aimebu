@@ -2300,9 +2300,13 @@ CC/Codex, prompt-only on pi):
    only the open turns it owned `lost`/`unknown` with recovery blocked and a
    visible `supervisor_journal_changed` event, and ends its open jobs. Journal
    loss classifies uncertainty, never invites replay. A first hello without
-   open dispatched turns records the ID. Until the server keeps several
-   instances connected, it treats a `hello` with a new `journal_id` as the
-   replacement of the machine's previous instance and marks that one gone.
+   open dispatched turns records the ID. A new `hello` does not mark another
+   recorded instance gone. On a remote machine, an older instance remains
+   listed, retiring or disconnected, and keeps its open turns and jobs until
+   it reports, finishes, or its journal is marked gone.
+   A dispatched turn with no recorded owner (from before instances were
+   recorded) keeps the earlier rule: a hello with a journal other than the last
+   accepted one makes it uncertain.
 2. Classify:
    - **intact journal has no `turn_start`** → never started → note
      `queued` (redeliver); a missing ack alone proves nothing;
