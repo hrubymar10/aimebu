@@ -531,6 +531,11 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.helloAcked.Store(true)
+	s.machineMu.Lock()
+	if s.machines[machineID] == c {
+		c.pendingRetire = nil
+	}
+	s.machineMu.Unlock()
 	if retiring != nil {
 		_ = s.Store.SetSupervisorInstanceState(ctx, machineID, retiring.journalID, "retiring")
 		_ = retiring.send(protocol.Frame{V: protocol.Version, Type: protocol.RetireAtIdle})
