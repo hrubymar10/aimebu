@@ -146,7 +146,7 @@ func startSideBySide(t *testing.T) *sideBySide {
 		agents = append(agents, agent)
 	}
 	s.oldAgent, s.newAgent = agents[0].ID, agents[1].ID
-	message, err := db.InsertMessage(ctx, store.Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@oldwork finish on the old instance"})
+	message, err := insertMessageRetryingBusy(db, store.Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@oldwork finish on the old instance"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func startSideBySide(t *testing.T) *sideBySide {
 // dispatchNew sends a message to the other agent and waits until its turn runs, on the new instance.
 func (s *sideBySide) dispatchNew() {
 	s.t.Helper()
-	message, err := s.db.InsertMessage(context.Background(), store.Message{RoomID: s.roomID, AuthorKind: "user", AuthorID: "owner", Body: "@newwork start on the new instance"})
+	message, err := insertMessageRetryingBusy(s.db, store.Message{RoomID: s.roomID, AuthorKind: "user", AuthorID: "owner", Body: "@newwork start on the new instance"})
 	if err != nil {
 		s.t.Fatal(err)
 	}
@@ -314,4 +314,19 @@ func TestSideBySideCrashedOldInstanceIsFinishedByADrainInstance(t *testing.T) {
 	s.waitFor("the drain instance to remove the journal and leave", 90*time.Second, func() bool { return s.journalFilesGone(s.oldJournal) })
 	s.release(s.newGate)
 	s.waitFor("the new instance to answer", 60*time.Second, func() bool { return s.newAnswered(s.newAgent, s.newMessage) })
+}
+
+// insertMessageRetryingBusy writes a message through the test's own store while the server (another process) writes the same database.
+// The store's write transaction is a deferred one: it reads first (the reply parent, mentions) and then writes, so when the server commits
+// in between, SQLite refuses the upgrade at once with SQLITE_BUSY_SNAPSHOT ("database is locked (517)") and the busy timeout does not apply.
+// The store has one writer process in production, so the test, as the second writer, retries the whole transaction the way a second writer must.
+func insertMessageRetryingBusy(db *store.Store, message store.Message) (store.Message, error) {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		stored, err := db.InsertMessage(context.Background(), message)
+		if err == nil || !strings.Contains(err.Error(), "database is locked") || time.Now().After(deadline) {
+			return stored, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
