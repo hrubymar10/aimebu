@@ -40,16 +40,36 @@ func dialInstanceFrames(t *testing.T, f *fixture, journal, build, environment st
 	return conn, ack
 }
 
+func waitForActiveInstance(t *testing.T, f *fixture, activeJournal, retiringJournal string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		active, err := f.srv.machineForDispatch(f.machineID)
+		f.srv.machineMu.Lock()
+		retiring := retiringJournal == "" || f.srv.retiringMachines[f.machineID][retiringJournal] != nil
+		f.srv.machineMu.Unlock()
+		if err == nil && active.journalID == activeJournal && retiring {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for active instance %q and retiring instance %q: active %+v, retiring=%t, dispatch error=%v", activeJournal, retiringJournal, active, retiring, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestRemoteSupervisorInstancePrefersNewestMatchingBuild(t *testing.T) {
 	f := newFixture(t)
 	f.srv.Version = "wanted"
 	f.srv.LocalSupervisorEnvironment = "server-only"
 	old, _ := dialInstanceEnv(t, f, "old", "older", "remote-a", nil, nil)
+	waitForActiveInstance(t, f, "old", "")
 	if c, err := f.srv.machineForDispatch(f.machineID); err != nil || c.journalID != "old" {
 		t.Fatalf("first remote fallback %+v %v", c, err)
 	}
 	matching, _ := dialInstanceEnv(t, f, "match", "wanted", "remote-b", nil, nil)
 	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	waitForActiveInstance(t, f, "match", "old")
 	newer, _ := dialInstanceEnv(t, f, "newer", "other", "remote-c", nil, nil)
 	readCommandFrame(t, newer, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
 	if c, err := f.srv.machineForDispatch(f.machineID); err != nil || c.journalID != "match" {
@@ -64,6 +84,7 @@ func TestRemoteSupervisorInstanceUsesNewestWhenNoneMatches(t *testing.T) {
 	old, _ := dialInstance(t, f, "old", "older", nil, nil)
 	newer, _ := dialInstance(t, f, "newer", "newer", nil, nil)
 	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	waitForActiveInstance(t, f, "newer", "old")
 	if c, err := f.srv.machineForDispatch(f.machineID); err != nil || c.journalID != "newer" {
 		t.Fatalf("newest remote fallback %+v %v", c, err)
 	}
@@ -81,6 +102,7 @@ func TestLocalSupervisorInstanceRequiresBuildAndEnvironment(t *testing.T) {
 		t.Fatalf("local mismatch accepted: %v", err)
 	}
 	correct, _ := dialInstanceEnv(t, f, "correct", "wanted", "desired", nil, nil)
+	waitForActiveInstance(t, f, "correct", "wrong")
 	if c, err := f.srv.machineForDispatch(f.machineID); err != nil || c.journalID != "correct" {
 		t.Fatalf("matching local %+v %v", c, err)
 	}
@@ -103,6 +125,7 @@ func TestSupervisorInstancesRouteActiveOwnerAndControls(t *testing.T) {
 	f.srv.Version = "second"
 	current, _ := dialInstance(t, f, "second-journal", "second", nil, []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0}})
 	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	waitForActiveInstance(t, f, "second-journal", "first-journal")
 	active, err := f.srv.machineForDispatch(f.machineID)
 	if err != nil || active.journalID != "second-journal" {
 		t.Fatalf("active instance %+v: %v", active, err)
@@ -148,6 +171,7 @@ func TestSupervisorInstancesRouteCommandLogAndEndToOwner(t *testing.T) {
 	f.srv.Version = "second"
 	current, _ := dialInstance(t, f, "second-journal", "second", nil, nil)
 	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	waitForActiveInstance(t, f, "second-journal", "first-journal")
 	job, err := f.db.CommandJobByAnyAgent(t.Context(), run.JobID)
 	if err != nil || job.JournalID != "first-journal" {
 		t.Fatalf("job owner %+v %v", job, err)
@@ -339,6 +363,7 @@ func TestCommandRunGoesToTheInstanceTheJobNames(t *testing.T) {
 	f.srv.Version = "second"
 	current, _ := dialInstance(t, f, "second-journal", "second", nil, nil)
 	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	waitForActiveInstance(t, f, "second-journal", "first-journal")
 	if active, err := f.srv.machineForDispatch(f.machineID); err != nil || active.journalID != "second-journal" {
 		t.Fatalf("active instance %+v: %v", active, err)
 	}
