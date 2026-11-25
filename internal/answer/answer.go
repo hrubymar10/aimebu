@@ -88,7 +88,9 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	}
 	raw, reasoning := stripLeadingReasoning(raw)
 	raw, unwrapped := unwrapJSONFence(raw)
+	raw, shapeWarnings := tolerateAnswerShapes(raw)
 	normalized, warnings := tolerateMessageMetadata(raw)
+	warnings = append(shapeWarnings, warnings...)
 	normalized = numbersAsMessageRefs(normalized)
 	if unwrapped {
 		warnings = append(warnings, "surrounding Markdown JSON fence removed")
@@ -299,6 +301,99 @@ func unwrapJSONFence(raw []byte) ([]byte, bool) {
 		return raw, false
 	}
 	return bytes.TrimSpace(content[:lastLine]), true
+}
+
+// messageFields are the fields a message object may carry, including thread_root, which tolerateMessageMetadata drops later with its own
+// warning. An object without any of them is not a message, so it keeps the envelope's own shape error.
+var messageFields = map[string]bool{"room": true, "body": true, "reply_to": true, "attachments": true, "ask": true, "needs_attention": true,
+	"proposed_answers": true, "open_questions": true, "handoff": true, "outcome": true, "force": true, "visual_plan": true,
+	"appendix_pages": true, "thread_root": true}
+
+// tolerateAnswerShapes reads three near-miss reply shapes as the envelope they mean, before the strict validation: a lone message object and a
+// bare array of message objects become {"messages":[...]}, and prose around an otherwise empty {"messages":[]} counts as the empty answer
+// itself, so it neither holds the reply nor raises a recovery. Everything else keeps the exact shape fault: text around a non-empty answer
+// still holds, and so does an array holding something that is not a message object.
+func tolerateAnswerShapes(raw []byte) ([]byte, []string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return raw, nil
+	}
+	switch trimmed[0] {
+	case '{':
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(trimmed, &fields) != nil || fields == nil || len(fields["messages"]) != 0 || len(fields["reconciliation"]) != 0 {
+			return raw, nil
+		}
+		if !looksLikeAMessageObject(fields) {
+			return raw, nil
+		}
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(trimmed, &items) != nil {
+			return raw, nil
+		}
+		for _, item := range items {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(item, &fields) != nil || fields == nil || !looksLikeAMessageObject(fields) {
+				return raw, nil
+			}
+		}
+	default:
+		if !embeddedEmptyAnswer(trimmed) {
+			return raw, nil
+		}
+		return []byte(`{"messages":[]}`), []string{"surrounding prose around an empty answer removed"}
+	}
+	// A lone object becomes a one-element array; a bare array is already the messages value.
+	messagesRaw := trimmed
+	if trimmed[0] == '{' {
+		messagesRaw = append(append([]byte("["), trimmed...), ']')
+	}
+	envelope := map[string]json.RawMessage{"messages": messagesRaw}
+	wrapped, err := json.Marshal(envelope)
+	if err != nil {
+		return raw, nil
+	}
+	return wrapped, nil
+}
+
+// looksLikeAMessageObject says whether an object carries at least one field a message may have.
+func looksLikeAMessageObject(fields map[string]json.RawMessage) bool {
+	for key := range fields {
+		if messageFields[key] {
+			return true
+		}
+	}
+	return false
+}
+
+// embeddedEmptyAnswer looks for the first JSON object in the reply text and says whether it is an otherwise empty {"messages":[]}; the first
+// well-formed object decides, so prose around a non-empty answer still holds. Each attempt decodes a bounded window from the object: an empty
+// messages object is short, and an object that reaches past the window cannot be one.
+func embeddedEmptyAnswer(raw []byte) bool {
+	const window = 512
+	for at, attempts := 0, 0; at < len(raw) && attempts < 256; attempts++ {
+		next := bytes.IndexByte(raw[at:], '{')
+		if next < 0 {
+			return false
+		}
+		at += next
+		end := at + window
+		if end > len(raw) {
+			end = len(raw)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.NewDecoder(bytes.NewReader(raw[at:end])).Decode(&fields); err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				// The object reaches past the window, so it cannot be the short empty envelope.
+				return false
+			}
+			at++
+			continue
+		}
+		return len(fields) == 1 && bytes.Equal(bytes.TrimSpace(fields["messages"]), []byte("[]"))
+	}
+	return false
 }
 
 // Unknown fields on a message are ignored only after the rest of the answer

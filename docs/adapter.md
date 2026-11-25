@@ -11,7 +11,13 @@ carry that handle and `native_session_started=true` so the adapter can resume.
 The final-answer event carries the tool's raw candidate text; the server later
 validates its room targets and answer schema. A single surrounding Markdown
 fence (`json` or unlabelled) is accepted around the whole JSON document on
-every adapter path. Other prose outside the document remains invalid. The
+every adapter path. The parser also reads three near-miss shapes as the
+envelope they mean: a lone message object or a bare array of message objects
+becomes `{"messages":[...]}`, and prose around an otherwise empty
+`{"messages":[]}` counts as the empty answer itself, so it neither holds the
+reply nor raises a recovery (a receipt warning names it). Other prose outside
+the document remains invalid: text around a non-empty answer still holds, with
+the exact reason. The
 wire retains the exact raw candidate, including any fence. A normal candidate has a
 `messages` array. Each entry requires `room` and `body` and may add
 `reply_to`, `attachments`, `ask`, `needs_attention`,

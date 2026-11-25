@@ -2197,7 +2197,12 @@ CC/Codex, prompt-only on pi):
   surrounding Markdown fence (`json` or unlabelled). The server removes that
   fence for JSON validation on every adapter path; the wire and receipt retain
   the exact original text. Diagnostic `report_json` stores the validated JSON
-  without the fence. Prose outside the fence or a second fence remains invalid.
+  without the fence. Prose outside the fence or a second fence remains invalid,
+  except that prose around an otherwise empty `{"messages":[]}` counts as the
+  empty answer itself: the reply commits with no messages, with a receipt
+  warning, instead of being held. A lone message object or a bare array of
+  message objects is read as `{"messages":[...]}` the same way; text around a
+  non-empty answer still holds, with the exact reason.
   A model that reasons in its reply text puts the reasoning ahead of the JSON as
   an element such as `<think>…</think>`. The server also removes any number of
   leading complete `<name>…</name>` elements (no attributes, any name, since the

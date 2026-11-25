@@ -67,11 +67,9 @@ func TestParseSingleMarkdownFence(t *testing.T) {
 		t.Fatalf("embedded fence parsed=%+v err=%v", parsed, err)
 	}
 	for _, raw := range []string{
-		"Here is the answer:\n```json\n{\"messages\":[]}\n```",
-		"```javascript\n{\"messages\":[]}\n```",
-		"```json\n{\"messages\":[]}\n```\nextra",
-		"```json\n{\"messages\":[]}\n```\n```",
-		"```json\n{\"messages\":[]} trailing\n```",
+		"Here is the answer:\n```json\n{\"messages\":[{\"room\":\"room-1\",\"body\":\"b\"}]}\n```",
+		"```json\n{\"messages\":[{\"room\":\"room-1\",\"body\":\"b\"}]}\n```\nextra",
+		"```javascript\n{\"messages\":[{\"room\":\"room-1\",\"body\":\"b\"}]}\n```",
 	} {
 		if _, err := Parse([]byte(raw), false); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("accepted malformed fence %q: %v", raw, err)
@@ -277,7 +275,7 @@ func TestParseNamesTheExactShapeFault(t *testing.T) {
 	}{
 		{"text before the object", `Clearly done. {"messages":[{"room":"r","body":"b"}]}`, "text around the JSON object"},
 		{"text after the object", `{"messages":[{"room":"r","body":"b"}]} hope that helps`, "after the JSON object"},
-		{"an array", `[{"room":"r","body":"b"}]`, "the reply is a JSON array"},
+		{"an array of numbers", `[1,2]`, "the reply is a JSON array"},
 		{"unknown top-level field", `{"messages":[],"source":"memory"}`, "unknown field source"},
 		{"unknown field with odd characters", `{"messages":[],"a b":1}`, "unknown field a?b"},
 		{"messages missing", `{}`, "needs a messages array"},
@@ -296,5 +294,66 @@ func TestParseNamesTheExactShapeFault(t *testing.T) {
 	}
 	if _, err := Parse([]byte(`{"messages":[{"room":"r","body":"b"}]}`), false); err != nil {
 		t.Fatalf("a well-shaped answer was refused: %v", err)
+	}
+}
+
+// A12-9: the parser reads three near-miss reply shapes as the envelope they mean: a lone message object and a bare array of message objects
+// become {"messages":[...]}, and prose around an otherwise empty {"messages":[]} counts as the empty answer itself, so it neither holds the
+// reply nor raises a recovery. Prose around a non-empty answer still holds, with the exact reason.
+func TestParseToleratesNearMissAnswerShapes(t *testing.T) {
+	lone, err := Parse([]byte(`{"room":"room-1","body":"answer","reply_to":"msg-1"}`), false)
+	if err != nil || len(lone.Messages) != 1 || lone.Messages[0].Body != "answer" || lone.Messages[0].ReplyTo != "msg-1" || len(lone.Warnings) != 0 {
+		t.Fatalf("lone object: %+v %v", lone, err)
+	}
+	if fenced, err := Parse([]byte("```json\n{\"room\":\"room-1\",\"body\":\"fenced\"}\n```"), false); err != nil ||
+		len(fenced.Messages) != 1 || fenced.Messages[0].Body != "fenced" || len(fenced.Warnings) != 1 {
+		t.Fatalf("fenced lone object: %+v %v", fenced, err)
+	}
+	array, err := Parse([]byte(`[{"room":"room-1","body":"a"},{"room":"room-1","body":"b","handoff":true,"outcome":"done"}]`), false)
+	if err != nil || len(array.Messages) != 2 || array.Messages[1].Outcome != "done" || len(array.Warnings) != 0 {
+		t.Fatalf("bare array: %+v %v", array, err)
+	}
+	if empty, err := Parse([]byte(`[]`), false); err != nil || len(empty.Messages) != 0 {
+		t.Fatalf("bare empty array: %+v %v", empty, err)
+	}
+	// A lone object keeps the message-level tolerances: unknown metadata is dropped with its warning and a numeric reply_to is read as text.
+	numbered, err := Parse([]byte(`{"room":"room-1","body":"answer","reply_to":36226,"thread_root":"msg-9"}`), false)
+	if err != nil || numbered.Messages[0].ReplyTo != "36226" || len(numbered.Warnings) != 1 || !strings.Contains(numbered.Warnings[0], "thread_root") {
+		t.Fatalf("lone object tolerances: %+v %v", numbered, err)
+	}
+	for name, raw := range map[string]string{
+		"prose before":                               `Clearly done. {"messages":[]}`,
+		"prose both sides":                           `Note: {"messages":[]} that is all`,
+		"prose around a fenced empty answer":         "Here is the answer:\n```json\n{\"messages\":[]}\n```",
+		"a mislabelled fence around an empty answer": "```javascript\n{\"messages\":[]}\n```",
+	} {
+		parsed, err := Parse([]byte(raw), false)
+		if err != nil || len(parsed.Messages) != 0 || len(parsed.Warnings) != 1 || !strings.Contains(parsed.Warnings[0], "prose around an empty answer") {
+			t.Fatalf("%s: parsed=%+v warnings=%q err=%v", name, parsed, parsed.Warnings, err)
+		}
+	}
+	if _, err := Parse([]byte(`Clearly done. {"messages":[{"room":"r","body":"b"}]}`), false); !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "text around the JSON object") {
+		t.Fatalf("prose around a non-empty answer: err=%v", err)
+	}
+	for _, raw := range []string{
+		`[1,2]`,
+		`["x"]`,
+		`[{"room":"r","body":"b"},5]`,
+		`[{"payload":1}]`,
+	} {
+		if _, err := Parse([]byte(raw), false); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "the reply is a JSON array") {
+			t.Fatalf("non-message array %s accepted: %v", raw, err)
+		}
+	}
+	// Shapes that only look near-miss keep their exact faults.
+	for _, raw := range []string{
+		`{}`,
+		`{"messages":[]} trailing`,
+		`{"source":"memory"}`,
+	} {
+		if _, err := Parse([]byte(raw), false); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("accepted %s: %v", raw, err)
+		}
 	}
 }
