@@ -164,9 +164,12 @@ Projects, rooms, people
   choice no pool entry matches — every field the request sets must match one
   entry, an empty field means the pool decides that part — is refused with 409
   `model_not_approved` unless it carries `approved_by`: the number (`#N`) or id
-  of a message a person wrote in a room of the same project that approved that
-  exact choice. An agent's message, an unknown message, or a message of another
-  project is refused with the reason named. The validated message id is
+  of a message a person wrote no more than 7 days ago in a room of the same
+  project that the requesting agent may read. The message body must name the
+  requested model (its ID or the launcher's model label), case-insensitively;
+  a tool or variant it names must match the request.
+  An unrelated, expired, unreadable, agent-authored, unknown, or other-project
+  message is refused with the reason named. The validated message id is
   recorded on the agent (`agent.approved_by`, migration 133), shown on its
   card, and carried by the `agent_spawn_requested` event. A choice that is in
   the pool is always allowed, with or without `approved_by`; a role with no

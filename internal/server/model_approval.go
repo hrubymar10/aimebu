@@ -5,6 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The model-approval gate (A10-2): an agent-initiated spawn may not pick a
@@ -55,23 +59,89 @@ func (s *Server) spawnChoiceInPool(ctx context.Context, projectID, roleKey strin
 // validatedApprovalMessage resolves an approved_by reference and returns the
 // message id when it names a message a person wrote in a room of this
 // project. Anything else is refused with the reason named.
-func (s *Server) validatedApprovalMessage(ctx context.Context, projectID, ref string) (string, error) {
+func (s *Server) validatedApprovalMessage(ctx context.Context, projectID, agentID, ref string, req agentSpawnRequest, outOfPool bool) (string, error) {
 	id, err := s.Store.ResolveMessageRef(ctx, ref)
 	if err != nil {
 		return "", err
 	}
-	authorKind, messageProject, err := s.Store.MessageAuthorProject(ctx, id)
+	message, messageProject, readable, err := s.Store.SpawnApprovalMessage(ctx, id, agentID, projectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("approved_by names no message in this project")
 	}
 	if err != nil {
 		return "", err
 	}
-	if authorKind != "user" {
+	if message.AuthorKind != "user" {
 		return "", fmt.Errorf("approved_by is not a message written by a person")
 	}
 	if messageProject != projectID {
 		return "", fmt.Errorf("approved_by is a message of another project")
 	}
+	if !outOfPool {
+		return id, nil
+	}
+	if !readable {
+		return "", fmt.Errorf("approved_by is in a room the requesting agent cannot read")
+	}
+	created, err := time.Parse(time.RFC3339Nano, message.CreatedAt)
+	now := time.Now().UTC()
+	if err != nil || created.Before(now.Add(-7*24*time.Hour)) || created.After(now) {
+		return "", fmt.Errorf("approved_by is older than 7 days or has an invalid date")
+	}
+	if req.Model == "" {
+		return "", fmt.Errorf("approved_by requires an explicit requested model")
+	}
+	labels, err := s.Store.SpawnModelLabels(ctx, req.Tool, req.Variant, req.Model)
+	if err != nil {
+		return "", err
+	}
+	modelNamed := approvalNamesChoice(message.Body, req.Model)
+	for _, label := range labels {
+		modelNamed = modelNamed || approvalNamesChoice(message.Body, label)
+	}
+	if !modelNamed {
+		return "", fmt.Errorf("approved_by does not name the requested model")
+	}
+	harnessNames, err := s.Store.SpawnApprovalHarnessNames(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range harnessNames {
+		if approvalNamesChoice(message.Body, name.Tool) && !strings.EqualFold(name.Tool, req.Tool) {
+			return "", fmt.Errorf("approved_by names a different tool or variant")
+		}
+		if (approvalNamesChoice(message.Body, name.Variant) || approvalNamesChoice(message.Body, launcherAlias(name.Variant))) &&
+			!strings.EqualFold(req.Variant, name.Variant) && !strings.EqualFold(req.Variant, launcherAlias(name.Variant)) {
+			return "", fmt.Errorf("approved_by names a different tool or variant")
+		}
+	}
 	return id, nil
+}
+
+func approvalNamesChoice(body, choice string) bool {
+	if choice == "" {
+		return false
+	}
+	body, choice = strings.ToLower(body), strings.ToLower(choice)
+	for start := 0; start < len(body); {
+		at := strings.Index(body[start:], choice)
+		if at < 0 {
+			return false
+		}
+		at += start
+		end := at + len(choice)
+		before, _ := utf8.DecodeLastRuneInString(body[:at])
+		after, _ := utf8.DecodeRuneInString(body[end:])
+		beforeOK := at == 0 || !approvalWordRune(before)
+		afterOK := end == len(body) || !approvalWordRune(after)
+		if beforeOK && afterOK {
+			return true
+		}
+		start = at + 1
+	}
+	return false
+}
+
+func approvalWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_./:@+-", r)
 }

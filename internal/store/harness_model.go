@@ -124,6 +124,57 @@ func (s *Store) HarnessModels(ctx context.Context, launcherID string) ([]Harness
 	return models, rows.Err()
 }
 
+// SpawnModelLabels finds labels for the requested model on matching launchers.
+// The slug remains valid even when a launcher has not listed that model.
+func (s *Store) SpawnModelLabels(ctx context.Context, tool, variant, model string) ([]string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT m.label FROM harness_model m
+		JOIN machine_launcher l ON l.id=m.launcher_id
+		WHERE l.tool=? AND (l.name=? OR (?='docker' AND l.name='harness-docker')) AND m.slug=?`, tool, variant, variant, model)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var labels []string
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, err
+		}
+		labels = append(labels, label)
+	}
+	return labels, rows.Err()
+}
+
+type SpawnApprovalHarnessName struct {
+	Tool    string
+	Variant string
+}
+
+// SpawnApprovalHarnessNames lists configured harness names so an approval can
+// reject a named tool or variant that differs from the requested one.
+func (s *Store) SpawnApprovalHarnessNames(ctx context.Context) ([]SpawnApprovalHarnessName, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT tool,name FROM machine_launcher`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []SpawnApprovalHarnessName
+	for rows.Next() {
+		var name SpawnApprovalHarnessName
+		if err := rows.Scan(&name.Tool, &name.Variant); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // MachineHarnessModels returns the models of every harness of a machine, by launcher id.
 func (s *Store) MachineHarnessModels(ctx context.Context, machineID string) (map[string][]HarnessModel, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.launcher_id,m.slug,m.label,m.note,m.is_default,m.source FROM harness_model m JOIN machine_launcher l ON l.id=m.launcher_id

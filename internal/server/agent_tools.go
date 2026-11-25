@@ -315,7 +315,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.ApprovedBy != "" {
-			id, err := s.validatedApprovalMessage(r.Context(), room.ProjectID, req.ApprovedBy)
+			id, err := s.validatedApprovalMessage(r.Context(), room.ProjectID, caller.ID, req.ApprovedBy, req, !inPool)
 			if err != nil {
 				apiError(w, http.StatusConflict, "model_not_approved", err.Error())
 				return

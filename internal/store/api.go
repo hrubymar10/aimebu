@@ -374,6 +374,24 @@ func (s *Store) MessageAuthorProject(ctx context.Context, id string) (authorKind
 	return authorKind, projectID, err
 }
 
+// SpawnApprovalMessage reads the fields the agent spawn gate needs together,
+// including the same room boundary used by agent room_history.
+func (s *Store) SpawnApprovalMessage(ctx context.Context, id, agentID, projectID string) (Message, string, bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return Message{}, "", false, err
+	}
+	var message Message
+	var roomProject string
+	var readable bool
+	err := s.db.QueryRowContext(ctx, `SELECT m.id,m.author_kind,m.body,m.created_at,r.project_id,
+		(r.project_id IN (?,`+agentDMProjectSQL+`) AND
+		 (r.kind<>'dm' AND r.restricted=0 OR EXISTS (SELECT 1 FROM room_member own
+		 WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL)))
+		FROM message m JOIN room r ON r.id=m.room_id WHERE m.id=?`, projectID, agentID, id).
+		Scan(&message.ID, &message.AuthorKind, &message.Body, &message.CreatedAt, &roomProject, &readable)
+	return message, roomProject, readable, err
+}
+
 func (tx *Tx) SetReaction(messageID, kind, memberID, emoji string, active bool) error {
 	var projectID, roomID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,r.id FROM message m JOIN room r ON r.id=m.room_id WHERE m.id=?`, messageID).Scan(&projectID, &roomID); err != nil {

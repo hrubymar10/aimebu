@@ -654,7 +654,7 @@ func TestLeadSpawnDeviationRequiresReason(t *testing.T) {
 		t.Fatalf("reason alone outside the pool: %d", resp.StatusCode)
 	}
 	// A person's message approving the exact choice lets the spawn through.
-	approval, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_owner", Body: "fake is fine for this review"})
+	approval, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "user", AuthorID: "usr_owner", Body: "fake with the test model is fine for this review"})
 	if err != nil {
 		t.Fatal(err)
 	}

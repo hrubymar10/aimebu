@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
@@ -16,10 +17,10 @@ import (
 func seedFakePool(t *testing.T, f *fixture, role string) {
 	t.Helper()
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO machine_launcher(id,machine_id,tool,name,command,enabled) VALUES ('lnch_fake',?,'fake','test','fake',1)`, f.machineID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO machine_launcher(id,machine_id,tool,name,command,enabled) VALUES ('lnch_fake',?,'fake','test','fake',1),('lnch_other',?,'fake','alternate','fake',1)`, f.machineID, f.machineID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT INTO harness_model(launcher_id,slug,label,is_default,position) VALUES ('lnch_fake','test','Test',1,0),('lnch_fake','model-b','B',0,1)`)
+		_, err := tx.Exec(`INSERT INTO harness_model(launcher_id,slug,label,is_default,position) VALUES ('lnch_fake','test','Test',1,0),('lnch_fake','model-b','Model Bee',0,1)`)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -131,13 +132,64 @@ func TestAgentSpawnModelApproval(t *testing.T) {
 		t.Fatalf("spawn approved by another project's message: failed=%v %s", failed, text)
 	}
 
+	// A person's unrelated, expired, or unreadable message cannot authorize
+	// the model, even though each is a valid message reference.
+	unrelatedID, _ := personMessage(t, f, f.room.ID, "Please finish the review")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-unrelated", outOfPool, unrelatedID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "does not name") {
+		t.Fatalf("unrelated approval: failed=%v %s", failed, text)
+	}
+	toolOnlyID, _ := personMessage(t, f, f.room.ID, "FAKE is fine for this task")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-tool-only", outOfPool, toolOnlyID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "requested model") {
+		t.Fatalf("tool-only approval: failed=%v %s", failed, text)
+	}
+	wrongToolID, _ := personMessage(t, f, f.room.ID, "codex model-b is fine")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-wrong-tool", outOfPool, wrongToolID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "tool or variant") {
+		t.Fatalf("wrong-tool approval: failed=%v %s", failed, text)
+	}
+	wrongVariantID, _ := personMessage(t, f, f.room.ID, "model-b on alternate is fine")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-wrong-variant", outOfPool, wrongVariantID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "tool or variant") {
+		t.Fatalf("wrong-variant approval: failed=%v %s", failed, text)
+	}
+	oldID, _ := personMessage(t, f, f.room.ID, "MODEL-B is approved")
+	if _, err := f.exec(`UPDATE message SET created_at=? WHERE id=?`, time.Now().UTC().Add(-8*24*time.Hour).Format(time.RFC3339Nano), oldID); err != nil {
+		t.Fatal(err)
+	}
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-old", outOfPool, oldID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "older than 7 days") {
+		t.Fatalf("expired approval: failed=%v %s", failed, text)
+	}
+	hidden, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: f.project.ID, Kind: "task", Title: "private approval", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`UPDATE room SET restricted=1 WHERE id=?`, hidden.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`DELETE FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=?`, hidden.ID, lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	hiddenID, _ := personMessage(t, f, hidden.ID, "model-b approved")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-hidden", outOfPool, hiddenID)); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "cannot read") {
+		t.Fatalf("unreadable approval: failed=%v %s", failed, text)
+	}
+
 	// A person's message opens the gate: the out-of-pool model is no longer
 	// refused with model_not_approved (the fake harness's own model list
 	// refuses it later, which is not this gate's answer).
-	approvedID, approvedNo := personMessage(t, f, f.room.ID, "model-b is fine for this task")
+	approvedID, approvedNo := personMessage(t, f, f.room.ID, "MODEL-B is fine for this task")
 	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-opened", outOfPool, approvedID)); !failed ||
 		!strings.Contains(text, "adapter_unlisted") || strings.Contains(text, "model_not_approved") {
 		t.Fatalf("spawn approved by a person's message: failed=%v %s", failed, text)
+	}
+	labelID, _ := personMessage(t, f, f.room.ID, "MODEL BEE is approved")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("ma-label", outOfPool, labelID)); !failed ||
+		!strings.Contains(text, "adapter_unlisted") || strings.Contains(text, "model_not_approved") {
+		t.Fatalf("spawn approved by model label: failed=%v %s", failed, text)
 	}
 
 	// The approval is recorded on the agent: on the answered card, on the
