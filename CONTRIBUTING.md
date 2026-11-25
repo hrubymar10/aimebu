@@ -113,7 +113,9 @@ listener open and hands that very socket to the server. A script that starts a s
 
 - **`make test-ui`** runs the lines of `scripts/ui-tests.list` through `scripts/run-jobs.cjs`, `UI_JOBS` of them at
   once (default: a quarter of the CPUs, at most 4; `UI_JOBS=1` is the old one-after-the-other run). Each job has a
-  `TMPDIR` of its own, its output is printed whole when it ends, and a failure stops new jobs from starting. The end
+  `TMPDIR` of its own, its output is printed whole when it ends, and a failure does not stop the jobs that have not
+  started (`--keep-going`, which `make test-ui` passes): every job runs, the end summary lists every failed job by
+  name, and the exit status is non-zero when anything failed. The end
   says how long the run took against the sum of the jobs, and `tmp/ui-report-<pid>.json` has every job's result and
   duration. `node scripts/run-jobs.cjs --only chat --label ui scripts/ui-tests.list` runs part of the list, and
   `--shard i/n` takes every n-th line, for splitting a list over machines. The slowest jobs are `test-ui.cjs` itself

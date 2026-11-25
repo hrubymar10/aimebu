@@ -86,8 +86,10 @@ test-web: ## Run the browser-free web unit tests (vm over the module source), in
 	*) echo "make test-web: WEB_TEST_RUNNER must be docker or local, not '$(WEB_TEST_RUNNER)'" >&2; exit 1 ;; \
 	esac
 
+# --keep-going: a failing job does not stop the ones that have not started. Every job runs, every failure is listed with its job name at the
+# end, and the exit status is still non-zero when anything failed (see CONTRIBUTING.md, "Which test command to run").
 test-ui: ## Run Chromium smoke against a scratch server, then the Preact page tests (UI_JOBS=n runs n at once)
-	node scripts/run-jobs.cjs -j $(UI_JOBS) --label ui --report tmp/ui-report-%p.json scripts/ui-tests.list
+	node scripts/run-jobs.cjs -j $(UI_JOBS) --keep-going --label ui --report tmp/ui-report-%p.json scripts/ui-tests.list
 
 gate: ## The full gate: test-full and test-ui (GATE_UI_RUNS times, default 2) as two lanes side by side
 	@sh scripts/gate.sh

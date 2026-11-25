@@ -128,9 +128,9 @@ async function main() {
   const done = results.filter(Boolean), bad = done.filter(result => result.status !== 'ok'), notRun = total - done.length;
   const wall = Date.now() - started, sum = done.reduce((all, result) => all + result.seconds * 1000, 0);
   console.log(`[${options.label}] finished in ${seconds(wall)}s: ${done.length - bad.length} ok, ${bad.length} failed${notRun ? `, ${notRun} not started after the failure` : ''}; the jobs add up to ${seconds(sum)}s (${(sum / Math.max(wall, 1)).toFixed(1)}x)`);
+  for (const result of bad) console.log(`[${options.label}] ${result.status.toUpperCase()} ${result.name}`);
   const slow = [...done].sort((a, b) => b.seconds - a.seconds).slice(0, 5).map(result => `${result.name} ${result.seconds.toFixed(0)}s`);
   console.log(`[${options.label}] slowest: ${slow.join(', ')}`);
-  for (const result of bad) console.log(`[${options.label}] ${result.status.toUpperCase()} ${result.name}`);
   if (options.report) {
     options.report = options.report.replace('%p', String(process.pid)); // one file per run, so two runs never write the same one
     fs.mkdirSync(path.dirname(path.resolve(options.report)), { recursive: true });

@@ -43,12 +43,27 @@ const reset = () => fs.rmSync(log, { force: true });
   assert.match(out, /1 failed, 1 not started after the failure/);
 }
 
-// --keep-going runs the rest.
+// --keep-going runs the rest, and the run then reports every failure at the end.
 {
   reset();
   const { status } = run(['-j', '1', '--keep-going'], [job('process.exit(1)'), note('after')]);
   assert.equal(status, 1);
   assert.deepEqual(lines(), ['after']);
+}
+
+// --keep-going (what `make test-ui` passes): every job runs even after a failure, the summary lists each failed job by name, and the exit
+// status is non-zero; an all-green run still exits 0.
+{
+  reset();
+  const { status, out } = run(['-j', '1', '--keep-going'], [note('a'), job("console.log('boom one'); process.exit(7)"), note('c'), job('process.exit(1)')]);
+  assert.equal(status, 1);
+  assert.deepEqual(lines(), ['a', 'c'], 'the jobs after the first failure still run');
+  assert.match(out, /finished in [\d.]+s: 2 ok, 2 failed/);
+  const summary = out.slice(out.indexOf('finished in'));
+  assert.match(summary, /FAIL node -e.*boom one/, 'the failed job is named in the end summary');
+  assert.match(summary, /FAIL node -e.*process\.exit\(1\)/, 'and the second one too');
+  reset();
+  assert.equal(run(['-j', '1', '--keep-going'], [note('x'), note('y')]).status, 0, 'all green with --keep-going: exit 0');
 }
 
 // Jobs run side by side: two jobs that wait for each other's file only finish when they overlap.
