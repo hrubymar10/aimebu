@@ -862,9 +862,24 @@ func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame 
 				return "", false
 			}
 		}
+		// A retiring instance (the one the server holds as retiring, or an older build whose hello said restart-pending) speaks for an
+		// agent the newer instance has already taken: its frames of an older generation are the swap racing itself, the same protocol
+		// working a stale_rev ack is, and are refused without a report (AIMEBU_V2-Z). A stale generation from the active connection,
+		// or one newer than the server knows, still reports: neither is explained by a retire.
+		if frame.Generation <= generation && frame.Generation <= agent.Generation && s.connRetiring(c) {
+			return "stale_generation", true
+		}
 		return "stale_generation", false
 	}
 	return "", false
+}
+
+// connRetiring says the connection is the machine's retiring instance. The flag is written by a newer instance's hello under machineMu
+// while this connection's frames are being read on another goroutine, so the read takes the lock too. The caller holds no lock.
+func (s *Server) connRetiring(c *machineConn) bool {
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	return c.retiring
 }
 
 func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) error {
