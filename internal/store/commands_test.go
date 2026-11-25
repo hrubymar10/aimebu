@@ -226,7 +226,7 @@ func TestCommandStartAfterItsEndKeepsTheEnd(t *testing.T) {
 	if _, err := s.FinishCommand(ctx, job.ID, CommandResult{State: "done", ExitCode: &code, StartedAt: "2026-11-19T10:00:00.000000000Z"}); err != nil {
 		t.Fatal(err)
 	}
-	started, err := s.RecordCommandStarted(ctx, job.ID, "2026-11-19T10:00:05.000000000Z", "/visible/log", "/visible")
+	started, err := s.RecordCommandStarted(ctx, job.ID, "", "2026-11-19T10:00:05.000000000Z", "/visible/log", "/visible")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestCommandStartAfterItsEndKeepsTheEnd(t *testing.T) {
 	if _, err := s.FailCommandStart(ctx, job.ID, "late refusal"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("a finished job cannot fail its start: %v", err)
 	}
-	if _, err := s.RecordCommandStarted(ctx, "cmd_missing", "x", "", ""); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := s.RecordCommandStarted(ctx, "cmd_missing", "", "x", "", ""); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("no such job: %v", err)
 	}
 }
@@ -274,7 +274,7 @@ func TestInferredCommandEndGivesWayToTheMachinesEvidence(t *testing.T) {
 	if _, err := s.FailUnconfirmedCommand(ctx, never.ID); err != nil {
 		t.Fatal(err)
 	}
-	job, err := s.RecordCommandStarted(ctx, never.ID, timestamp(), "/v/log", "/v")
+	job, err := s.RecordCommandStarted(ctx, never.ID, "", timestamp(), "/v/log", "/v")
 	if err != nil || job.State != "running" || job.Error != "" || job.EndedAt != "" {
 		t.Fatalf("a late start revives a job inferred never started: %+v err=%v", job, err)
 	}
@@ -282,7 +282,7 @@ func TestInferredCommandEndGivesWayToTheMachinesEvidence(t *testing.T) {
 	if _, err := s.FailCommandStart(ctx, refused.ID, "refused by the machine"); err != nil {
 		t.Fatal(err)
 	}
-	if job, _ := s.RecordCommandStarted(ctx, refused.ID, timestamp(), "", ""); job.State != "failed" {
+	if job, _ := s.RecordCommandStarted(ctx, refused.ID, "", timestamp(), "", ""); job.State != "failed" {
 		t.Fatalf("a refusal is the machine's own answer, not an inference: %+v", job)
 	}
 }
@@ -374,5 +374,26 @@ func TestCommandFromAnotherProjectsRoomIsRefused(t *testing.T) {
 		if !strings.Contains(err.Error(), "another project") || !strings.Contains(err.Error(), "your own project") {
 			t.Fatalf("the refusal must say what is wrong and what to do: %v", err)
 		}
+	}
+}
+
+// A start report from an instance other than the job's owner is refused: it would make the job running while only the owner's reports count.
+func TestRecordCommandStartedRefusesAnotherInstance(t *testing.T) {
+	t.Parallel()
+	x := newInstanceFixture(t)
+	ctx := context.Background()
+	job, _, err := x.s.CreateCommandJob(ctx, CommandJob{AgentID: x.oldAgent.ID, MachineID: "mch_test", JournalID: x.oldJournal, ProjectID: x.f.project.ID,
+		RoomID: x.f.room.ID, Cmd: "true", CheckoutPath: "/tmp/checkout"}, RequestKey{ActorKind: "agent", ActorID: x.oldAgent.ID, Kind: "command_run", Key: "owner-check", Digest: "owner-check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.s.RecordCommandStarted(ctx, job.ID, x.newJournal, timestamp(), "/v/log", "/v"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a start from another instance: %v", err)
+	}
+	if current, _ := x.s.CommandJobByAnyAgent(ctx, job.ID); current.State != "queued" {
+		t.Fatalf("job %+v", current)
+	}
+	if started, err := x.s.RecordCommandStarted(ctx, job.ID, x.oldJournal, timestamp(), "/v/log", "/v"); err != nil || started.State != "running" {
+		t.Fatalf("owner start %+v %v", started, err)
 	}
 }

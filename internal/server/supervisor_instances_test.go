@@ -10,6 +10,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func dialInstance(t *testing.T, f *fixture, journal, build string, held []string, agents []protocol.HelloAgent) (*websocket.Conn, protocol.Frame) {
@@ -309,5 +310,53 @@ func TestRetiredSupervisorGraceIsAbsentFromIsolationAPI(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("removed setting was accepted: %d", response.StatusCode)
+	}
+}
+
+// run_command picks the instance once, when it creates the job: a hello that moves the active instance on before the run request is sent must
+// not send the command to the new instance while the job names the old one.
+func TestCommandRunGoesToTheInstanceTheJobNames(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	agent, _ := f.createToolAgent(t, "role_worker_default")
+	f.srv.Version = "first"
+	old, _ := dialInstance(t, f, "first-journal", "first", []string{agent.ID}, nil)
+	job, _, err := f.db.CreateCommandJob(t.Context(), store.CommandJob{AgentID: agent.ID, MachineID: f.machineID, JournalID: "first-journal", ProjectID: f.project.ID,
+		RoomID: f.room.ID, Cmd: "make test", CheckoutPath: "/tmp/toolbox"}, store.RequestKey{ActorKind: "agent", ActorID: agent.ID, Kind: "command_run", Key: "swap", Digest: "swap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.Version = "second"
+	current, _ := dialInstance(t, f, "second-journal", "second", nil, nil)
+	readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.RetireAtIdle })
+	if active, err := f.srv.machineForDispatch(f.machineID); err != nil || active.journalID != "second-journal" {
+		t.Fatalf("active instance %+v: %v", active, err)
+	}
+	answered := make(chan error, 1)
+	go func() {
+		_, err := f.srv.machineCommand(context.Background(), f.machineID, protocol.Frame{V: protocol.Version, Type: protocol.CommandRun, ReqID: job.ID, JobID: job.ID,
+			AgentID: agent.ID, Command: &protocol.CommandSpec{JobID: job.ID, AgentID: agent.ID, Cmd: job.Cmd, CheckoutPath: "/tmp/toolbox"}}, 3*time.Second)
+		answered <- err
+	}()
+	run := readCommandFrame(t, old, func(frame protocol.Frame) bool { return frame.Type == protocol.CommandRun })
+	if run.JobID != job.ID {
+		t.Fatalf("run frame %+v", run)
+	}
+	writeCommandFrame(t, old, commandStartedFrame(run))
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+	// The new instance never got the request: its next frame must not be a run.
+	readCtx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	for {
+		_, data, err := current.Read(readCtx)
+		if err != nil {
+			break
+		}
+		var frame protocol.Frame
+		if json.Unmarshal(data, &frame) == nil && frame.Type == protocol.CommandRun {
+			t.Fatalf("the new instance was sent the command: %+v", frame)
+		}
 	}
 }

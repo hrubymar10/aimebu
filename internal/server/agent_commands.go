@@ -146,7 +146,7 @@ func (s *Server) agentToolCommandRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The machine reader has already recorded the start (and a fast command's end may have come first): this only returns the row.
-	started, err := s.Store.RecordCommandStarted(ctx, created.ID, time.Now().UTC().Format(commandTimeLayout),
+	started, err := s.Store.RecordCommandStarted(ctx, created.ID, created.JournalID, time.Now().UTC().Format(commandTimeLayout),
 		result.VisibleLogPath, result.VisibleCwd)
 	if err != nil {
 		fail(w, err)
@@ -202,7 +202,7 @@ func (s *Server) applyCommandStarted(ctx context.Context, conn *machineConn, fra
 		}
 		return
 	}
-	job, err := s.Store.RecordCommandStarted(ctx, frame.JobID, time.Now().UTC().Format(commandTimeLayout), frame.VisibleLogPath, frame.VisibleCwd)
+	job, err := s.Store.RecordCommandStarted(ctx, frame.JobID, conn.journalID, time.Now().UTC().Format(commandTimeLayout), frame.VisibleLogPath, frame.VisibleCwd)
 	if err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("recording a command's start: %w", err))
 		return
@@ -399,7 +399,9 @@ func (c *machineConn) commandInContainer(spec protocol.CommandSpec) bool {
 func (s *Server) machineCommand(ctx context.Context, machineID string, frame protocol.Frame, timeout time.Duration) (protocol.Frame, error) {
 	var conn *machineConn
 	var err error
-	if frame.JobID != "" && frame.Type != protocol.CommandRun {
+	if frame.JobID != "" {
+		// Every frame about a job, the run request included, goes to the instance the job names: run_command picked that instance when it
+		// created the job, and a hello that moved the active instance on since must not send the command to a different one.
 		job, lookupErr := s.Store.CommandJobByAnyAgent(ctx, frame.JobID)
 		if lookupErr != nil {
 			return protocol.Frame{}, lookupErr

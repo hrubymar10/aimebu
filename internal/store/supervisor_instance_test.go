@@ -68,7 +68,7 @@ func seedRunningJob(t *testing.T, s *Store, f executionFixture, agent Agent, jou
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job, err = s.RecordCommandStarted(ctx, job.ID, timestamp(), "/v/log", "/v"); err != nil {
+	if job, err = s.RecordCommandStarted(ctx, job.ID, job.JournalID, timestamp(), "/v/log", "/v"); err != nil {
 		t.Fatal(err)
 	}
 	return job

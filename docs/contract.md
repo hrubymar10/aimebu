@@ -1889,7 +1889,12 @@ it never silently reruns a turn with uncertain effects.
   (`403 forbidden`: the note carries this checkout's output tail, and one
   project's output never lands in another project's room), and so is any other
   room of another project; the server
-  sends it only when the hello advertised `supports_commands`. The
+  sends it only when the hello advertised `supports_commands`. It sends it to
+  the instance the job names (`journal_id`, chosen once when the job is
+  created), not to whichever instance is active at the moment of sending, and a
+  `command_started` from any other instance is refused; when the named instance
+  is no longer connected the start fails cleanly (`409 command_refused`) and
+  the job is `failed`, never `running` on the wrong instance. The
   supervisor runs it in its own process group in the agent's checkout (`cwd`
   is relative to it and may not leave it), captures stdout and stderr into the
   job's log (redacted, capped, in `<checkout>/.aimebu/commands/`), and records

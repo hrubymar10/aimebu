@@ -307,9 +307,18 @@ func (s *Store) RunningTurnRoom(ctx context.Context, agentID string) (string, er
 // RecordCommandStarted marks a job as running on its machine, with the spellings of its log and working directory the agent can open. A
 // job that already ended (a fast command's end can arrive before its start is recorded) keeps its end and only gains those spellings: the
 // current row is returned either way, and sql.ErrNoRows means there is no such job.
-func (s *Store) RecordCommandStarted(ctx context.Context, id, startedAt, visibleLogPath, visibleCwd string) (CommandJob, error) {
+func (s *Store) RecordCommandStarted(ctx context.Context, id, journalID, startedAt, visibleLogPath, visibleCwd string) (CommandJob, error) {
 	var job CommandJob
 	err := s.Tx(ctx, func(tx *Tx) error {
+		// Only the instance the job names can report its start: a start from another one would make the job running while the instance that
+		// really holds it is the only one whose reports are accepted.
+		var owner sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT journal_id FROM command_job WHERE id=?`, id).Scan(&owner); err != nil {
+			return err
+		}
+		if owner.String != "" && owner.String != journalID {
+			return ErrForbidden
+		}
 		// A job inferred never started that the machine says it did start is running after all.
 		if _, err := tx.Exec(`UPDATE command_job SET state='running',started_at=COALESCE(started_at,?),visible_log_path=?,
 			visible_cwd=?,error=NULL,ended_at=NULL WHERE id=? AND (state='queued' OR (state='failed' AND error=?))`,

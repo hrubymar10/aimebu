@@ -1220,7 +1220,10 @@ appear in the supervisor's catalog.
 An agent can start a long command (a test gate, 15–30 minutes) that runs
 outside its turn, so it neither holds the turn nor dies with it: `run_command`
 in the agent toolbox, which records a `command_job` and sends `command_run` to
-the machine (see the contract for the frames). The supervisor runs a native
+the machine (see the contract for the frames). The request goes to the supervisor
+instance the job names, chosen when the job is created: an instance that
+replaces it a moment later never receives the command, and the job never runs on
+one instance while another owns it. The supervisor runs a native
 one in a session of its own (a container one in its own process group), in
 the agent's own checkout (`cwd` may not leave it: it is
 cleaned first, so `..`, `./..` or `a/../..` is refused on the server and again
