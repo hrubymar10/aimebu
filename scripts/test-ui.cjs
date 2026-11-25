@@ -7737,7 +7737,7 @@ async function main() {
       await invitedPage.evaluate(() => document.querySelector('#settings-close').click());
       // Taking the flag away ends the reach at once.
       await first.evaluate(() => [...document.querySelectorAll('#settings-users .user-accounts .user-row')].find(row => row.querySelector('strong').textContent === 'invitee').querySelector('.user-admin-toggle input').click());
-      await first.waitForFunction(() => ![...document.querySelectorAll('#settings-users .user-accounts .user-row')].some(row => row.querySelector('strong').textContent === 'invitee' && row.querySelector('.user-badge')));
+      await first.waitForFunction(() => [...document.querySelectorAll('#settings-users .user-accounts .user-row')].some(row => row.querySelector('strong').textContent === 'invitee' && row.querySelector('.user-admin-toggle input')?.checked === false && !row.querySelector('.user-badge')));
       assert.deepEqual(await flagOf(invitedPage), [false, false], 'with the flag gone the account is ordinary again');
       // An admin who is in no project still sees the accounts (they do not wait for a project to be chosen).
       const asOwner = (method, url, body) => first.evaluate(async (m, u, b) => {
