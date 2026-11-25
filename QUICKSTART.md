@@ -9,7 +9,7 @@ Then: [running it permanently](#running-it-permanently), [upgrading from v1](#up
 
 You need `git`, a Go toolchain at least as new as the `go` line in [`go.mod`](go.mod) (an older Go downloads the right one itself), and at least one coding-agent CLI that is already installed and signed in: Claude Code, Codex, Pi, OpenCode or Mistral Vibe. aimebu starts these CLIs for you; it does not install or log them in.
 
-`master` is still v1. Always clone the `v2` branch, or the tag `v2.0.0-alpha.1`.
+`master` is v2 (v1 lives on the `v1` branch). Clone the default branch, or pin the tag `v2.0.0-alpha.1`.
 
 ---
 
@@ -18,7 +18,7 @@ You need `git`, a Go toolchain at least as new as the `go` line in [`go.mod`](go
 ### 1. Get it
 
 ```sh
-git clone --branch v2 https://github.com/hrubymar10/aimebu.git
+git clone https://github.com/hrubymar10/aimebu.git
 export PATH="$PWD/aimebu/bin:$PATH"
 aimebu version
 ```
@@ -133,7 +133,7 @@ If `HOME` changes, export your Go cache locations from the real environment firs
 ### 2. Get and build it
 
 ```sh
-git clone --branch v2 https://github.com/hrubymar10/aimebu.git "$HOME/aimebu-src"
+git clone https://github.com/hrubymar10/aimebu.git "$HOME/aimebu-src"
 export PATH="$HOME/aimebu-src/bin:$PATH"
 command -v aimebu
 aimebu version
@@ -143,7 +143,7 @@ Expect the path `.../aimebu-src/bin/aimebu`, then `Building aimebu...` once, the
 
 - `command -v` prints another path, or the version does not start with `aimebu v2`: an older (v1) `aimebu` is earlier on `PATH`. Put the clone's `bin` first as above, or call `$HOME/aimebu-src/bin/aimebu` by its full path. Never run a v1 binary against a v2 data folder, or the reverse.
 - `go: command not found`: install Go (step 0).
-- `unknown revision v2`: the clone is old or the branch name is wrong; `git -C "$HOME/aimebu-src" branch -a`.
+- The clone prints v1 (`aimebu v1...`) or lacks `internal/`: it was made before master became v2, or it is on the `v1` branch; check `git -C "$HOME/aimebu-src" branch -a`.
 - Network errors while building: the toolchain or modules could not download; retry, or check the proxy.
 
 ### 3. Choose the credentials and start the server
@@ -300,7 +300,7 @@ Tell the person: the address (`aimebu fe` opens it), the login `owner` and the p
 - Stop it with the manager (`launchctl bootout`, `systemctl --user stop`), not with `aimebu server stop`, which would only have the manager start it again.
 - A service that must run harness CLIs outside the manager's default `PATH` needs that `PATH` set in its definition.
 
-Example definitions for launchd and a systemd user unit are in [the release guide](docs/release.md#running-as-a-service); they are examples that were not exercised there, so adjust paths first. Homebrew's tap still installs v1 (it follows `master`), so do not use `brew install` for v2 until the tap is updated.
+Example definitions for launchd and a systemd user unit are in [the release guide](docs/release.md#running-as-a-service); they are examples that were not exercised there, so adjust paths first. Homebrew's tap was written for v1 and has not been checked against v2, so do not use `brew install` for v2 until the tap is updated.
 
 To update later: `git -C <clone> pull`, delete the cached `aimebu-*` binary in the clone, restart the service. See the README's [Update](README.md#update).
 

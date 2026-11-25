@@ -1019,10 +1019,10 @@ depend on an `aimebu` binary in the harness image.
 An image that installs `aimebu` anyway (for an agent to run by hand, or for a
 v1 `aimebu mcp` entry in the mounted Claude configuration) must install it from
 the v2 line. Until a v2 tag is published in the public repository, pin a
-commit of the `v2` branch:
+commit of `master`:
 
 ```sh
-go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@$(git ls-remote https://github.com/hrubymar10/aimebu refs/heads/v2 | cut -f1)
+go install github.com/hrubymar10/aimebu/v2/cmd/aimebu@$(git ls-remote https://github.com/hrubymar10/aimebu refs/heads/master | cut -f1)
 ```
 
 After a v2 tag is published, install it with

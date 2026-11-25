@@ -106,13 +106,13 @@ Requirements: `git`, and a Go toolchain at least as new as the `go` line in
 needed only for harness-docker launchers and for `make test-web`.
 
 ```sh
-git clone --branch v2 https://github.com/hrubymar10/aimebu.git
+git clone https://github.com/hrubymar10/aimebu.git
 export PATH="$PWD/aimebu/bin:$PATH"
 aimebu version     # builds on first run, then runs
 ```
 
 To pin the alpha release, clone with `--branch v2.0.0-alpha.1` instead.
-`master` is still v1, so always name the branch or tag.
+`master` is v2; v1 stays on the `v1` branch.
 
 The clone goes first on `PATH` so that an installed v1 `aimebu` does not shadow it.
 `bin/aimebu` is a wrapper that compiles the binary on first use and caches it
@@ -139,7 +139,7 @@ Or run once with `AIMEBU_FORCE_BUILD=1 aimebu version` to build into a
 temporary binary and leave the cache alone. On a clone that follows the
 remote's default branch the wrapper also offers to update itself, and
 `aimebu update` / `aimebu update --check` do it on demand; a clone on another
-branch (such as `v2` while the default is still `master`) is never touched,
+branch (such as `v1`, or a feature branch) is never touched,
 only reported. The variables that control this are in
 [the feature reference](docs/reference.md#installing-building-and-updating-the-wrapper).
 Servers apply database migrations on start, after writing a verified backup to

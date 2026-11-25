@@ -105,10 +105,9 @@ If they are, a script in `scripts/release.sh` (not written yet).
 
 ## 3. Distribution
 
-Decided: development stays in the **private** `hrubymar10/aimebu_v2`. At
-stable, `v2` is squashed or rebased into the public v1 origin
-(`hrubymar10/aimebu`), which then becomes v2. Distribution is from that public
-repo.
+Decided: development stayed in the **private** `hrubymar10/aimebu_v2`. The
+public repo (`hrubymar10/aimebu`) became v2 on 2026-11-25: its `master` is v2
+(see B2 in section 6). Distribution is from that public repo.
 
 **Primary path, as in v1: clone the repo and run `bin/aimebu`**, a bash wrapper
 that builds the binary on the user's machine on first use and re-uses the
@@ -299,11 +298,9 @@ published. See Homebrew's [formula service
 syntax](https://docs.brew.sh/Formula-Cookbook.html#service-files) and
 [`brew services` behavior](https://docs.brew.sh/Manpage#services-subcommand).
 
-**Before the public push:** keep v1 reachable. The v1 history on `master` is
-replaced by v2, so tag or branch its last commit first (for example tag
-`v1-final` and keep a `v1` branch), and decide whether `master` is force-pushed
-or v2 lands as a merge. That is an owner decision; the plan does not assume
-either. Check the squashed history and the repo contents are fine to publish.
+**Before the public push (done 2026-11-25):** v1 was kept reachable on the `v1`
+branch (the owner decided against a v1 tag), and `master` was fast-forwarded to
+v2. Check the history and the repo contents are fine to publish.
 
 **Rehearsal:** cut `v2.0.0-rc.1` on the private `aimebu_v2` first and install
 from a fresh clone with `bin/aimebu` on both macOS and Linux.
@@ -345,7 +342,7 @@ Structure for `RELEASE_NOTES.md` or the GitHub release body:
 5. Known issues: whatever is still open at tag time from section 6.
 6. Checksums.
 
-There is no changelog in the repo. The `v2` branch carries v1's history plus
+There is no changelog in the repo. `master` carries v1's history plus
 per-subsystem `feat(v2)` commits on top of the v1 removal, so commit messages
 are too coarse to generate notes from. Write them by hand from the README and
 docs.
@@ -371,8 +368,9 @@ by this document):
   startup warning. `make dev` uses an isolated root and ports unless overridden.
   An older development instance at `~/.aimebu2` remains separate through an
   explicit `AIMEBU_CONFIG_DIR`; moving its data is a deliberate migration.
-- **B2 Public repo cutover** (section 3): tag the last v1 commit, squash or
-  rebase `v2` into `hrubymar10/aimebu`, and check the published history.
+- **B2 Public repo cutover: done** (section 3). `master` has been v2 since
+  2026-11-25; v1 is kept on the `v1` branch, with no v1 tag (owner's decision);
+  the `v2` branch was deleted on the remote.
 - **B3 Release wording: done.** The README, CLI version and web header no longer
   label this build as a development preview. Untagged builds retain VCS stamping.
 - **B4 `bin/aimebu` and the README Install section** (section 3): done; the
@@ -392,7 +390,7 @@ Not blockers (can ship after 2.0.0):
 
 1. Blockers in section 6 closed or consciously deferred, including B1 (defaults
    switched to `~/.aimebu`, `AIMEBU_*`, 9997) and B2 (public repo plan).
-2. On `v2`, clean tree: `make test-full` green (`fmt-check`, `vet`, `test-race`,
+2. On `master`, clean tree: `make test-full` green (`fmt-check`, `vet`, `test-race`,
    `test-web`); `make test-ui` green.
 3. The cutover runbook rehearsed on a copy of real v1 data.
 4. Docs read as release docs: no stale "development build" or "until cutover"
@@ -407,8 +405,8 @@ Not blockers (can ship after 2.0.0):
    build on every target.
 6. Rehearse on the private repo: tag `v2.0.0-rc.1` on `aimebu_v2` and install
    from a fresh clone of it.
-7. Preserve v1 (tag its last commit, keep a `v1` branch), move `v2` into
-   `hrubymar10/aimebu`, and tag `v2.0.0` on the release commit (signed per the
+7. Done 2026-11-25: v1 preserved on the `v1` branch (no v1 tag, owner's
+   decision) and `master` made v2 in `hrubymar10/aimebu`. Remaining: tag `v2.0.0` on the release commit (signed per the
    repo's commit policy); push the tag. Create the GitHub release with the
    notes (binaries and `SHA256SUMS` only if the optional route is taken).
 8. Install from a fresh clone of the public repo at the tag and confirm
@@ -417,4 +415,4 @@ Not blockers (can ship after 2.0.0):
    published tag, with `<tag>` replaced by the release tag. Re-check the
    Homebrew formula.
 9. Update the Homebrew tap if it is kept.
-10. Point v1 users at the migration guide; v1 stays reachable at its tag and `v1` branch.
+10. Point v1 users at the migration guide; v1 stays reachable on the `v1` branch.
