@@ -3,14 +3,17 @@ import { rights } from '../../api.js';
 import { mountPreactPage } from '../mount-page.js';
 import { AgentsStore } from './store.js';
 import { AgentsList, HumansList } from './agents-list.js';
+import { lazyComponent } from '../../lazy.js';
 import { SpawnForm } from './spawn-dialog.js';
 import { SpawnStore } from './spawn-store.js';
 import { SwitchForm } from './switch-form.js';
 import { SwitchStore } from './switch-store.js';
 import { LogStore } from './log-store.js';
-import { LogDialog } from './log-dialog.js';
 import { agentLabel } from '../../sender-identity.js';
 import { captureError } from '../../telemetry.js';
+
+// The agent log popup is a chunk, fetched when its dialog first draws (the spawn form stays in the entry: its dialog is read at once by the page's own flows).
+const LogDialog = lazyComponent(() => import('./log-dialog.js').then(module => module.LogDialog), 'log-dialog');
 
 // How long after a read of the room's agents the next one may start (events that come in the meantime ask for one more, together).
 const RESYNC_MS = 500;

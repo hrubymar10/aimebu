@@ -74,8 +74,8 @@ func TestThePageStartsFromTheBundle(t *testing.T) {
 	var sharedSources []string
 	// Minified (the sources are 1.3 MB with their comments and indentation; the templates' own text is kept as it is), not a stub, and no eval: the policy
 	// forbids it, and a build that quietly started to need it would only fail in a browser.
-	if len(source) < 200_000 || len(source) > 900_000 || bytes.Contains(source, []byte("eval(")) || bytes.Contains(source, []byte("new Function(")) {
-		t.Fatalf("the bundle is %d bytes (want 200 KB to 0.9 MB for the entry chunk), or uses eval", len(source))
+	if len(source) < 200_000 || len(source) > entryCeiling || bytes.Contains(source, []byte("eval(")) || bytes.Contains(source, []byte("new Function(")) {
+		t.Fatalf("the bundle is %d bytes (want 200 KB to 0.592 MB for the entry chunk), or uses eval", len(source))
 	}
 	if !bytes.Contains(source, []byte("//# sourceMappingURL=app.js.map")) {
 		t.Error("the bundle does not name its source map")
@@ -337,13 +337,15 @@ func TestAcceptsGzip(t *testing.T) {
 	}
 }
 
+// entryCeiling is the size the entry script may not pass (A12-14: it was 900,000 while the entry was about 606 KB; it is now the measured 580 KB plus about 2%).
+const entryCeiling = 592_000
+
 // The size ceilings count every script of the build: the entry and every chunk (the lazily fetched ones and the ones the entry imports at load), the maps
-// left out. Measured with the project status variants, the role prompt extensions (a project's extension textarea and its
-// final-prompt preview, about 3.5 KB), and the reused-name mention forms (the -2 ordinal resolver and composer offer,
-// about 3.4 KB): entry about 602 KB, all scripts about 1.111 MB, 357 KB gzipped (each file packed on its own, as served).
-// The room references of A10-3b added about 3.7 KB raw and 1 KB gzipped; the leader raised the total ceiling to 1.12 MB
-// for it (owner approval with the A10-3b review). The total ceiling leaves only a small margin for build variance
-// while the gzip ceiling is unchanged.
+// left out. Measured after A12-14 (the emoji picker and the agent log popup became chunks): entry about 580 KB (606 KB before),
+// all scripts about 1.117 MB, 361.5 KB gzipped (each file packed on its own, as served). Splitting adds a little glue between chunks, so the entry came down
+// by 26 KB while all scripts went up by 3 KB and the gzipped total by 3.5 KB: the all-scripts ceiling is 1.125 MB and the gzip ceiling 366 KB. The
+// temporary allowance of A10-9 (the total ceiling raised to 1.12 MB for the room references) is gone; the entry ceiling is the one that guards the
+// first paint.
 // The gzipped size is not the same in every environment: one tagged build packed to 337,527 bytes on a development machine and to 340,550 in CI.
 // The gzip ceiling leaves room for that variance (about 1%) and still catches real growth.
 func TestTheBundleStaysWithinItsCeilings(t *testing.T) {
@@ -361,7 +363,7 @@ func TestTheBundleStaysWithinItsCeilings(t *testing.T) {
 		packed += len(chunk.gz)
 	}
 	t.Logf("entry %d bytes, all scripts %d bytes, %d gzipped", len(assets.bundle.js), total, packed)
-	if len(assets.bundle.js) > 900_000 || total > 1_120_000 || packed > 362_000 {
-		t.Errorf("the build is over a ceiling: entry %d (0.9 MB), all scripts %d (1.12 MB), gzipped %d (362 KB)", len(assets.bundle.js), total, packed)
+	if len(assets.bundle.js) > entryCeiling || total > 1_125_000 || packed > 366_000 {
+		t.Errorf("the build is over a ceiling: entry %d (0.592 MB), all scripts %d (1.125 MB), gzipped %d (366 KB)", len(assets.bundle.js), total, packed)
 	}
 }

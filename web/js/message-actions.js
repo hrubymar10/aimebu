@@ -1,5 +1,5 @@
 import { html, h, render, useState, useLayoutEffect, useRef } from './ui.js';
-import { openEmojiPicker } from './emoji-picker.js';
+import { openEmojiPicker } from './emoji-picker-lazy.js';
 import { openContextMenu } from './components/context-menu.js';
 import { messageMenu } from './pages/chat/message-menu.js';
 

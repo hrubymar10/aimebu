@@ -1,7 +1,7 @@
 import { html } from '../../ui.js';
 import { Icon } from '../../message-actions.js';
 import { copyText } from '../../markdown.js';
-import { openEmojiPicker } from '../../emoji-picker.js';
+import { openEmojiPicker } from '../../emoji-picker-lazy.js';
 
 // The context menu of a message, in the list and in the thread panel: Mark unread from here, then what the message's toolbar and header already
 // do (react, reply, the conversation, copy the text and the link, and the debug inspector while it is switched on). A system notice has no

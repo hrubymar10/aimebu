@@ -17,7 +17,7 @@ import { RoomRefAutocomplete, RoomRefIndex, renderRoomRefs, roomOrdinals } from 
 import { EmojiAutocomplete } from './emoji-suggest.js';
 import { Notice } from './notice.js';
 import { enterSends } from './enter-key.js';
-import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
+import { closeEmojiPicker, openEmojiPicker } from './emoji-picker-lazy.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
 import { wakeMessageActions, releaseMessageActions } from './message-actions.js';
