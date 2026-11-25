@@ -195,9 +195,22 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* One line, always: the name takes the room the badges leave and is cut with an ellipsis (v1's own rule) when it is longer; it may shrink to nothing. The badges
    never shrink and never wrap, neither between them nor inside one (the bell pill's "🔔 1" has a space a browser may break at). */
 .room-item .room-item-top { flex-wrap: nowrap; }
+.room-item .room-name-line { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .room-item .room-item-name { flex: 1 1 0; min-width: 0; border: 0; background: transparent; text-align: left; }
+/* A project row also carries its task status pill. When the full name line and the pill do not both fit on one line, the row becomes three lines (name, pill,
+   preview). The name line (name, its buttons and the badges that fit) is one flex unit that wraps as a whole: the pill moves to its own line before anything
+   on the name line gives up room, and nothing there is cut while the line alone fits the row. Inside the line the badges flow after the name text and wrap
+   to a line of their own (above the pill) only when the name alone fills the column; the name is never shrunk or overlapped by a badge — a badge starts at
+   or after the name text's own right edge (the hover-actions slot's negative margin is cancelled here). The name itself is cut only when it alone is wider
+   than the row. The house icon and the expand chevron stay vertically centred on the whole row in both layouts. */
+.room-item .room-item-top:has(.project-status) { flex-wrap: wrap; row-gap: 2px; }
+.room-group > .room-item:has(.project-status-wrap) { align-items: center; }
+.room-item .room-item-top:has(.project-status) > .room-name-line { flex-wrap: wrap; max-width: 100%; row-gap: 2px; }
+.room-item .room-item-top:has(.project-status) > .room-name-line .room-item-name { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+.room-item .room-item-top:has(.project-status) > .room-name-line .room-project { flex: 0 1 auto; }
+.room-item .room-item-top:has(.project-status) > .room-name-line .room-item-actions-slot { margin-right: 0; }
 .room-restricted { display: inline-flex; align-items: center; color: var(--text-muted); }
-.room-item .room-item-top > :not(.room-item-name) { flex: none; white-space: nowrap; }
+.room-item :is(.room-item-top, .room-name-line) > :not(.room-item-name):not(.room-name-line) { flex: none; white-space: nowrap; }
 /* A nested row at the narrowest column leaves the badges less room than they need even with no name at all, and a badge must not wrap or leave the row, so the ones the
    row can do without go first, by the width of the row's own text column: the member count (also in the name's tooltip) and the mute bell; the pills that ask for
    the person's attention (the health flag, the bell, the unread count) always stay and tighten their padding. */
@@ -208,26 +221,15 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .project-status-wrap { display: inline-flex; flex: none; min-width: 0; }
 .room-item .project-status { display: inline-flex; align-items: center; justify-content: center; min-height: 20px; padding: 1px 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); color: var(--text-secondary); font: inherit; font-size: 10px; line-height: 1; cursor: pointer; }
 .room-item .project-status:is(:hover, :focus-visible) { border-color: var(--accent); outline-color: var(--accent); }
-.project-status-a, .project-status-b, .project-status-b-part, .project-status-c, .project-status-d { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.project-status-a { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .room-item .project-status-a.project-status-needs { color: var(--orange); font-weight: 700; }
 :is([data-theme="light"], [data-theme$="-light"]) .room-item .project-status-a.project-status-needs { color: color-mix(in srgb, var(--orange) 75%, #000); }
 .room-item .project-status:has(.project-status-a.project-status-needs) { background: color-mix(in srgb, var(--orange) 19%, var(--bg-primary)); border-color: var(--orange); }
 .project-status-mark.project-status-needs { color: var(--orange); }
 .project-status-mark.project-status-waiting { color: var(--text-secondary); opacity: .5; }
 .project-status-mark.project-status-working { color: var(--accent); }
-.project-status-b-total { display: none; }
-.project-status-c { gap: 2px; }
-.project-status-overflow { margin-left: 2px; }
-.project-status-d { position: relative; justify-content: center; width: 21px; height: 21px; font-weight: 700; }
-.project-status-d svg { position: absolute; inset: 0; }
-.project-status-d span { position: relative; }
-.project-status-switch { display: flex; gap: 2px; padding: 2px 8px 5px; }
-.project-status-switch button { min-width: 21px; min-height: 21px; padding: 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 10px; cursor: pointer; }
-.project-status-switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-dim); font-weight: 700; }
 [data-theme^="high-contrast"] .room-item .project-status { border-color: var(--text-primary); color: var(--text-primary); }
 [data-theme^="high-contrast"] .project-status-mark { color: var(--text-primary); }
-[data-theme^="high-contrast"] .project-status-switch button[aria-pressed="true"] { outline: 2px solid var(--accent); }
-@container (max-width: 125px) { .project-status-b-part { display: none; } .project-status-b-total { display: inline; } }
 @media (prefers-reduced-motion: reduce) { .project-status, .project-status-mark { animation: none; transition: none; } }
 .room-item .room-item-name:hover { background: transparent; border-color: transparent; }
 .room-item.archived .room-item-name, .room-item.closing .room-item-name, .agent-chat-offer .room-item-name { color: var(--text-muted); }

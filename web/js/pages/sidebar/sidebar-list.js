@@ -2,7 +2,6 @@ import { html, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js'
 import { previewText } from '../../preview.js';
 import { formDialog } from '../../dialogs.js';
 import { roomSilenced, mutedNow } from '../../room-notify.js';
-import { rights } from '../../api.js';
 import { countedActive, leafView, roomStatus, roomType, tracksStatus, treeOf } from './model.js';
 import { loadPreviewAll } from './store.js';
 import { ProjectStatus } from './project-status.js';
@@ -108,20 +107,21 @@ function Row({ view, store, ctx, preview, onToggle }) {
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
     ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${onToggle || (() => store.toggleCollapsed(room.id))}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
     <span class="room-item-icon-group"><span class=${`room-item-icon room-type-${type.key}`} data-room-type=${type.key} role="img" aria-label=${type.label} title=${type.label}><span class=${`icon-mask icon-mask-${type.icon}`} aria-hidden="true"></span></span></span>
-    <div class="room-item-info"><div class="room-item-top">
+    <div class="room-item-info"><div class="room-item-top"><span class="room-name-line">
     <button type="button" class="row-btn room-item-name" aria-current=${isActive ? 'true' : undefined} title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
-    ${room.restricted && html`<span class="room-restricted" role="img" aria-label="Restricted room" title="Restricted room"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg></span>`}
     <span class="room-item-actions-slot"><span class="room-item-actions">${controls && manual && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
     <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} /></span></span>
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class=${ctx.filtering ? 'room-project room-project-needed' : 'room-project'} title=${`Project ${projectName}`}>${projectName}</span>`}
+    ${counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`}
+    </span>
+    ${room.restricted && html`<span class="room-restricted" role="img" aria-label="Restricted room" title="Restricted room"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg></span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${status ? html`<span class=${`room-state room-status room-status-${status.key}`} role="img" title=${status.title} aria-label=${`${status.label}: ${status.title}`}>${status.label}</span>` : room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
-    ${counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`}
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
     ${view.mention && html`<span class="room-item-mention" role="img" title="You were mentioned" aria-label="You were mentioned"></span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
-    ${room.kind === 'home' && !archivedProject && html`<${ProjectStatus} counts=${ctx.statusCounts.get(room.project_id)} variant=${ctx.statusVariant} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} />`}
+    ${room.kind === 'home' && !archivedProject && html`<${ProjectStatus} counts=${ctx.statusCounts.get(room.project_id)} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} />`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
   return row;
@@ -190,7 +190,7 @@ function FilterBox({ store, button }) {
     if (button && form.current) form.current.append(button);
     return () => { if (button && header && button.parentElement !== header) header.insertBefore(button, header.querySelector('#edge-rooms')); };
   }, [button]);
-  return html`<form class="room-filter" ref=${form} onSubmit=${event => event.preventDefault()}><input type="text" class="room-filter-input" placeholder="Filter rooms…" autocomplete="off" aria-label="Filter rooms" value=${store.filter.value} onInput=${event => store.setFilter(event.currentTarget.value)} /></form>${(rights.owner || rights.admin) && html`<div class="project-status-switch" role="group" aria-label="Project status style">${['a', 'b', 'c', 'd'].map(variant => html`<button type="button" class="row-btn" key=${variant} aria-label=${`Project status style ${variant.toUpperCase()}`} aria-pressed=${String(store.statusVariant.value === variant)} onClick=${() => store.setStatusVariant(variant)}>${variant.toUpperCase()}</button>`)}</div>`}`;
+  return html`<form class="room-filter" ref=${form} onSubmit=${event => event.preventDefault()}><input type="text" class="room-filter-input" placeholder="Filter rooms…" autocomplete="off" aria-label="Filter rooms" value=${store.filter.value} onInput=${event => store.setFilter(event.currentTarget.value)} /></form>`;
 }
 
 export function SidebarList({ store, projectButton }) {
@@ -221,7 +221,7 @@ export function SidebarList({ store, projectButton }) {
     if (!room || room.kind === 'dm' || !room.attention_count) continue;
     projectAttention.set(room.project_id, (projectAttention.get(room.project_id) || 0) + room.attention_count);
   }
-  const ctx = { sort, active, counted, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention, statusCounts: store.projectStatus, statusVariant: store.statusVariant.value };
+  const ctx = { sort, active, counted, previewAll: loadPreviewAll(), filtering: !!tree?.filtering, projectAttention, statusCounts: store.projectStatus };
   useLayoutEffect(() => {
     if (!tree) return;
     store.collapsible.value = tree.collapsible;

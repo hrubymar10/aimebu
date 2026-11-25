@@ -4862,7 +4862,7 @@ async function main() {
       for (const row of document.querySelectorAll('.room-item')) {
         if (!row.getClientRects().length) continue;
         for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) {
-          const axis = glyph.closest('.room-item-actions-slot') ? row.querySelector('.room-item-top') : row;
+          const axis = glyph.closest('.room-item-actions-slot') ? row.querySelector('.room-name-line') : row;
           if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(axis)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(axis)).toFixed(1)}`);
         }
       }

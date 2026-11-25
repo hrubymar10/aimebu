@@ -197,16 +197,58 @@ func TestSidebarPreviewIsAPerAccountPreference(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	cookie, csrf := registerSecondUser(t, f, "second")
-	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_preview": "1", "sidebar_status_variant": "c"}}, true)
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_preview": "1"}}, true)
 	if resp.StatusCode != 200 {
 		t.Fatalf("store: %d", resp.StatusCode)
 	}
-	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["sidebar_preview"] != "1" || got["sidebar_status_variant"] != "c" {
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["sidebar_preview"] != "1" {
 		t.Fatalf("stored, read back %v", got)
 	}
 	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
-	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["sidebar_preview"] != "" || got["sidebar_status_variant"] != "" {
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["sidebar_preview"] != "" {
 		t.Fatalf("the choice leaked to another person: %v", got)
+	}
+}
+
+// The project status pill had A/B/C/D display variants; A is now the only one. A value stored while the choice existed stays in the
+// database and is read back, and a page that still sends the name has it accepted and dropped without losing the valid preferences
+// sent with it.
+func TestRetiredSidebarStatusVariantPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	me := f.request("GET", "/api/me", nil, false)
+	var user struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	me.Body.Close()
+	if err := f.db.SetUserPreferences(context.Background(), user.ID, map[string]string{"sidebar_status_variant": "d", "theme": "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request("GET", "/api/me/preferences", nil, false)
+	if resp.StatusCode != 200 {
+		t.Fatalf("get with a stored retired value: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["theme"] != "dark" || got["sidebar_status_variant"] != "d" {
+		t.Fatalf("read back %v", got)
+	}
+	// Sent with a valid name: 200, the valid one is stored, the retired one is dropped (the stored "d" is not replaced).
+	put := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_status_variant": "b", "theme": "light"}}, true)
+	if put.StatusCode != 200 {
+		t.Fatalf("a retired name next to a valid one: %d", put.StatusCode)
+	}
+	if got := prefsOf(t, put.Body, json.NewDecoder(put.Body).Decode); got["theme"] != "light" || got["sidebar_status_variant"] != "d" {
+		t.Fatalf("after put %v", got)
+	}
+	// Sent alone: still 200, nothing changes.
+	alone := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_status_variant": "a"}}, true)
+	if alone.StatusCode != 200 {
+		t.Fatalf("a retired name alone: %d", alone.StatusCode)
+	}
+	if got := prefsOf(t, alone.Body, json.NewDecoder(alone.Body).Decode); got["theme"] != "light" || got["sidebar_status_variant"] != "d" {
+		t.Fatalf("after put alone %v", got)
 	}
 }
 

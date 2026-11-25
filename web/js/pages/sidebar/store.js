@@ -13,9 +13,6 @@ const seenKey = 'aimebu2.rooms.seen';
 const sortKey = () => `aimebu2.ui.sidebar_sort.${currentUser}`, orderKey = () => `aimebu2.ui.sidebar_project_order.${currentUser}`;
 // Whether every room row shows its last message ('1'), or only the room that is open does (the default).
 const previewKey = () => `aimebu2.ui.sidebar_preview.${currentUser}`;
-const statusVariantKey = () => `aimebu2.ui.sidebar_status_variant.${currentUser}`;
-const statusVariants = ['a', 'b', 'c', 'd'];
-const loadStatusVariant = () => { try { const value = localStorage.getItem(statusVariantKey()); return statusVariants.includes(value) ? value : 'a'; } catch { return 'a'; } };
 export const loadPreviewAll = () => { try { return localStorage.getItem(previewKey()) === '1'; } catch { return false; } };
 function loadSort() { try { const value = localStorage.getItem(sortKey()); return SORTS.some(([key]) => key === value) ? value : DEFAULT_SORT; } catch { return DEFAULT_SORT; } }
 function loadManual() { try { const list = JSON.parse(localStorage.getItem(orderKey()) || '[]'); return Array.isArray(list) ? list.filter(id => typeof id === 'string') : []; } catch { return []; } }
@@ -34,7 +31,7 @@ export class SidebarStore {
     this.projectStatus = new Map(); this.statusTimers = new Map();
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
-    this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal(''); this.statusVariant = signal(loadStatusVariant());
+    this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
     // The open room the person marked unread: it is not marked read again, and it shows its count, until they leave it or mark it read.
     this.held = signal('');
     this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen(); this.revealedFor = '';
@@ -94,7 +91,7 @@ export class SidebarStore {
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
     this.holdFolds = true; this.pending.clear(); this.expected = []; this.revealedFor = '';
-    batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.statusVariant.value = 'a'; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
+    batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
   // Every call and read of the list goes through here: a destroyed list sends nothing, and a reset aborts what is out.
@@ -167,7 +164,7 @@ export class SidebarStore {
     const generation = this.generation;
     let projects, chats = null, chatsTicket = 0;
     // The order first: the streamed list is drawn in it from the start.
-    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); this.statusVariant.value = loadStatusVariant(); });
+    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); });
     const streaming = this.sort.peek() !== 'activity';
     try {
       // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
@@ -373,12 +370,6 @@ export class SidebarStore {
   }
 
   setManual(order) { this.manual.value = order; try { localStorage.setItem(orderKey(), JSON.stringify(order)); } catch { /* private mode */ } this.persist('sidebar_project_order', JSON.stringify(order)); }
-  setStatusVariant(variant) {
-    if (!statusVariants.includes(variant)) return;
-    this.statusVariant.value = variant;
-    try { localStorage.setItem(statusVariantKey(), variant); } catch { /* private mode */ }
-    this.persist('sidebar_status_variant', variant);
-  }
   moveProject(id, delta) { this.setManual(moveProject([...this.projects.values()], this.manual.peek(), id, delta)); }
   dropProject(id, targetID, after) { this.setManual(placeProject([...this.projects.values()], this.manual.peek(), id, targetID, after)); }
 
