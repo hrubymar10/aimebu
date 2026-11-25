@@ -108,16 +108,18 @@ func main() {
 			}
 			// Each question hangs off its own agent message, as an agent's attention question does: a person's reply in that message's thread
 			// answers it (and the settle pass closes a question whose thread was already answered), so the two must not share the person's message.
-			for _, item := range []struct{ id, text, ask string }{
-				{"inb_smoke_a", "Approve this choice?", `{"text":"Approve this choice?","options":["Approve","Revise"],"free_text":true}`},
-				{"inb_smoke_b", "Explain the choice", `{"text":"Explain the choice","options":[],"free_text":true}`},
+			// They are raised by two different agents: one agent's newer card in a room supersedes its older one (the settle sweep applies this
+			// on its own schedule), which would close the first question a moment after it was seeded.
+			for _, item := range []struct{ id, agent, text, ask string }{
+				{"inb_smoke_a", "agt_smoke", "Approve this choice?", `{"text":"Approve this choice?","options":["Approve","Revise"],"free_text":true}`},
+				{"inb_smoke_b", "agt_smoke_b", "Explain the choice", `{"text":"Explain the choice","options":[],"free_text":true}`},
 			} {
-				ask, err := tx.InsertMessage(store.Message{RoomID: os.Args[3], AuthorKind: "agent", AuthorID: "agt_smoke", AuthorHarness: "fake", AuthorModel: "test", Body: item.text})
+				ask, err := tx.InsertMessage(store.Message{RoomID: os.Args[3], AuthorKind: "agent", AuthorID: item.agent, AuthorHarness: "fake", AuthorModel: "test", Body: item.text})
 				if err != nil {
 					return err
 				}
 				if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,requester_kind,requester_id,kind,options_json,created_at)
-				VALUES (?,?,?,?,'agent','agt_smoke','question',?,datetime('now'))`, item.id, os.Args[2], os.Args[3], ask.ID, item.ask); err != nil {
+				VALUES (?,?,?,?,'agent',?,'question',?,datetime('now'))`, item.id, os.Args[2], os.Args[3], ask.ID, item.agent, item.ask); err != nil {
 					return err
 				}
 				if _, err := tx.AppendEvent(store.Event{Kind: "inbox_item_created", ProjectID: os.Args[2], RoomID: os.Args[3], PayloadJSON: fmt.Sprintf(`{"inbox_item_id":%q}`, item.id)}); err != nil {
