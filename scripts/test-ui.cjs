@@ -267,7 +267,14 @@ async function main() {
       const machineID = await first.evaluate(async () => (await (await fetch('/api/machines')).json()).machines?.[0]?.id || (await (await fetch('/api/machines')).json())[0]?.id);
       const made = await first.evaluate(async id => {
         const { csrf_token } = await (await fetch('/api/me')).json();
-        const response = await fetch(`/api/machines/${id}/launchers`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ tool: 'codex', command: 'codex', args: [], env_refs: {}, enabled: true, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true }) });
+        // The supervisor is a process of its own that this script starts without waiting: the machine can be paired in the store before its hello has been
+        // handled, and the API then answers 503 "machine needs an updated connected supervisor" before it saves anything. Retry only that answer.
+        let response;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          response = await fetch(`/api/machines/${id}/launchers`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ tool: 'codex', command: 'codex', args: [], env_refs: {}, enabled: true, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true }) });
+          if (response.status !== 503 || !(await response.clone().text()).includes('needs an updated connected supervisor')) break;
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
         return response.status;
       }, machineID);
       assert.equal(made, 200, 'a harness is added through the API');
@@ -1141,7 +1148,8 @@ async function main() {
       const same = bubble.querySelector('.answer-history') === block;
       // A person replies to it: the next draw says Answered.
       chat.repliedTo.set('ask-1', new Set(['someone'])); chat.listUpdate();
-      const answered = read(bubble);
+      // Since A12-4 an answered ask is the style A chip (a check, the answer, who answered); the offered options stay folded behind it.
+      const answered = { text: bubble.querySelector('.answer-choice-chip')?.textContent || '', buttons: bubble.querySelectorAll('.answer-choice-options button').length, blocks: bubble.querySelectorAll('.answer-choice-compact').length, history: bubble.querySelectorAll('.answer-history').length };
       // It becomes open again: the live buttons replace the history.
       chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
       const reopened = { history: bubble.querySelectorAll('.answer-history').length, live: bubble.querySelectorAll('.answer-controls').length };
@@ -1156,7 +1164,7 @@ async function main() {
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
     assert.deepEqual(askHistory.rowEnd, { askEndsAtItsCard: true, plainEndsAtItsCard: true }, 'each row ends at its own card');
     assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit just below the bubble, before seen-by markers');
-    assert.deepEqual(askHistory.answered, { text: 'Answered by someone (1/1)', buttons: 0, blocks: 1 }, 'an answered ask shows one compact summary');
+    assert.deepEqual(askHistory.answered, { text: 'Answer recorded by someone', buttons: 0, blocks: 1, history: 0 }, 'an answered ask shows one compact chip: the answer and who answered, offered options folded, no old history line');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
     await first.evaluate(() => { window.__priorTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'high-contrast-dark'; const button = document.createElement('button'); button.id = 'answer-hover-check'; button.className = 'btn proposed-answer-btn'; button.textContent = 'Proceed'; button.style.cssText = 'position:fixed;top:80px;left:80px;z-index:100'; document.body.append(button); });
     await first.hover('#answer-hover-check');
@@ -2024,7 +2032,8 @@ async function main() {
     // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
       // (An experiment may be running to be chosen between: then each has one visible pill and its option set; with none, the pill is hidden and no option is set.)
-      const running = await first.evaluate(async () => (await import('/js/ui-variant.js')).ACTIVE.slice());
+      // The app's own module instance (the one A12-4's answer style registers in) carries the page's version query; a bare import would be a second, empty copy.
+      const running = await first.evaluate(async () => { const v = new URL([...document.scripts].find(script => script.src.includes('/js/app.js')).src).search; return (await import('/js/ui-variant.js' + v)).ACTIVE.slice(); });
       assert.deepEqual(await first.$$eval('.topbar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), running.length ? running.map(() => false) : [true], 'the pill is hidden with no experiment running, and there is one per running experiment');
       assert.deepEqual(await first.evaluate(() => [...document.documentElement.getAttributeNames()].filter(name => name.startsWith('data-ui-') && name !== 'data-ui-experiment').sort()), running.map(key => `data-ui-${key}`).sort(), 'and only the running experiments have an option set');
       const widths = await first.evaluate(async () => {
@@ -2667,7 +2676,11 @@ async function main() {
     });
     const seed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, roomID, id]);
     if (seed.status !== 0) throw new Error(`inbox seed failed: ${seed.stderr}`);
-    await first.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '2');
+    try { await first.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '2'); }
+    catch (error) {
+      const seen = await first.evaluate(async () => ({ badge: document.querySelector('#inbox-count')?.textContent, hidden: document.querySelector('#inbox-count')?.hidden, api: await (await fetch('/api/inbox')).text().catch(e => String(e)) }));
+      throw new Error(`the inbox did not show the two seeded items: ${JSON.stringify(seen).slice(0, 1500)}`, { cause: error });
+    }
     // Start as v2 agent: a historical sender's profile offers it, never automatically, with what will happen written out; the spawn dialog
     // opens prefilled with the old name and role, without the team tab, and closing it puts the ordinary dialog back.
     {
@@ -6001,7 +6014,8 @@ async function main() {
       await domClick(first, '#room-info');
       await domClick(first, '#room-info-leave-tab');
       assert.deepEqual(await first.$eval('#room-leave', el => [el.hidden, el.title]), [false, 'Leave chat'], 'a joined chat can be left');
-      assert.equal(await first.$eval('#room-remove', el => el.hidden), true, 'a chat between agents is never removed from here');
+      // Since 362c20e4 the instance owner, an admin or an owner of either agent's project may delete a chat between agents (docs/api.md); this person is the instance owner.
+      assert.equal(await first.$eval('#room-remove', el => !!el.closest('[hidden]')), false, 'the instance owner may delete a chat between agents');
       assert.equal(await first.$eval('.room-memory-setting', el => el.hidden), true, 'what is said in a chat between agents never feeds memory, so there is no memory setting');
       assert.equal(await first.$eval('#room-info-error', el => el.textContent), '', 'the settings of a chat between agents showed an error');
       await domClick(first, '#room-leave');
@@ -6763,7 +6777,7 @@ async function main() {
     assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-archive'), el.textContent]), ['Archive room', 'Archive room', true, ''], 'Archive is an archive icon with a tooltip');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Delete room', true, ''], 'Delete room is a trash icon with an accessible name');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.hidden, el.disabled, el.classList.contains('btn-danger')]), [false, false, true], 'Delete is available for an open task room');
-    assert.deepEqual(await first.$$eval('#room-lifecycle, #room-remove', nodes => nodes.map(el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()])), [['Archive room', 'Archive room', ''], ['Delete this room and its messages for good', 'Delete room', '']], 'Room actions are icons with tooltips and accessible names');
+    assert.deepEqual(await first.$$eval('#room-lifecycle, #room-remove', nodes => nodes.map(el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()])), [['Archive room', 'Archive room', ''], ['Delete room', 'Delete room', '']], 'Room actions are icons with tooltips and accessible names');
     await domClick(first, '#room-info-close');
     const archiveConfirmations = [];
     await answerDialogs(first, text => { archiveConfirmations.push(text); return { accept: true }; });
@@ -7438,7 +7452,7 @@ async function main() {
           settingsEmpty: !document.querySelector('#settings-project') && !document.querySelector('#settings-project-tab'), name: document.querySelector('#project-details-name').value,
           notes: document.querySelector('.room-notes h3')?.textContent, notesButton: document.querySelector('.room-notes button')?.textContent, notesShown: shown('.room-notes'),
           worktree: document.querySelector('.room-worktree p')?.textContent, worktreeButtons: [...document.querySelectorAll('.room-worktree button')].filter(button => !button.hidden).length,
-          wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: document.querySelector('#room-lifecycle').hidden,
+          wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: !!document.querySelector('#room-lifecycle').closest('[hidden]'),
         };
       });
       assert.deepEqual(home, { schedules: false, lead: 'Current room leader', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: false,
