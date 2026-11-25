@@ -840,8 +840,10 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = '@zed beta'; question.answer_author_name = 'owner'; question.answer_message_no = 4242;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m119] .answer-history-link')?.textContent.includes('beta'));
-    assert.deepEqual(await state(), { buttons: [['alpha', true, false], ['beta', true, true]], line: 'Answered by owner: beta' }, 'answered: every choice is off, the chosen one marked, the line stays');
+    await page.waitForSelector('#messages [data-message-id=rm_a_m119] .answer-choice-chip');
+    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => [chip.textContent.trim(), chip.getAttribute('aria-expanded')]), ['beta by owner', 'false'], 'answered: a compact receipt replaces the option row');
+    await page.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => chip.click());
+    assert.deepEqual(await state(), { buttons: [['alpha', true, false], ['beta', true, false]], line: '' }, 'expanded options are disabled');
     await page.$$eval('#messages [data-message-id=rm_a_m119] .proposed-answer-btn', buttons => buttons.forEach(button => button.click()));
     assert.equal(await page.evaluate(() => window.__answered.length), 1, 'no answering again through the buttons');
     await page.close();
@@ -855,8 +857,49 @@ async function main() {
     assert.deepEqual(await other.evaluate(() => {
       const row = document.querySelector('#messages [data-message-id=rm_a_m119]');
       return { buttons: [...row.querySelectorAll('.answer-controls .proposed-answer-btn')].map(button => [button.textContent, button.disabled, button.classList.contains('chosen')]), line: row.querySelector('.answer-history-link')?.textContent.trim() || '' };
-    }), { buttons: [['alpha', true, false], ['beta', true, true]], line: 'Answered by owner: beta' }, 'the answered state comes from the server: a fresh page shows the same');
+    }), { buttons: [], line: '' }, 'the answered state comes from the server and starts collapsed');
+    assert.equal(await other.$eval('#messages [data-message-id=rm_a_m119] .answer-choice-chip', chip => chip.textContent.trim()), 'beta by owner');
     await other.close();
+  }
+
+  // Answered styles render in the room for both card kinds. Open cards remain interactive for every style.
+  {
+    const page = await mount();
+    await page.evaluate(() => {
+      const messages = window.__data.rooms.rm_a.messages;
+      messages[115] = { ...messages[115], author_kind: 'agent', author_id: 'agt_zed', proposed_answers: ['Ship', 'Wait'], answer_state: 'resolved', answer_body: '@zed Ship', answer_author_name: 'owner', answer_message_no: 4222 };
+      messages[116] = { ...messages[116], author_kind: 'agent', author_id: 'agt_zed', open_questions: [{ question: 'Route?', options: ['North', 'South'] }], answer_state: 'resolved', answer_body: 'Q1) a) North', answer_author_name: 'owner', answer_message_no: 4223 };
+      messages[117] = { ...messages[117], author_kind: 'agent', author_id: 'agt_zed', proposed_answers: ['Ship', 'Wait'] };
+      messages[118] = { ...messages[118], author_kind: 'agent', author_id: 'agt_zed', open_questions: [{ question: 'Route?', options: ['North', 'South'] }] };
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => window.__chat.updateAnswerControls([
+      { id: 'inb_style_proposed', rev: 1, kind: 'question', message_id: 'rm_a_m118', proposed_answers: ['Ship', 'Wait'], can_decide: true },
+      { id: 'inb_style_questions', rev: 1, kind: 'question', message_id: 'rm_a_m119', open_questions: [{ question: 'Route?', options: ['North', 'South'] }], can_decide: true },
+    ]));
+    await page.waitForSelector('#messages [data-message-id=rm_a_m119] .open-questions-open');
+    const shots = path.join(__dirname, '..', '.aimebu', 'answer-style-shots');
+    fs.mkdirSync(shots, { recursive: true });
+    for (const theme of ['dark', 'high-contrast-dark']) for (const variant of ['a', 'b', 'c']) {
+      await page.evaluate(({ theme, variant }) => {
+        document.querySelector('#boot-view').style.display = 'none';
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.setAttribute('data-ui-answered-choices', variant);
+        document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant } }));
+      }, { theme, variant });
+      await page.waitForFunction(variant => [...document.querySelectorAll('#messages .answer-controls-resolved')].every(node => node.classList.contains(`answer-variant-${variant}`)), {}, variant);
+      const result = await page.evaluate(() => [116, 117, 118, 119].map(no => {
+        const row = document.querySelector(`#messages [data-message-id=rm_a_m${no}]`);
+        return { resolved: !!row.querySelector('.answer-controls-resolved'), text: row.querySelector('.answer-controls')?.textContent || '', buttons: [...row.querySelectorAll('.answer-controls button')].map(button => button.disabled), check: !!row.querySelector('.answer-controls .icon-mask-check') };
+      }));
+      assert.equal(result[0].resolved && result[1].resolved, true, `${variant}: both answered kinds use a receipt`);
+      assert.ok(result[0].text.includes('Ship') && result[1].text.includes('North') && result[0].text.includes('owner') && result[1].text.includes('owner'), `${variant}: both answers and answerer are shown`);
+      assert.ok(result[0].check && result[1].check, `${variant}: SVG checks mark answers`);
+      assert.deepEqual(result.slice(2).map(entry => entry.resolved), [false, false], `${variant}: open cards stay open`);
+      const image = path.join(shots, `${variant}-${theme}.png`);
+      await page.screenshot({ path: image });
+    }
+    await page.close();
   }
 
   // A question that can no longer be answered (its room is closed, its agent is gone) keeps its choices too, switched off, with its one status line.
@@ -961,7 +1004,7 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = '@zed beta'; question.answer_author_name = 'owner'; question.answer_message_no = window.__data.rooms.rm_a.messages[120].no;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m120] .answer-history-link')?.textContent.includes('beta'));
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-chip');
     const history = async (body, values, questions = []) => {
       await page.evaluate(({ body, values, questions }) => {
         const question = window.__chat.store.messages.get('rm_a_m120');
@@ -969,25 +1012,25 @@ async function main() {
         window.__chat.updateAnswerControls([]);
       }, { body, values, questions });
       await settle(page);
-      return page.$eval('#messages [data-message-id=rm_a_m120] .answer-history', box => ({
-        text: box.querySelector('.answer-history-link')?.textContent.trim(), href: box.querySelector('a')?.getAttribute('href'),
+      return page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => ({
+        text: box.querySelector('.answer-choice-chip')?.textContent.trim(), href: box.querySelector('a')?.getAttribute('href'),
         buttons: box.querySelectorAll('button').length, icon: !!box.querySelector('.icon-mask-check'),
       }));
     };
     assert.deepEqual(await history('@zed beta', ['alpha', 'beta']),
-      { text: 'Answered by owner: beta', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 0, icon: true }, 'a resolved answer is one linked line with an SVG check');
+      { text: 'beta by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'a resolved answer is one chip with an SVG check');
     const choices = ['B after alpha.3', 'B after alpha.3 (trial)', 'Stay on D'];
     assert.deepEqual(await history('@zed B after alpha.3 (trial) - remind me pls', choices),
-      { text: 'Answered by owner: B after alpha.3 (trial)', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 0, icon: true }, 'an edited answer uses the longest matching option without repeating the note');
+      { text: 'B after alpha.3 (trial) by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'an edited answer uses the longest matching option without repeating the note');
     assert.deepEqual(await history('@zed B after alpha.3 (trialist)', choices),
-      { text: 'Answered by owner: B after alpha.3', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 0, icon: true }, 'a proposed answer must end at a word or punctuation boundary');
+      { text: 'B after alpha.3 by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'a proposed answer must end at a word or punctuation boundary');
     assert.deepEqual(await history('@zed something else entirely', choices),
-      { text: 'Answered by owner: something else entirely', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 0, icon: true }, 'free text omits the leading mention');
+      { text: 'something else entirely by owner', href: `#${await page.evaluate(() => window.__chat.store.messages.get('rm_a_m120').answer_message_no)}`, buttons: 1, icon: true }, 'free text omits the leading mention');
     const longAnswer = `@zed ${'a'.repeat(65)}`;
-    assert.equal((await history(longAnswer, choices)).text, `Answered by owner: ${'a'.repeat(60)}…`, 'a long free-text answer has a short preview');
+    assert.equal((await history(longAnswer, choices)).text, `${'a'.repeat(65)} by owner`, 'a long free-text answer remains available in the chip');
     assert.equal((await history('@zed Q1) a) A\nQ2) a) Now', [], [{ question: 'Route?' }, { question: 'When?' }])).text,
-      'Answered by owner (2/2)', 'Open Questions show only their count');
-    await page.$eval('#messages [data-message-id=rm_a_m120] .answer-history-link', link => link.click());
+      'Q1) a) A · Q2) a) Now by owner', 'Open Questions show the submitted answers');
+    await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-reply', link => link.click());
     await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m121]')?.classList.contains('message-flash') || !!document.querySelector('#messages [data-message-id=rm_a_m121] .message-flash'));
     await page.close();
   }
@@ -1034,11 +1077,11 @@ async function main() {
       question.answer_state = 'resolved'; question.answer_body = 'Q1) a) A\nQ2) a) Now'; question.answer_author_name = 'owner'; question.answer_message_no = 121;
       window.__chat.updateAnswerControls([]);
     });
-    await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m120] .answer-history-link')?.textContent.includes('Answered by owner (2/2)'));
-    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-history', box => [box.querySelector('.answer-history-link')?.textContent.trim(), box.querySelector('a')?.getAttribute('href'), box.querySelectorAll('button').length]),
-      ['Answered by owner (2/2)', '#121', 0], 'a submitted Open Questions answer is one linked summary');
+    await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-chip');
+    assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => [box.querySelector('.answer-choice-chip')?.textContent.trim(), box.querySelector('a')?.getAttribute('href'), box.querySelectorAll('button').length]),
+      ['Q1) a) A · Q2) a) Now by owner', '#121', 1], 'a submitted Open Questions answer is one compact chip');
     await openRoom(page, 'rm_b'); await opened(page); await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-history-link', node => node.textContent), 'Answered by owner (2/2)', 'the answer summary survives a room change from message state');
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-chip', node => node.textContent.trim()), 'Q1) a) A · Q2) a) Now by owner', 'the answer summary survives a room change from message state');
     await page.close();
   }
 

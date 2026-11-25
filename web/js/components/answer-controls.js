@@ -1,17 +1,57 @@
 import { html, render, useState, useRef, useLayoutEffect } from '../ui.js';
 import { IconButton } from './icon-button.js';
 import { renderMarkdown } from '../markdown.js';
+import { activeVariant, defineExperiment, ACTIVE } from '../ui-variant.js';
+
+export const ANSWER_STYLE = 'answered-choices';
+defineExperiment(ANSWER_STYLE, 'Answered choices', ['Compact chip', 'Quiet row', 'Inline receipt']);
+ACTIVE.push(ANSWER_STYLE);
+
+const plainAnswer = body => String(body || '').replace(/^@[a-z0-9][a-z0-9_-]*(?:@[a-z0-9_.-]+)?\s+/i, '').trim();
+const answerLabel = (item, body) => item.open_questions?.length
+  ? plainAnswer(body).replace(/\n+/g, ' · ')
+  : chosenOption(item.proposed_answers, body) || plainAnswer(body);
+const Check = () => html`<span class="icon-mask icon-mask-check" aria-hidden="true" title="Answered"></span>`;
+
+function AnsweredChoices({ item, answered, author, replyNo, variant, expanded, setExpanded }) {
+  const label = answerLabel(item, answered) || 'Answer recorded';
+  const person = author || 'someone';
+  const options = item.open_questions?.length
+    ? item.open_questions.flatMap((question, index) => (question.options || []).map(option => `${index + 1}. ${question.question}: ${option}`))
+    : item.proposed_answers || item.options || [];
+  const receipt = `Answered by ${person}: ${label}`;
+  const link = replyNo && html`<a class="msg-ref answer-choice-reply answer-history-link" href=${`#${replyNo}`} data-no=${String(replyNo)} aria-label=${`Go to ${person}'s answer`} title="Go to answer"><span class="icon-mask icon-mask-external-link" aria-hidden="true"></span></a>`;
+  if (variant === 'a') return html`<div class="answer-choice-compact">
+    <button type="button" class="answer-choice-chip" aria-expanded=${String(expanded)} aria-label=${`${receipt}. ${expanded ? 'Hide' : 'Show'} offered options`} title=${expanded ? 'Hide offered options' : 'Show offered options'} onClick=${() => setExpanded(!expanded)}><${Check} /><strong>${label}</strong>${' '}<span>by ${person}</span></button>${link}
+    ${expanded && html`<div class="answer-choice-options" aria-label="Offered options">${options.map(option => html`<button type="button" class="btn proposed-answer-btn" disabled key=${option}>${option}</button>`)}</div>`}
+  </div>`;
+  if (variant === 'b') return html`<div class="answer-choice-row" aria-label=${receipt}>
+    ${options.length && !item.open_questions?.length ? options.map(option => html`<button type="button" class=${`answer-choice-pill${option === chosenOption(options, answered) ? ' chosen' : ''}`} key=${option} disabled aria-label=${option === chosenOption(options, answered) ? `${option}, chosen by ${person}` : `${option}, not chosen`}>${option === chosenOption(options, answered) && html`<${Check} />`}${option}</button>`)
+      : html`<button type="button" class="answer-choice-pill chosen" disabled aria-label=${receipt}><${Check} />${label}</button>`}
+    <span class="answer-choice-by">by ${person}</span>${link}
+  </div>`;
+  return html`<div class="answer-choice-inline" tabindex="0" role="group" aria-label=${`${receipt}. Focus to show offered options`}>
+    <${Check} /><strong>${label}</strong><span>by ${person}</span><span class="receipt-avatar" aria-hidden="true" title=${person}>${person.slice(0, 2).toUpperCase()}</span>${link}
+    <div class="answer-choice-tooltip" role="note"><strong>Offered options</strong>${options.map(option => html`<span key=${option}>${option}</span>`)}</div>
+  </div>`;
+}
 
 // The answers under a question: the proposed answers as buttons, Open Questions, and (in the inbox) a field for an answer of one's own; and what they look like once nothing is
 // open for them. `mention` ("@author") is put in front of a proposed answer, as v1 does, so the reply reads as an answer to that person; `compose(text)` puts the text in the
 // composer, with the reply link, instead of sending it (Shift-click). Without it a Shift-click sends like any click. With `freeAnswer` (the inbox, which has no composer) a compact
 // "Answer…" button under the chips opens a small text field. `className` is added to the root (a message list row's slot), `disabled` switches every control off from outside, and
 // the rest of the props (data attributes) go on the root.
-// `answered` (the answer's text, `''` for one the page has not read yet) is a question a person has answered: every control stays, off, and the option that was chosen is
-// marked. A question that can no longer be answered (`disabled` without `answered`) keeps its controls the same way: they are never taken away, only switched off.
-export function AnswerControls({ item, submit = null, mention = '', compose = null, freeAnswer = false, disabled = false, answered = null, className = '', ...rest }) {
+// `answered` (the answer's text, `''` for one the page has not read yet) draws the saved style's receipt. A question that can no longer be
+// answered (`disabled` without `answered`) keeps its controls switched off.
+export function AnswerControls({ item, submit = null, mention = '', compose = null, freeAnswer = false, disabled = false, answered = null, answerAuthor = '', answerReplyNo = null, className = '', ...rest }) {
   const [pending, setPending] = useState(false), [error, setError] = useState(''), [free, setFree] = useState(false), [, refresh] = useState(0);
+  const [expanded, setExpanded] = useState(false), [variant, setVariant] = useState(() => activeVariant(ANSWER_STYLE));
   const field = useRef(null), form = useRef(null);
+  useLayoutEffect(() => {
+    const changed = event => { if (event.detail?.experiment === ANSWER_STYLE) { setVariant(activeVariant(ANSWER_STYLE)); setExpanded(false); } };
+    document.addEventListener('ui-variant-change', changed);
+    return () => document.removeEventListener('ui-variant-change', changed);
+  }, []);
   // The newest item and submit of the controls on the page are what an open dialog uses when it sends, and the count is drawn again when the dialog changes an answer.
   useLayoutEffect(() => {
     if (!item.open_questions?.length || !submit) return undefined;
@@ -31,6 +71,9 @@ export function AnswerControls({ item, submit = null, mention = '', compose = nu
   // The server knows a set of questions only as answered (one reply carries every answer) or not; the count of a draft is this page's own.
   const count = !item.open_questions?.length ? '' : done ? `${item.open_questions.length}/${item.open_questions.length}` : off && !submit ? `0/${item.open_questions.length}` : `${answeredCount(loadAnswers(item))}/${item.open_questions.length}`;
   const chosen = done ? chosenOption(values, answered) : '';
+  if (done) return html`<div class=${`answer-controls answer-controls-resolved answer-variant-${variant}${className}`} ...${rest}>
+    <${AnsweredChoices} item=${item} answered=${answered} author=${answerAuthor || item.answer_author_name} replyNo=${answerReplyNo || item.answer_message_no} variant=${variant} expanded=${expanded} setExpanded=${setExpanded} />
+  </div>`;
   return html`<div class=${`answer-controls${className}`} ...${rest}>
     ${item.open_questions?.length ? html`<button type="button" class="btn open-questions-open" disabled=${off} onClick=${() => openQuestions(item, !!compose)}><span>Open Questions</span>${' '}<span class="open-questions-count">${count}</span></button>` : null}
     ${values.map(value => {
