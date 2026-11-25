@@ -73,6 +73,15 @@ to the one that matches its build and environment (see above). The local manager
   removed, except the legacy path. If a journal file is gone altogether and its
   instance has not connected for a minute, the manager tells the server the
   instance is gone, and the work the server still lists on it is lost, once.
+  The start line says what the journal owes, counted by kind (open turns,
+  commands, pending exits and answers, pending command exits, warm processes).
+  When a drain ends and the journal still owes exactly what it did before the
+  drain started, the manager does not start another right away: a drain that
+  leaves the same debt is not making progress, and one after another of them
+  only spins. It backs off for an hour, logs once what the journal owes, and
+  records a `supervisor_journal_stuck` event for the system-events feed, so a
+  person sees the journal needs a look. After the back-off one more drain is
+  tried, and the rule starts over.
 - **Liveness is the only bound.** A retiring instance that holds its lock
   without a server connection for about 10 minutes, or one the server sees as
   empty for about a minute that does not exit, gets the bounded handover: an

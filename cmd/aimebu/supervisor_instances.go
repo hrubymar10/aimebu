@@ -37,6 +37,9 @@ const (
 var (
 	retireDisconnectLimit = 10 * time.Minute
 	retireEmptyLimit      = time.Minute
+	// drainBackoff is how long the manager waits before it starts another drain for a debt a previous drain did not change: a drain that
+	// leaves the journal exactly as it found it is not making progress, and an endless round of them spins at the drain's own pace.
+	drainBackoff = time.Hour
 )
 
 // instanceView is one journal of the machine and who holds it.
@@ -53,6 +56,14 @@ type instanceTrack struct {
 	inspectedAt, spawnedAt, handoverAt      time.Time
 	journalID                               string // learned from the lock, or by opening the journal while it was free
 	identityLogged                          bool   // the one log line about why this holder without an ID in its lock stays unidentified was written
+	// What a started drain was left to finish, and when: a later pass that finds the journal free again and owing exactly that knows the
+	// drain ended without progress, and backs off instead of starting another (the endless drain loop of A13-13).
+	drainDebt      string
+	drainStartedAt time.Time
+	// The back-off that rule led to: until when no drain starts for the same debt, and whether this episode's one log line and notice went out.
+	backoffUntil  time.Time
+	backoffDebt   string
+	backoffLogged bool
 }
 
 func (m *detachedSupervisorManager) now() time.Time {
@@ -238,17 +249,37 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 					delete(m.instances, v.path)
 				}
 			}
+			// Whatever a drain left is gone: the next debt, if one comes, is a new episode.
+			t.drainDebt, t.drainStartedAt = "", time.Time{}
+			t.backoffUntil, t.backoffDebt, t.backoffLogged = time.Time{}, "", false
 			continue
 		}
-		t.spawnedAt = now
+		debt := state.Debt
 		drain := activeUp || started
+		if drain && !t.drainStartedAt.IsZero() && now.Sub(t.drainStartedAt) >= instanceSpawnGuard && t.drainDebt == debt.Signature() {
+			// The drain this debt was left to has ended and the journal owes exactly what it did before: one more drain right away would
+			// only loop. Back off, say once what is owed, and let a person see it.
+			if t.backoffDebt != t.drainDebt || t.backoffUntil.IsZero() {
+				t.backoffUntil, t.backoffDebt, t.backoffLogged = now.Add(drainBackoff), t.drainDebt, false
+				log.Printf("supervisor swap: journal %s still owes the same work a drain instance was left (%s); backing off until %s before another",
+					filepath.Base(v.path), debt, t.backoffUntil.Format(time.RFC3339))
+				m.recordStuckJournal(ctx, v.path, debt.String())
+			}
+			if now.Before(t.backoffUntil) {
+				continue
+			}
+			// The back-off is over: one more drain is tried for the same debt.
+		}
+		t.spawnedAt = now
 		if !drain {
 			started = true
 		}
 		if drain {
-			log.Printf("supervisor swap: journal %s still owes work and nobody holds it; starting a drain instance", filepath.Base(v.path))
+			t.drainDebt, t.drainStartedAt = debt.Signature(), now
+			t.backoffUntil, t.backoffDebt, t.backoffLogged = time.Time{}, "", false
+			log.Printf("supervisor swap: journal %s still owes work and nobody holds it (%s); starting a drain instance", filepath.Base(v.path), debt)
 		} else {
-			log.Printf("supervisor swap: journal %s still owes work and no instance is active; starting a supervisor on it", filepath.Base(v.path))
+			log.Printf("supervisor swap: journal %s still owes work and no instance is active (%s); starting a supervisor on it", filepath.Base(v.path), debt)
 		}
 		if err := m.startInstance(v.path, drain); err != nil {
 			fmt.Fprintln(m.stderr, "supervisor respawn:", err)
@@ -271,6 +302,22 @@ func (m *detachedSupervisorManager) pass(ctx context.Context) {
 	}
 	if !unidentified {
 		m.writeOffVanished(ctx, now, views, conns)
+	}
+}
+
+// recordStuckJournal records the one system event a person sees when a drain ended and the journal still owes the same work: the manager is
+// backing off instead of starting another right away, and the debt says what a look at the journal has to settle. Where the manager has no
+// server store (its tests), a hook stands in.
+func (m *detachedSupervisorManager) recordStuckJournal(ctx context.Context, journalPath, debt string) {
+	if m.stuckNotice != nil {
+		m.stuckNotice(filepath.Base(journalPath), debt)
+		return
+	}
+	if m.store == nil || m.machineID == "" {
+		return
+	}
+	if err := m.store.RecordSupervisorJournalStuck(ctx, m.machineID, filepath.Base(journalPath), debt); err != nil {
+		fmt.Fprintln(m.stderr, "supervisor journal notice:", err)
 	}
 }
 

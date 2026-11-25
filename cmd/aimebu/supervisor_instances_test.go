@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
@@ -518,5 +519,110 @@ func TestAmbiguousIDLessHolderIsLeftAloneAndToldSoOnce(t *testing.T) {
 				t.Fatalf("the refusal was logged %d times, want %d: %s", n, item.wantLogs, logged.String())
 			}
 		})
+	}
+}
+
+// writeStuckJournal leaves a journal of the confirmed A13-13 shape: one turn of an older generation, exited and never acknowledged by the
+// server, and nothing else owed.
+func writeStuckJournal(t *testing.T, path, turnID string) {
+	t.Helper()
+	ctx := context.Background()
+	j, err := supervisor.OpenJournal(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecordStart(ctx, supervisor.StartRecord{TurnID: turnID, AgentID: "agent_x", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RecordExit(ctx, turnID, -1, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A drain that ends and leaves the journal owing exactly what it did before is not progress: the manager backs off for an hour, logs once
+// what is owed, records the one system notice, and tries one more drain when the back-off is over.
+func TestDrainThatLeavesTheSameDebtBacksOff(t *testing.T) {
+	logged := newLogCapture(t)
+	r := newInstanceRig(t)
+	var notices []string
+	r.m.stuckNotice = func(journal, debt string) { notices = append(notices, journal+"/"+debt) }
+	path := filepath.Join(r.dir, "journals", "stuck.sqlite")
+	writeStuckJournal(t, path, "turn_stale")
+	r.active = true
+	r.views = []instanceView{{path: path}}
+	r.pass(t, 0)
+	if len(r.spawns) != 1 || !r.spawns[0].drain {
+		t.Fatalf("the stuck journal was not drained: %+v", r.spawns)
+	}
+	if !strings.Contains(logged.String(), "(1 open turn, 1 pending exit); starting a drain instance") {
+		t.Fatalf("the start line does not say what is owed: %s", logged.String())
+	}
+	// The drain ran and ended: the journal is free again and owes the same thing. No second drain inside the back-off.
+	r.pass(t, 20*time.Second)
+	if len(r.spawns) != 1 {
+		t.Fatalf("another drain was started for the same debt: %+v", r.spawns)
+	}
+	if n := strings.Count(logged.String(), "still owes the same work a drain instance was left"); n != 1 {
+		t.Fatalf("the back-off was logged %d times, want once: %s", n, logged.String())
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "stuck.sqlite/1 open turn, 1 pending exit") {
+		t.Fatalf("the stuck-journal notice: %v", notices)
+	}
+	r.pass(t, 30*time.Minute)
+	if len(r.spawns) != 1 || len(notices) != 1 {
+		t.Fatalf("the back-off did not hold: spawns=%+v notices=%v", r.spawns, notices)
+	}
+	// The hour is over: one more drain is tried, and the rule starts over with it.
+	r.pass(t, 31*time.Minute)
+	if len(r.spawns) != 2 || !r.spawns[1].drain {
+		t.Fatalf("no drain after the back-off: %+v", r.spawns)
+	}
+	r.pass(t, 20*time.Second)
+	if len(r.spawns) != 2 {
+		t.Fatalf("drain after the second back-off began: %+v", r.spawns)
+	}
+	if n := strings.Count(logged.String(), "still owes the same work a drain instance was left"); n != 2 {
+		t.Fatalf("the second episode was not logged once: %s", logged.String())
+	}
+	if len(notices) != 2 {
+		t.Fatalf("the second episode's notice: %v", notices)
+	}
+}
+
+// A drain that made progress (the debt it leaves is not the one it was given) is answered with another drain, not with the back-off.
+func TestDrainThatMadeProgressIsDrainedAgain(t *testing.T) {
+	logged := newLogCapture(t)
+	r := newInstanceRig(t)
+	var notices []string
+	r.m.stuckNotice = func(journal, debt string) { notices = append(notices, journal+"/"+debt) }
+	ctx := context.Background()
+	path := filepath.Join(r.dir, "journals", "moving.sqlite")
+	writeStuckJournal(t, path, "turn_stale")
+	r.active = true
+	r.views = []instanceView{{path: path}}
+	r.pass(t, 0)
+	if len(r.spawns) != 1 {
+		t.Fatalf("first drain: %+v", r.spawns)
+	}
+	// The drain's work shows: the turn it ended also got an answer the server has not receipted, so the debt changed.
+	j, err := supervisor.OpenJournal(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecordAnswer(ctx, "turn_stale", 1, "digest", json.RawMessage(`{"answer":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.pass(t, 20*time.Second)
+	if len(r.spawns) != 2 || !r.spawns[1].drain {
+		t.Fatalf("progress was not answered with another drain: %+v", r.spawns)
+	}
+	if strings.Contains(logged.String(), "backing off") || len(notices) != 0 {
+		t.Fatalf("progress was treated as a stuck journal: %s %v", logged.String(), notices)
 	}
 }

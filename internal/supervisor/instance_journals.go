@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
@@ -60,6 +61,84 @@ type JournalState struct {
 	// Owes is true when something in it is still open: a turn, a command, an end or answer the server has not acknowledged, or a warm process
 	// the dead holder left. A process that opens it finishes that and its ends.
 	Owes bool
+	// Debt is what Owes counts, by kind, for the manager's log and its back-off. Zero (with Owes false) when it could not be read.
+	Debt JournalDebt
+}
+
+// JournalDebt counts what a journal owes, by kind. The manager logs it beside its "still owes work" line, so a person can see what keeps a
+// journal alive, and compares two of these to tell progress from a drain that left the journal exactly as it found it.
+type JournalDebt struct {
+	OpenTurns           int
+	OpenCommands        int
+	PendingExits        int
+	PendingAnswers      int
+	PendingCommandExits int
+	WarmProcesses       int
+}
+
+// String reads the debt in words: "1 open turn, 1 pending exit", or the empty string when nothing is owed.
+func (d JournalDebt) String() string {
+	var parts []string
+	add := func(count int, one, many string) {
+		switch {
+		case count == 0:
+		case count == 1:
+			parts = append(parts, "1 "+one)
+		default:
+			parts = append(parts, fmt.Sprintf("%d %s", count, many))
+		}
+	}
+	add(d.OpenTurns, "open turn", "open turns")
+	add(d.OpenCommands, "open command", "open commands")
+	add(d.PendingExits, "pending exit", "pending exits")
+	add(d.PendingAnswers, "pending answer", "pending answers")
+	add(d.PendingCommandExits, "pending command exit", "pending command exits")
+	add(d.WarmProcesses, "warm process", "warm processes")
+	return strings.Join(parts, ", ")
+}
+
+// Signature is the debt as one stable line, so a manager can tell "the same debt the last drain was left" from progress.
+func (d JournalDebt) Signature() string {
+	return fmt.Sprintf("turns=%d commands=%d exits=%d answers=%d commandExits=%d warm=%d",
+		d.OpenTurns, d.OpenCommands, d.PendingExits, d.PendingAnswers, d.PendingCommandExits, d.WarmProcesses)
+}
+
+// Debt counts what the journal owes, by kind (see JournalDebt).
+func (j *Journal) Debt(ctx context.Context) (JournalDebt, error) {
+	var debt JournalDebt
+	agents, err := j.OpenTurns(ctx)
+	if err != nil {
+		return debt, err
+	}
+	for _, agent := range agents {
+		debt.OpenTurns += len(agent.OpenTurns)
+	}
+	commands, err := j.OpenCommands(ctx)
+	if err != nil {
+		return debt, err
+	}
+	debt.OpenCommands = len(commands)
+	exits, err := j.PendingExits(ctx)
+	if err != nil {
+		return debt, err
+	}
+	debt.PendingExits = len(exits)
+	answers, err := j.PendingAnswers(ctx)
+	if err != nil {
+		return debt, err
+	}
+	debt.PendingAnswers = len(answers)
+	commandExits, err := j.PendingCommandExits(ctx)
+	if err != nil {
+		return debt, err
+	}
+	debt.PendingCommandExits = len(commandExits)
+	warm, err := j.WarmProcesses(ctx)
+	if err != nil {
+		return debt, err
+	}
+	debt.WarmProcesses = len(warm)
+	return debt, nil
 }
 
 // InspectJournal opens a journal whose lock is free, reads what it owes and lets it go again. It returns ErrJournalInUse when someone holds it.
@@ -69,7 +148,11 @@ func InspectJournal(ctx context.Context, path string) (JournalState, error) {
 		return JournalState{}, err
 	}
 	defer j.Close()
-	return JournalState{ID: j.ID, Owes: j.leftOwed(ctx)}, nil
+	state := JournalState{ID: j.ID, Owes: j.leftOwed(ctx)}
+	if debt, err := j.Debt(ctx); err == nil {
+		state.Debt = debt
+	}
+	return state, nil
 }
 
 // RemoveJournal deletes the files of a journal that owes nothing and whose lock is free. It refuses (false, nil) when the journal owes

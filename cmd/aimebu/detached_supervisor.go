@@ -222,6 +222,8 @@ type detachedSupervisorManager struct {
 	kill     func(int) error
 	startOf  func(int) string
 	handover server.SupervisorHandover
+	// stuckNotice stands in for the store's stuck-journal system event in tests that have no store.
+	stuckNotice func(journal, debt string)
 }
 
 // killIfStuck runs the bounded handover of a supervisor that was told to stop (server.SupervisorHandover): it gets 30 seconds to release

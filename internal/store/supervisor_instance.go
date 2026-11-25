@@ -96,6 +96,17 @@ type InstanceGone struct {
 	AlreadyGone bool
 }
 
+// RecordSupervisorJournalStuck records the one system event a person sees when a drain instance ended and the journal it was left still owes
+// the same work (supervisor_journal_stuck, in the system-events feed): the local manager backs off instead of starting another drain right
+// away, and the debt names what a look at the journal has to settle.
+func (s *Store) RecordSupervisorJournalStuck(ctx context.Context, machineID, journal, debt string) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.AppendEvent(Event{Kind: "supervisor_journal_stuck",
+			PayloadJSON: payloadJSON(map[string]string{"machine_id": machineID, "journal": journal, "debt": debt})})
+		return err
+	})
+}
+
 // MarkSupervisorInstanceGone records that an instance is finished for good (its journal is gone or replaced) and loses what it still holds:
 // every open turn it owns becomes lost, with the recovery path and the supervisor_journal_changed event a journal change always had, and every
 // open command job ends (failed when it never started, lost otherwise). Other instances of the machine are untouched. It returns the number

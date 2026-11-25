@@ -24,7 +24,7 @@ var notableKinds = []string{
 	"switch_overwritten",
 	"native_session_reset", "user_admin_changed", "user_deactivated",
 	"agent_context_cleared", "agent_context_compacted",
-	"room_close_blocked", "machine_revoked",
+	"room_close_blocked", "machine_revoked", "supervisor_journal_stuck",
 }
 
 // payloadCondition is one test on a payload field. A field that is not there counts as "" unless Present is set, which makes its absence a failure.
