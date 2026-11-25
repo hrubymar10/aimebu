@@ -542,7 +542,28 @@ completion. For a non-terminal process exit, the journal retains a bounded,
 redacted stderr tail with the exit code. The server exposes that evidence in
 the recovery item and the agent-card state tooltip. A terminal receipt permits
 pruning the local candidate bytes; turn-start, exit, and receipt tombstones
-remain. A running turn stays in the hello inventory even after its answer is
+remain.
+
+**Retention.** The journal does not grow without limit. When the supervisor
+starts, and then every hour (`PruneInterval`), it prunes what is settled: a
+turn whose exit the server acknowledged more than an hour ago (`PruneGrace`),
+that holds no pending answer candidate and, if it was answered, has its
+terminal receipt. Its activity events are deleted and its start spec is
+emptied. The thin `turn_start` row stays, because a late replay of the
+delivery must still find it (`HasStart`; a replayed start of a pruned turn
+matches on agent, generation and desired revision, and the spec it cannot
+compare is skipped) and the exit, answer and receipt rows are small. For a
+command whose end was acknowledged, the command line and the output tail are
+emptied the same way. Nothing else is touched: a running or unacknowledged
+turn, a pending answer, an open command, a pending command exit and the warm
+processes are exactly as before, and so are `Owes` and the debt the manager
+reads (the pruned data is read by none of them). Each pass works in batches
+of 100 (`PruneBatchSize`), one short transaction each, with a pause between.
+When the file holds more than 50 MB and more than 25% free pages, and the
+journal owes nothing (no running turn, open command, unacknowledged end,
+pending answer or warm process), the same pass runs `VACUUM` to give the pages
+back; an owing journal waits for a later pass. Without `VACUUM` the file stops
+growing anyway, as new rows reuse the freed pages. A running turn stays in the hello inventory even after its answer is
 receipted; the supervisor reports whether its process is still alive. An
 exited turn stays there until the server acknowledges its durable process
 update; then the journal stops replaying that exit. An answered turn also

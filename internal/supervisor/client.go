@@ -261,6 +261,7 @@ func (c *Client) Run(ctx context.Context) error {
 	c.SweepWarmOrphans(ctx)
 	telemetry.Go(ctx, func() { c.sweepAgentLogs(ctx) })
 	telemetry.Go(ctx, func() { c.warmGuard(ctx) })
+	telemetry.Go(ctx, func() { c.pruneJournal(ctx) })
 	failures := 0
 	var outageSince time.Time
 	outageReported := false
@@ -1249,21 +1250,24 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		if err != nil {
 			return err
 		}
-		var prior adapter.TurnSpec
-		if err := json.Unmarshal(stored, &prior); err != nil {
-			return err
-		}
-		var priorNotes []protocol.DeliveryNote
-		if err := json.Unmarshal(prior.NotesJSON, &priorNotes); err != nil {
-			return err
-		}
-		if !reflect.DeepEqual(priorNotes, delivery.Notes) {
-			return ErrJournalConflict
-		}
-		spec.NotesJSON = prior.NotesJSON
-		start.SpecJSON, err = json.Marshal(spec)
-		if err != nil {
-			return err
+		// A pruned spec (an empty one: the turn settled long ago) has nothing to compare; RecordStart still checks the fields that stay.
+		if len(stored) > 0 {
+			var prior adapter.TurnSpec
+			if err := json.Unmarshal(stored, &prior); err != nil {
+				return err
+			}
+			var priorNotes []protocol.DeliveryNote
+			if err := json.Unmarshal(prior.NotesJSON, &priorNotes); err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(priorNotes, delivery.Notes) {
+				return ErrJournalConflict
+			}
+			spec.NotesJSON = prior.NotesJSON
+			start.SpecJSON, err = json.Marshal(spec)
+			if err != nil {
+				return err
+			}
 		}
 		if _, err := c.Journal.RecordStart(ctx, start); err != nil {
 			return err

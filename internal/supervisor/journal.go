@@ -204,6 +204,16 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	// When the server acknowledged a turn's exit, so pruning keeps a settled turn for its grace period (empty on a row acknowledged before it was kept).
+	if err := ensureColumn(ctx, db, "turn_start", "settled_at", `ALTER TABLE turn_start ADD COLUMN settled_at TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Pruning and the exit-diagnostic reads look a turn's events up by turn.
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS journal_event_turn ON journal_event(turn_id)`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := ensureColumn(ctx, db, "command_exit", "reason", `ALTER TABLE command_exit ADD COLUMN reason TEXT NOT NULL DEFAULT ''`); err != nil {
 		db.Close()
 		return nil, err
@@ -323,7 +333,8 @@ func (j *Journal) RecordStart(ctx context.Context, record StartRecord) (already 
 	var spec []byte
 	err = tx.QueryRowContext(ctx, `SELECT agent_id,generation,desired_rev,spec_json FROM turn_start WHERE turn_id=?`, record.TurnID).Scan(&agentID, &generation, &desiredRev, &spec)
 	if err == nil {
-		if generation != record.Generation || desiredRev != record.DesiredRev || agentID != record.AgentID || !bytes.Equal(spec, record.SpecJSON) {
+		// A settled turn whose spec was pruned (see PruneSettled) still dedupes a replayed start: the fields that stay must match.
+		if generation != record.Generation || desiredRev != record.DesiredRev || agentID != record.AgentID || (len(spec) > 0 && !bytes.Equal(spec, record.SpecJSON)) {
 			return false, ErrJournalConflict
 		}
 		return true, nil
@@ -487,7 +498,7 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 }
 
 func (j *Journal) AcknowledgeExit(ctx context.Context, turnID string) error {
-	result, err := j.db.ExecContext(ctx, `UPDATE turn_start SET exit_acked=1 WHERE turn_id=? AND exec='exited'`, turnID)
+	result, err := j.db.ExecContext(ctx, `UPDATE turn_start SET exit_acked=1,settled_at=? WHERE turn_id=? AND exec='exited'`, timestamp(), turnID)
 	if err != nil {
 		return err
 	}
@@ -511,7 +522,7 @@ func (j *Journal) AcknowledgeExit(ctx context.Context, turnID string) error {
 // sql.ErrNoRows, because a refused activity frame of a running turn is the protocol working and must not fail the read loop. The
 // returned generation is the settled row's, for the one log line.
 func (j *Journal) SettleRefusedExit(ctx context.Context, agentID, turnID string) (generation int, settled bool, err error) {
-	err = j.db.QueryRowContext(ctx, `UPDATE turn_start SET exit_acked=1 WHERE turn_id=? AND agent_id=? AND exec='exited' AND exit_acked=0 RETURNING generation`, turnID, agentID).Scan(&generation)
+	err = j.db.QueryRowContext(ctx, `UPDATE turn_start SET exit_acked=1,settled_at=? WHERE turn_id=? AND agent_id=? AND exec='exited' AND exit_acked=0 RETURNING generation`, timestamp(), turnID, agentID).Scan(&generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
