@@ -8,6 +8,8 @@ import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '.
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { AnswerControls, AnswerHistory } from '../../components/answer-controls.js';
 import { copyText } from '../../markdown.js';
+import { highlightMentions } from '../../mentions.js';
+import { renderRoomRefs } from '../../room-refs.js';
 
 export const rowRenders = { count: 0, thread: 0, main: 0 };
 
@@ -150,11 +152,17 @@ const Pills = ({ pills }) => pills.length > 0 && html`<span class="reaction-pill
 const Quote = ({ quote }) => html`<button type="button" class="row-btn quote" title=${quote.title}>${quote.text}</button>`;
 
 // A notice shows its text as it is; a change of the Markdown mode draws it like any body, and a new mention index only highlights it.
+// Even drawn as plain text a notice renders the ids-are-truth tokens its body carries: the mention names the server already rewrote are
+// highlighted, and the room references become links from the entities table, under the same rules as any drawn body.
 function NoticeBody({ message, view, host }) {
   const root = useRef(null), drawn = useRef(false), marked = useRef(false);
   useLayoutEffect(() => {
     // Plain text first, as it is (its line breaks are kept by the body's own pre-wrap); the class that gives v1's Markdown rules, which collapse them, only after it is drawn.
-    if (drawn.current) { host.renderBody(root.current, message); root.current.classList.toggle('md-rendered', !view.raw); } else { root.current.textContent = message.body; root.current.classList.remove('md-rendered'); }
+    if (drawn.current) { host.renderBody(root.current, message); root.current.classList.toggle('md-rendered', !view.raw); }
+    else {
+      root.current.textContent = message.body; root.current.classList.remove('md-rendered');
+      if (!view.raw) { highlightMentions(root.current, host.mentionIndex); renderRoomRefs(root.current, message.entities, host.roomOrdinals); }
+    }
     drawn.current = true;
   }, [message, view.raw]);
   useLayoutEffect(() => {

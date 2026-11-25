@@ -351,19 +351,23 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
-	body := fmt.Sprintf("Recovery handed to the lead for agent %s in room %s: %s (exit code %s). Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output). Item ID: %s.", agentID, roomID, reason, exitCode.String, evidence.String, roomID, agentID, id)
+	// Server-written notices name who they are about the same way agents do:
+	// `@agt_<id>` and `#room_<id>` tokens, so the entities table covers them
+	// and only the human view translates. The worker-output link keeps the raw
+	// ids: it is a URL, not prose.
+	body := fmt.Sprintf("Recovery handed to the lead for agent @%s in room #%s: %s (exit code %s). Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output). Item ID: %s.", agentID, roomID, reason, exitCode.String, evidence.String, roomID, agentID, id)
 	switch reason {
 	case answerHeldReason:
-		body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+		body = fmt.Sprintf("Agent @%s in room #%s sent a final answer that could not be delivered, and a correction note did not settle it. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
 		if detail != "" {
-			body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Reason: %s. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, recoveryEvidence(detail), id, roomID, agentID)
+			body = fmt.Sprintf("Agent @%s in room #%s sent a final answer that could not be delivered, and a correction note did not settle it. Reason: %s. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, recoveryEvidence(detail), id, roomID, agentID)
 		}
 	case brokenSessionReason:
 		if detail == contextOverflowDetail {
-			body = fmt.Sprintf("Agent %s in room %s ended with a context-length error: its conversation outgrew the model's context window, so Resume and Retry would fail the same way. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session in the same checkout, with a handoff note naming the last commit and the open commands; \"abandon\" leaves it as it is. Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, recoveryEvidence(evidence.String), roomID, agentID)
+			body = fmt.Sprintf("Agent @%s in room #%s ended with a context-length error: its conversation outgrew the model's context window, so Resume and Retry would fail the same way. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session in the same checkout, with a handoff note naming the last commit and the open commands; \"abandon\" leaves it as it is. Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, recoveryEvidence(evidence.String), roomID, agentID)
 			break
 		}
-		body = fmt.Sprintf("Agent %s in room %s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
+		body = fmt.Sprintf("Agent @%s in room #%s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
 	}
 	if leadRoom != roomID {
 		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: "Recovery handed to the lead", OnlyTargets: []string{}}); err != nil {

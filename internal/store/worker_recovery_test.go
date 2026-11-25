@@ -44,6 +44,47 @@ func TestTurnLimitRecoveryNoticeNamesTheDeadline(t *testing.T) {
 	}
 }
 
+// A recovery handover names the worker and the room with the stored tokens
+// (@agt_<id>, #room_<id>), so the entities table covers them and only the
+// human view translates; the stored notice is not prose with bare ids.
+func TestRecoveryNoticeStoresTokensAndNamesThemForTheLead(t *testing.T) {
+	s, f, _, lead := workerRecoveryFixture(t)
+	ctx := context.Background()
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 137, false, false); err != nil {
+		t.Fatal(err)
+	}
+	var body, noticeRoom string
+	if err := s.db.QueryRow(`SELECT m.body,m.room_id FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.wake_reason='worker_recovery'`, lead.ID).Scan(&body, &noticeRoom); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "agent @"+f.agent.ID+" in room #"+f.room.ID+":") {
+		t.Fatalf("lead notice keeps bare ids: %q", body)
+	}
+	entities, err := mentionEntities(ctx, s.db, lead.ID, f.project.ID, noticeRoom, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agent, room *MentionEntity
+	for i := range entities {
+		switch {
+		case entities[i].Kind == "agent" && entities[i].ID == f.agent.ID:
+			agent = &entities[i]
+		case entities[i].Kind == "room" && entities[i].ID == f.room.ID:
+			room = &entities[i]
+		}
+	}
+	if agent == nil || agent.Name != f.agent.Slug {
+		t.Fatalf("agent entity = %+v, want %s named %s", agent, f.agent.ID, f.agent.Slug)
+	}
+	var title string
+	if err := s.db.QueryRow(`SELECT title FROM room WHERE id=?`, f.room.ID).Scan(&title); err != nil {
+		t.Fatal(err)
+	}
+	if room == nil || room.Name != title {
+		t.Fatalf("room entity = %+v, want %s named %s", room, f.room.ID, title)
+	}
+}
+
 func workerRecoveryFixture(t *testing.T) (*Store, executionFixture, string, Agent) {
 	t.Helper()
 	s, f, owner := recoveryFixture(t, false)
