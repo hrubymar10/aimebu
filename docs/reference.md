@@ -362,6 +362,27 @@ server also listens on loopback for it.
 The API can close (archive) and reopen non-home rooms while preserving their
 history; see the room lifecycle routes in the API guide.
 
+For profiling a live server, start it with `AIMEBU_DEBUG_PPROF=1` and
+`/api/debug/pprof/` serves Go's standard pprof handlers (off by default: the
+paths 404 like any unknown API route). An owner or admin session is required;
+any other signed-in account gets 403 and a request without a session 401.
+`GET /api/debug/pprof/` answers the profile index; `/api/debug/pprof/goroutine`
+and the other runtime profiles answer at once, `profile?seconds=N` profiles the
+CPU for N seconds and `trace?seconds=N` takes an execution trace. To take a
+30 s CPU profile with `curl`, sign in first and reuse the session cookie (a
+real token never goes into a command that is shared or kept in a log):
+
+```sh
+curl -s -c /tmp/aimebu-cookies -H 'Content-Type: application/json' \
+  -d '{"login":"<owner login>","password":"<password>"}' \
+  http://127.0.0.1:9997/api/login
+curl -s -b /tmp/aimebu-cookies \
+  'http://127.0.0.1:9997/api/debug/pprof/profile?seconds=30' -o cpu.pprof
+```
+
+Read the result with `go tool pprof cpu.pprof`, and remove the cookie file
+afterwards.
+
 ## Team flows and project setup
 
 A new project starts with its home room and a `general` task room beneath it.

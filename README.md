@@ -195,6 +195,7 @@ people reach for most:
 | `AIMEBU_EMBEDDED_SUPERVISOR` | on | Set to `0` for a server that only coordinates remote machines. The local supervisor is a process of its own that keeps turns running while the server restarts; the old `AIMEBU_SUPERVISOR` switch is ignored. |
 | `AIMEBU_SENTRY_DSN` | maintainers' | `off` disables error reporting; see [telemetry](docs/telemetry.md) for what is and is never sent. |
 | `AIMEBU_USAGES` | on | Set to `0` to stop reading harness credentials and polling usage. |
+| `AIMEBU_DEBUG_PPROF` | off | Set to `1` to serve Go's pprof handlers under `/api/debug/pprof/` (owner or admin session; see [the API guide](docs/api.md)). |
 
 `aimebu help` lists every variable with its default and meaning. Behaviour
 that is set in the UI (Settings → Personal, Server and Agents: Appearance, Harnesses & models, Roles, Accounts & usage, Prompts,

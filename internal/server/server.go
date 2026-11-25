@@ -464,6 +464,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/agent/agents/{id}/role", s.requireAgentTool(http.HandlerFunc(s.agentToolSetRole)))
 	mux.Handle("PUT /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))
 	mux.Handle("DELETE /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))
+	if debugPprofEnabled() {
+		s.registerDebugPprof(mux)
+	}
 	assets := aimebu.Web()
 	web, err := prepareWebAssets(assets, !s.NoWebBundle && webBundleEnabled())
 	if err != nil {
