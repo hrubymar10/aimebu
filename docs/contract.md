@@ -1142,8 +1142,16 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   each open room such a note came from (`OnlyTargets` empty: it wakes nobody by
   itself) and wakes each agent author of those notes that is still an active
   member there (reason `silent_turn`); a person author reads the line. A turn
-  woken only by system notes (a command's end, a scheduled note) gives none,
-  and neither does a lead. A turn in which the agent added a reaction (to any
+  woken only by system notes (a command's end, a scheduled note) gives none —
+  unless the agent is a worker that still owes work: it has been addressed by
+  an agent or a person since its last handoff (or since it was spawned, when
+  it has never handed off) and has not handed off since, it has no command job
+  of its own queued or running (the command's end will wake it), and no note
+  is queued for it; that notice then goes to whoever addressed it last, in the
+  room that note came from (a person author reads the line), with the same
+  line, wake reason and debounce. A turn that carried a `broadcast` or `group`
+  note stays excluded either way, and neither does a lead give one. A turn in
+  which the agent added a reaction (to any
   message, from when the turn started running) has answered, since the prompt
   asks for a reaction instead of an acknowledgement message: it gives none. It is said once until the agent next posts a
   message (event `silent_turn` with the agent and turn; a later one is skipped
