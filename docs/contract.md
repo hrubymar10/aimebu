@@ -2272,9 +2272,15 @@ CC/Codex, prompt-only on pi):
    only the open turns it owned `lost`/`unknown` with recovery blocked and a
    visible `supervisor_journal_changed` event, and ends its open jobs. Journal
    loss classifies uncertainty, never invites replay. A first hello without
-   open dispatched turns records the ID. Until the server keeps several
-   instances connected, it treats a `hello` with a new `journal_id` as the
-   replacement of the machine's previous instance and marks that one gone.
+   open dispatched turns records the ID. A remote machine that says `hello`
+   with a `journal_id` the server has not seen writes off every older
+   instance of that machine that is not connected and was last connected
+   (its `last_seen_at`, stamped at hello and again when its connection ends)
+   ten minutes or more ago: it is marked gone as above, which loses its turns
+   with recovery and its jobs and opens the handover gate for their agents.
+   A connected instance, or one gone for less than ten minutes, is never
+   written off, since it may reconnect and report its own work. (The local
+   machine's manager applies the same ten-minute liveness rule itself.)
 2. Classify:
    - **intact journal has no `turn_start`** → never started → note
      `queued` (redeliver); a missing ack alone proves nothing;
