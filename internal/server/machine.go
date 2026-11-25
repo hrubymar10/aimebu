@@ -461,9 +461,9 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if !c.supportsWarm {
 		s.applyWarmCount(c, 0, 0, false)
+	}
 	// A newly connected machine can take its agents queued notes.
 	s.wakeDispatch()
-	}
 	defer func() {
 		c.stop()
 		c.workers.Wait()
