@@ -1707,6 +1707,12 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 			exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\nwork tree at the kill: " + state)
 		}
 	}
+	if exit.WorkTree == "" && !exit.TerminalEvent && adapter.ContextOverflow(exit.ErrorEvent, exit.ErrorSummary, exit.StderrTail) {
+		// A session that outgrew its context restarts fresh: its handoff note names the last commit, so the checkout is described here.
+		if state := workTreeState(journalCtx, delivery.CheckoutPath); state != "" {
+			exit.WorkTree = state
+		}
+	}
 	if reason, cut := interruptedReason(exit); cut && stall == "" && journalErr == nil && delivery.Mode == adapter.ModeNormal {
 		// Marked, not sniffed out of the evidence text: the server continues an interrupted turn once on its own, and must not
 		// confuse one with a failure the harness explained.

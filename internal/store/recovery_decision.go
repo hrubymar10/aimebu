@@ -368,20 +368,97 @@ func (tx *Tx) decideAnswerRecovery(phase, turnID, projectID, roomID, agentID, ch
 			Body: body})
 		return err
 	case phase == brokenSessionReason && choice == "restart":
+		overflow, workTree, err := tx.contextOverflow(turnID)
+		if err != nil {
+			return err
+		}
+		if overflow {
+			// The failed turn left its agent blocked with its notes unknown: the restart releases both, so the notes run again below.
+			if err := tx.releaseOverflowTurn(turnID, agentID); err != nil {
+				return err
+			}
+		}
 		// The next turn starts a fresh native session (with the room's history) instead of resuming the one that answers with nothing.
 		if _, err := tx.Exec(`UPDATE session SET native_session_id=NULL,native_session_started_at=NULL,start_mode='fresh_with_history'
 			WHERE id=(SELECT session_id FROM turn WHERE id=?)`, turnID); err != nil {
 			return err
 		}
 		// The interrupted task runs again on it: the turn's notes go back to the queue (as a vanished native session does it).
-		if _, err := tx.Exec(`UPDATE note SET state='queued' WHERE id IN (SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('dispatched','in_turn','done')`, turnID); err != nil {
+		if _, err := tx.Exec(`UPDATE note SET state='queued' WHERE id IN (SELECT note_id FROM turn_note WHERE turn_id=?) AND state IN ('dispatched','in_turn','done','unknown')`, turnID); err != nil {
 			return err
 		}
-		_, err := tx.AppendEvent(Event{Kind: "native_session_reset", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID,
-			PayloadJSON: payloadJSON(map[string]string{"reason": brokenSessionReason})})
+		if _, err := tx.AppendEvent(Event{Kind: "native_session_reset", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID,
+			PayloadJSON: payloadJSON(map[string]string{"reason": brokenSessionReason})}); err != nil {
+			return err
+		}
+		if !overflow {
+			return nil
+		}
+		body, err := tx.contextOverflowHandoff(agentID, workTree)
+		if err != nil {
+			return err
+		}
+		_, err = tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", OnlyTargets: []string{agentID}, Body: body})
 		return err
 	case choice == "abandon":
-		return nil
+		if overflow, _, err := tx.contextOverflow(turnID); err != nil || !overflow {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE note SET state='aborted' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state='unknown'`, turnID); err != nil {
+			return err
+		}
+		return tx.releaseOverflowTurn(turnID, agentID)
 	}
 	return ErrInvalidTransition
+}
+
+// releaseOverflowTurn ends the block a context-overflow exit raised: the turn is settled and the agent is idle again, as an Abandon of any
+// other lost turn leaves it.
+func (tx *Tx) releaseOverflowTurn(turnID, agentID string) error {
+	if _, err := tx.Exec(`UPDATE turn SET settle='settled' WHERE id=? AND settle='pending'`, turnID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`UPDATE agent SET recovery_block=0,observed=CASE WHEN desired='stopped' THEN 'stopped' ELSE 'idle' END WHERE id=? AND recovery_block=1`, agentID)
+	return err
+}
+
+// contextOverflowHandoff is the note a fresh session gets after its predecessor outgrew the context window: where the checkout stood
+// (the supervisor's description of its last commit, when it had one) and which of the agent's commands still run, since the fresh session
+// remembers neither.
+func (tx *Tx) contextOverflowHandoff(agentID, workTree string) (string, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id,label,cmd FROM command_job WHERE agent_id=? AND state IN ('queued','running') ORDER BY created_at,id`, agentID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var open []string
+	for rows.Next() {
+		var id, label, cmd string
+		if err := rows.Scan(&id, &label, &cmd); err != nil {
+			return "", err
+		}
+		if len(cmd) > 200 {
+			cmd = strings.ToValidUTF8(cmd[:200], "") + "…"
+		}
+		entry := id + ": " + cmd
+		if label != "" {
+			entry = id + " (" + label + "): " + cmd
+		}
+		open = append(open, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	body := "Handoff: your previous session ran out of context and was replaced by this fresh one in the same checkout. "
+	if workTree != "" {
+		body += "Last commit and checkout state when it ended: " + workTree + ". "
+	} else {
+		body += "Check the checkout's last commit with git log before continuing. "
+	}
+	if len(open) > 0 {
+		body += "Commands still open: " + strings.Join(open, "; ") + ". Their completion will wake you."
+	} else {
+		body += "No commands are open."
+	}
+	return body, nil
 }

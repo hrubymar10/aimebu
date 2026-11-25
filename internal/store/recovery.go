@@ -79,6 +79,12 @@ func (tx *Tx) ensureRecoveryPath(turnID string) error {
 	} else if definite {
 		return tx.ensureRecoveryItem(turnID, exec)
 	}
+	// A session that outgrew its context would overflow again in a diagnostic turn: it goes straight to the restart decision.
+	if overflow, _, err := tx.contextOverflow(turnID); err != nil {
+		return err
+	} else if overflow {
+		return tx.ensureRecoveryItem(turnID, exec)
+	}
 	if exec != "lost" && desired == "active" {
 		var policy TurnPolicy
 		if json.Unmarshal([]byte(policyJSON), &policy) == nil && policy.Capabilities.ReadonlyVerified {
@@ -277,7 +283,18 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	if err != nil {
 		return err
 	}
-	if definite && reason != "lost" {
+	overflow, _, err := tx.contextOverflow(originID)
+	if err != nil {
+		return err
+	}
+	phase := ""
+	if overflow {
+		// A broken session, not an uncertain outcome: Resume and Retry would hit the same limit at once. Restart starts a fresh session in
+		// the same checkout, with a handoff note (see decideAnswerRecovery).
+		question = "The agent's conversation outgrew the model's context window, so its session cannot continue. Restart starts a fresh session in the same checkout with a handoff note naming the last commit and the open commands; Resume and Retry would fail the same way."
+		options = []string{"Restart", "Abandon"}
+		phase = brokenSessionReason
+	} else if definite && reason != "lost" {
 		question = "The turn failed before it did anything: " + sentenceEnd(resultText) + " Nothing needs checking, so Retry is safe and Resume cannot help. Fix the cause first (for example sign in again), then Retry."
 		options = []string{"Retry", "Abandon"}
 		var startFailure bool
@@ -297,7 +314,7 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	} else if repeated {
 		question = "Same failure again — fix the cause first; doing the same thing will fail the same way. " + question
 	}
-	optionsBytes, err := json.Marshal(inboxAsk{Text: question, Options: options})
+	optionsBytes, err := json.Marshal(inboxAsk{Text: question, Options: options, Phase: phase})
 	if err != nil {
 		return err
 	}
@@ -305,7 +322,11 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 		id, projectID, roomID, originID, agentID, agentID, string(optionsBytes), timestamp()); err != nil {
 		return err
 	}
-	handed, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, originID, reason, "")
+	handReason, handDetail := reason, ""
+	if overflow {
+		handReason, handDetail = brokenSessionReason, contextOverflowDetail
+	}
+	handed, err := tx.handRecoveryToLead(id, projectID, roomID, agentID, originID, handReason, handDetail)
 	if err != nil || handed {
 		return err
 	}
@@ -338,6 +359,10 @@ func (tx *Tx) handRecoveryToLead(id, projectID, roomID, agentID, originID, reaso
 			body = fmt.Sprintf("Agent %s in room %s sent a final answer that could not be delivered, and a correction note did not settle it. Reason: %s. Item ID: %s. resolve_recovery with choice \"retry\" asks it once more to resend; \"abandon\" drops the held answer. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, recoveryEvidence(detail), id, roomID, agentID)
 		}
 	case brokenSessionReason:
+		if detail == contextOverflowDetail {
+			body = fmt.Sprintf("Agent %s in room %s ended with a context-length error: its conversation outgrew the model's context window, so Resume and Retry would fail the same way. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session in the same checkout, with a handoff note naming the last commit and the open commands; \"abandon\" leaves it as it is. Evidence: %s. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, recoveryEvidence(evidence.String), roomID, agentID)
+			break
+		}
 		body = fmt.Sprintf("Agent %s in room %s answered twice in a row with an empty answer and no tool activity: its session looks broken. Item ID: %s. resolve_recovery with choice \"restart\" starts it on a fresh session; \"abandon\" leaves it as it is. [Worker output](/api/rooms/%s/agents/%s/output).", agentID, roomID, id, roomID, agentID)
 	}
 	if leadRoom != roomID {
@@ -412,6 +437,25 @@ func (tx *Tx) definiteFailure(turnID string) (bool, string, error) {
 		return false, "", err
 	}
 	return definite.String == "1" && text.String != "", text.String, nil
+}
+
+// contextOverflowDetail is the detail a broken-session item carries when the harness ended with a context-length error (as opposed to
+// answering with nothing).
+const contextOverflowDetail = "context_overflow"
+
+// contextOverflow says whether the turn's process exit reported a context-length error (see adapter.ContextOverflow), with the supervisor's
+// description of the checkout at that point ("tip ab31772 <subject>, tree clean"), when it had one.
+func (tx *Tx) contextOverflow(turnID string) (bool, string, error) {
+	var flag, workTree sql.NullString
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.context_overflow'),json_extract(payload_json,'$.work_tree') FROM event
+		WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, turnID).Scan(&flag, &workTree)
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return flag.String == "1", workTree.String, nil
 }
 
 // repeatsParentFailure says whether this turn is a retry or a resume of a turn that failed the same way: its process exit says the same as its

@@ -173,7 +173,7 @@ func (tx *Tx) settleOrphanedItem(itemID, reason string) error {
 			}
 		}
 		if ask.Phase == brokenSessionReason {
-			// Nothing was lost and no block was raised: it only closes, as decideAnswerRecovery's Abandon does (nothing else changes).
+			// The session's end needs no continuation: the item only closes, as decideAnswerRecovery's Abandon does.
 			return tx.resolveSettled(itemID, projectID, roomID, agentID, turnID.String, "abandon", actor, reason)
 		} else if ask.Phase == quiescenceWaitReason {
 			if err := tx.cancelWaitingContinuation(turnID.String, actor, reason); err != nil {

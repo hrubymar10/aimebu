@@ -696,3 +696,106 @@ func TestSentenceEnd(t *testing.T) {
 		}
 	}
 }
+
+// A turn that ends with a context-length error is a broken session: the item offers Restart and Abandon (Resume and Retry would hit the same
+// limit at once), no diagnostic turn is run, and a restart clears the native session, requeues the task, releases the agent and tells the fresh
+// session where the checkout stood and which commands are open.
+func TestContextOverflowOffersRestartWithHandoffNote(t *testing.T) {
+	t.Parallel()
+	// The opencode line is the first line of a recorded death of a real session.
+	for _, c := range []struct{ tool, line string }{
+		{"claude", `{"type":"result","is_error":true,"result":"Prompt is too long"}`},
+		{"codex", `{"type":"error","message":"Codex ran out of room in the model's context window."}`},
+		{"opencode", `OpenCode error: ContextOverflowError: input exceeds context window`},
+		{"opencode", `OpenCode error: ContextOverflowError: litellm.BadRequestError: OpenAIException - Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1051866 tokens: 1019866 tokens from the input messages and 32000 tokens for the completion. Please reduce the number of tokens in the input messages or the completion to fit within the limit.`},
+		{"pi", `Pi provider error: litellm.ContextWindowExceededError: prompt is too long`},
+	} {
+		tool, line := c.tool, c.line
+		s, f, owner := recoveryFixture(t, true)
+		ctx := context.Background()
+		if _, err := s.db.Exec(`UPDATE agent SET tool=? WHERE id=?`, tool, f.agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE session SET native_session_id='native-1' WHERE id='ses_test'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO command_job(id,agent_id,generation,machine_id,project_id,room_id,label,cmd,cwd,timeout_seconds,state,log_path,created_at)
+			VALUES ('cmd_open',?,0,?,?,?,'gate','make gate','/w',60,'running','/w/log',?)`, f.agent.ID, f.agent.MachineID, f.project.ID, f.room.ID, timestamp()); err != nil {
+			t.Fatal(err)
+		}
+		const tip = "tip ab31772 fix(x): the last commit, tree clean"
+		if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: line, WorkTree: tip}); err != nil {
+			t.Fatal(err)
+		}
+		var diagnostics int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='diagnostic'`, f.turn.ID).Scan(&diagnostics); err != nil || diagnostics != 0 {
+			t.Fatalf("%s: a diagnostic was run for a context overflow: %d %v", tool, diagnostics, err)
+		}
+		items, err := s.InboxForUser(ctx, owner)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%s: items=%+v %v", tool, items, err)
+		}
+		item := items[0]
+		if strings.Join(item.Options, ",") != "Restart,Abandon" || item.RecoveryPhase != brokenSessionReason || !strings.Contains(item.Question, "context window") {
+			t.Fatalf("%s: options %v phase %q question %q", tool, item.Options, item.RecoveryPhase, item.Question)
+		}
+		if _, _, err := s.DecideRecovery(ctx, item.ID, owner, "resume-"+tool, "resume", int(item.Rev)); err == nil {
+			t.Fatalf("%s: Resume was accepted for a context overflow", tool)
+		}
+		if _, _, err := s.DecideRecovery(ctx, item.ID, owner, "restart-"+tool, "restart", int(item.Rev)); err != nil {
+			t.Fatalf("%s: restart: %v", tool, err)
+		}
+		var native *string
+		var start, noteState, observed string
+		var block int
+		if err := s.db.QueryRow(`SELECT native_session_id,start_mode FROM session WHERE id='ses_test'`).Scan(&native, &start); err != nil || native != nil || start != "fresh_with_history" {
+			t.Fatalf("%s: native=%v start=%q err=%v", tool, native, start, err)
+		}
+		if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, f.note.ID).Scan(&noteState); err != nil || noteState != "queued" {
+			t.Fatalf("%s: note %q err=%v, want queued", tool, noteState, err)
+		}
+		if err := s.db.QueryRow(`SELECT recovery_block,observed FROM agent WHERE id=?`, f.agent.ID).Scan(&block, &observed); err != nil || block != 0 || observed != "idle" {
+			t.Fatalf("%s: block=%d observed=%q err=%v, want released", tool, block, observed, err)
+		}
+		var body string
+		if err := s.db.QueryRow(`SELECT body FROM message WHERE room_id=? AND body LIKE 'Handoff:%'`, f.room.ID).Scan(&body); err != nil {
+			t.Fatalf("%s: no handoff note: %v", tool, err)
+		}
+		if !strings.Contains(body, tip) || !strings.Contains(body, "cmd_open (gate): make gate") {
+			t.Fatalf("%s: handoff %q lacks the last commit or the open command", tool, body)
+		}
+	}
+}
+
+// Abandoning a context overflow releases the agent as any other abandoned turn does, and an ordinary error stays an uncertain outcome.
+func TestContextOverflowAbandonReleasesAndOtherErrorsAreUnchanged(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, false)
+	ctx := context.Background()
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: "Prompt is too long"}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 || strings.Join(items[0].Options, ",") != "Restart,Abandon" {
+		t.Fatalf("items=%+v %v", items, err)
+	}
+	if _, _, err := s.DecideRecovery(ctx, items[0].ID, owner, "abandon-overflow", "abandon", int(items[0].Rev)); err != nil {
+		t.Fatal(err)
+	}
+	var block int
+	var noteState string
+	if err := s.db.QueryRow(`SELECT recovery_block FROM agent WHERE id=?`, f.agent.ID).Scan(&block); err != nil || block != 0 {
+		t.Fatalf("block=%d err=%v", block, err)
+	}
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, f.note.ID).Scan(&noteState); err != nil || noteState != "aborted" {
+		t.Fatalf("note=%q err=%v", noteState, err)
+	}
+	other, g, ownerTwo := recoveryFixture(t, false)
+	if err := other.RecordProcessInfo(ctx, g.turn.ID, g.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: "connection reset by peer"}); err != nil {
+		t.Fatal(err)
+	}
+	items, err = other.InboxForUser(ctx, ownerTwo)
+	if err != nil || len(items) != 1 || strings.Join(items[0].Options, ",") != "Resume,Retry,Abandon" || items[0].RecoveryPhase != "" {
+		t.Fatalf("other error: items=%+v %v", items, err)
+	}
+}

@@ -615,6 +615,14 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 			// What the harness said, readable, and whether the turn failed before doing anything: the recovery card shows the sentence and
 			// folds the raw evidence away, and a definite failure is offered Retry alone (a diagnostic or Resume has nothing to find).
+			if adapter.ContextOverflow(errorEvent, info.ErrorSummary, stderr) {
+				// The conversation outgrew the model's context: Resume and Retry would fail the same way at once, so recovery offers a fresh
+				// session (see contextOverflowRecovery).
+				payload["context_overflow"] = "1"
+				if workTree != "" {
+					payload["work_tree"] = workTree
+				}
+			}
 			if summary := adapter.SanitizeStderr(info.ErrorSummary); summary != "" {
 				payload["result_text"] = summary
 				if info.DefiniteFailure {

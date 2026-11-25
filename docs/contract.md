@@ -1114,7 +1114,11 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   `answer_held`, routed and escalated like a worker recovery). Two empty
   answers in a row from one agent with no tool activity raise a lead recovery
   (phase `broken_session`, choices `restart` with a fresh native session or
-  `abandon`) and no card. Only a lead's own failure, or a worker's with no lead
+  `abandon`) and no card. A turn that ends with a context-length error (see
+  docs/api.md) raises the same lead recovery (phase `broken_session`, choices
+  `restart` and `abandon` only, no diagnostic turn); `restart` starts a fresh
+  native session in the same checkout, requeues the turn's notes and sends it
+  a `Handoff:` system note naming the last commit and the open commands. Only a lead's own failure, or a worker's with no lead
   to hand to, is a card for people; `room_closed` and `not_member` holds always
   stay with people. Every empty answer logs the harness exit
   code and the last stderr lines, and every answered turn logs one server line
