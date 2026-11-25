@@ -109,6 +109,25 @@ async function main() {
   const rows = page => page.$$eval('#projects .room-group', (groups, glyphs) => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${glyphs[row.querySelector('.room-item-icon').dataset.roomType]} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }), GLYPHS);
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
+  // Capture the released layout from a detached baseline before its new assertions stop the test.
+  if (process.env.AIMEBU_A134_BEFORE_SHOTS) {
+    const statusList = rooms().prj_a.map(item => item.id === 'rm_api' ? { ...item, purpose: 'task', finished_unseen: true, attention_open: 0 } : item.id === 'rm_notes' ? { ...item, purpose: 'task', gate: 'paused' } : item.id === 'rm_mute' ? { ...item, purpose: 'task', working: true } : item);
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': statusList }) });
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.evaluate(() => { window.__sidebar.rooms.get('rm_api').attention_count = 1; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_ah'], flags: [{ code: 'stuck' }] }]); document.getElementById('app-view').style.setProperty('--rooms-w', '220px'); });
+    for (const [label, name] of [['short', 'Alpha'], ['full', 'Alpha wrapping check with a few more words']]) {
+      await page.evaluate(name => { window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; window.__sidebar.store.touch(); }, name);
+      await settle(page);
+      for (const theme of ['dark', 'high-contrast-dark']) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await page.hover('[data-room-id=rm_ah] > .room-item');
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] .room-item-actions')).opacity === '1');
+        await page.screenshot({ path: path.join(process.env.AIMEBU_A134_BEFORE_SHOTS, `before-${label}-${theme}-hover.png`) });
+      }
+    }
+    await page.close();
+  }
+
   // Owners see restricted routing rooms with a lock, while ordinary rooms have no lock.
   {
     const auto = answerAll();
@@ -301,6 +320,9 @@ async function main() {
     });
     await page.mouse.move(1100, 700);
     const idle = await measure();
+    assert.equal(await page.$('[data-room-id=rm_ah] > .room-item .room-item-count'), null, 'a home row without task status omits its member count');
+    assert.ok(await page.$('[data-room-id=rm_gen] .room-item-count'), 'a general task-kind row keeps its member count');
+    assert.ok(await page.$('[data-room-id=rm_dm] .room-item-count'), 'a direct-message row keeps its member count');
     assert.deepEqual([idle.menu, idle.add, idle.extra, idle.overlay], [true, true, 0, ['absolute', '0', 'none']], 'a project row has the ☰ and + buttons and no arrows, in an overlay that is not seen and takes no room before hover');
     assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
     assert.ok(idle.rowRight - idle.nameRight < 12, `the name column (v1's .room-item-info) reaches the row end, less the row's padding, when controls are hidden: ${JSON.stringify(idle)}`);
@@ -308,25 +330,26 @@ async function main() {
     await page.hover('[data-room-id=rm_ah] > .room-item'); await overlayShown();
     const hovered = await measure();
     assert.deepEqual([hovered.menu, hovered.add, hovered.extra, hovered.overlay], [true, true, 0, ['absolute', '1', 'auto']]);
-    assert.ok(idle.badges.length > 0, 'the project row has a badge to keep in place');
-    // The controls have a slot of their own at the end of the name: shown, they cover the name's tail and nothing else (no badge, not the preview line), and they
-    // open from the slot, so a short name does not push them over the row's badges.
+    assert.deepEqual(idle.badges, [], 'the home row has no member count or other badges in this fixture');
+    // Project controls stay at the right edge of the top line and leave the visible name and preview clear.
     const overlap = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
       const box = node => { const rect = node.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; };
-      const actions = box(row.querySelector('.room-item-actions')), name = box(row.querySelector('.room-item-name'));
-      const hits = [...row.querySelectorAll('.room-item-count, .room-item-attention, .room-item-unread, .room-health, .room-muted, .room-item-preview')].filter(node => node.getBoundingClientRect().width > 0)
+      const actions = box(row.querySelector('.room-item-actions')), name = row.querySelector('.room-item-name'), text = document.createRange(); text.selectNodeContents(name);
+      const hits = [...row.querySelectorAll('.room-item-preview')].filter(node => node.getBoundingClientRect().width > 0)
         .filter(node => { const other = box(node); return actions.left < other.right && other.left < actions.right && actions.top < other.bottom && other.top < actions.bottom; }).map(node => node.className);
-      return { hits, actionsRight: actions.right, nameRight: name.right };
+      const textBox = text.getBoundingClientRect(), visibleRight = Math.min(textBox.right, name.getBoundingClientRect().right);
+      return { hits, actionsRight: actions.right, rowRight: box(row.querySelector('.room-item-top')).right, textHit: actions.left < visibleRight && actions.right > textBox.left && actions.top < textBox.bottom && actions.bottom > textBox.top };
     });
     const shown = await overlap();
-    assert.deepEqual(shown.hits, [], `the hover controls cover no badge and no preview: ${JSON.stringify(shown)}`);
-    assert.ok(shown.actionsRight <= shown.nameRight + 1, `they end where the name ends: ${JSON.stringify(shown)}`);
-    assert.deepEqual([hovered.rowHeight, hovered.info, hovered.nameWidth, hovered.badges], [idle.rowHeight, idle.info, idle.nameWidth, idle.badges], 'showing the controls changes neither the row nor its columns: they are laid over its end');
+    assert.deepEqual(shown.hits, [], `the hover controls cover no preview: ${JSON.stringify(shown)}`);
+    assert.equal(shown.textHit, false, `the hover controls leave the visible name clear: ${JSON.stringify(shown)}`);
+    assert.ok(Math.abs(shown.actionsRight - shown.rowRight) <= 1, `they end at the right edge of the top line: ${JSON.stringify(shown)}`);
+    assert.deepEqual([hovered.rowHeight, hovered.info, hovered.badges], [idle.rowHeight, idle.info, idle.badges], 'showing the controls keeps the row and its columns stable');
     await page.mouse.move(1100, 700);
     await page.focus('[data-room-id=rm_ah] .room-item-name'); await overlayShown();
     const focused = await measure();
     assert.deepEqual([focused.menu, focused.add, focused.extra, focused.overlay], [true, true, 0, ['absolute', '1', 'auto']], 'keyboard focus reveals the controls');
-    assert.deepEqual([focused.rowHeight, focused.info, focused.nameWidth, focused.badges], [idle.rowHeight, idle.info, idle.nameWidth, idle.badges], 'and they do not change the row either');
+    assert.deepEqual([focused.rowHeight, focused.info, focused.badges], [idle.rowHeight, idle.info, idle.badges], 'focus keeps the row and its columns stable too');
     await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
     await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] > .room-item .room-item-actions')).opacity === '0'); // the fade out
     assert.deepEqual([(await measure()).overlay], [['absolute', '0', 'none']], 'high contrast keeps idle controls out of sight and out of layout');
@@ -335,6 +358,35 @@ async function main() {
     assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true);
     const touch = await measure();
     assert.deepEqual([touch.menu, touch.add, touch.extra, touch.overlay], [true, true, 0, ['static', '1', 'auto']], 'touch keeps controls in the row, reachable without hover');
+    await page.close();
+  }
+
+  // A home row without task status keeps its hover and focus controls at the top-line edge at both sidebar widths.
+  {
+    const page = await mount();
+    await page.setViewport({ width: 1280, height: 800 });
+    for (const [name, width] of [['Alpha', 220], ['Wrapping Project', 220], ['Wrapping Project', 480]]) {
+      await page.evaluate((name, width) => { window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; document.getElementById('app-view').style.setProperty('--rooms-w', `${width}px`); window.__sidebar.store.touch(); }, name, width);
+      await settle(page);
+      for (const theme of ['dark', 'light', 'high-contrast-dark']) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        for (const focus of [false, true]) {
+          if (focus) await page.focus('[data-room-id=rm_ah] > .room-item .room-item-name');
+          else await page.hover('[data-room-id=rm_ah] > .room-item');
+          await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] .room-item-actions')).opacity === '1');
+          const geometry = await page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+            const action = row.querySelector('.room-item-actions').getBoundingClientRect(), name = row.querySelector('.room-item-name');
+            const range = document.createRange(); range.selectNodeContents(name);
+            const text = range.getBoundingClientRect(), visibleRight = Math.min(text.right, name.getBoundingClientRect().right);
+            return { hit: action.left < visibleRight && action.right > text.left && action.top < text.bottom && action.bottom > text.top,
+              actionRight: action.right, lineRight: row.querySelector('.room-item-top').getBoundingClientRect().right };
+          });
+          assert.equal(geometry.hit, false, `${theme} ${name} ${width} ${focus ? 'focus' : 'hover'}: controls clear the visible name`);
+          assert.ok(Math.abs(geometry.actionRight - geometry.lineRight) <= 1, `${theme} ${name} ${width}: controls end at top-line edge`);
+          await page.mouse.move(1200, 780); await page.evaluate(() => document.activeElement?.blur());
+        }
+      }
+    }
     await page.close();
   }
 
@@ -1500,9 +1552,9 @@ async function main() {
     const finished = await view('rm_fin');
     assert.deepEqual(finished.status, ['Finished', 'finished', 'An agent finished and left a message for you that you have not seen yet'], 'a room whose agent finished with a message the person has not seen says so');
     assert.deepEqual([kinds.rm_res.count, kinds.rm_res.unread, kinds.rm_res.name], [false, '', 'compare · 2 members'], 'a research room is told like a task room');
-    // General and coordination rooms, the home room and direct messages keep the member count; only the home room and direct messages carry an unread chip.
+    // General and coordination rooms and direct messages keep the member count; home rows omit it.
     assert.deepEqual([kinds.rm_gen2.count, kinds.rm_gen2.unread, kinds.rm_gen2.status], [true, '', null], 'a general room keeps its member count, shows no unread chip and has no status (an agent working does not change that)');
-    assert.deepEqual([kinds.rm_kh.count, kinds.rm_kh.unread, kinds.rm_kh.status], [true, '2', null], 'the folded home keeps its member count and shows only its own 2, nothing from the rooms under it');
+    assert.deepEqual([kinds.rm_kh.count, kinds.rm_kh.unread, kinds.rm_kh.status], [false, '2', null], 'the folded home omits its member count and shows only its own 2, nothing from the rooms under it');
     assert.deepEqual([kinds.rm_dm2.count, kinds.rm_dm2.unread, kinds.rm_dm2.status], [true, '2', null]);
     assert.deepEqual([kinds.rm_chat2.count, kinds.rm_chat2.unread], [true, '1']);
     // The status.
@@ -1775,8 +1827,8 @@ async function main() {
         return { presentation: pill?.querySelector('.project-status-a')?.className, tooltip: pill?.title, described: document.getElementById(pill?.getAttribute('aria-describedby'))?.textContent, folded: row.classList.contains('collapsed') };
       });
       assert.ok(found.presentation?.includes('project-status-a'), 'the status renders its one presentation');
-      assert.equal(found.tooltip, '1 need you, 1 waiting, 1 working', 'tooltip has every state');
-      assert.equal(found.described, found.tooltip, 'screen reader text matches tooltip');
+      assert.equal(found.tooltip, '', 'native title does not duplicate the viewport-clamped tooltip');
+      assert.equal(found.described, '1 need you, 1 waiting, 1 working', 'screen reader text matches tooltip');
       assert.equal(await page.$('[data-room-id=rm_bh] .project-status'), null, 'zero counts hide the status');
       for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
         const colours = await page.evaluate(theme => {
@@ -1786,23 +1838,24 @@ async function main() {
         }, theme);
         assert.notEqual(colours[0], colours[1], `in ${theme}: status remains legible`);
       }
-      await page.click('[data-room-id=rm_ah] .project-status');
+      await page.$eval('[data-room-id=rm_ah] .project-status', node => node.click());
       await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
       assert.equal(await page.$eval('[data-room-id=rm_ah]', row => row.classList.contains('collapsed')), false, 'click expands');
       await page.click('[data-room-id=rm_ah] .room-collapse');
       await page.waitForFunction(() => document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
       assert.equal(await page.$('.project-status-switch'), null, 'no variant switcher remains');
     }
-    // The complete project row can carry a warning, member count, attention bell and status pill at once.
+    // The complete project row can carry a warning, attention bell and status pill at once, but no member count.
     // One pixel of tolerance on element edges accounts only for subpixel rounding; the name uses exact integer widths.
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1'); window.__sidebar.rooms.get('rm_api').attention_count = 1; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_ah'], flags: [{ code: 'stuck' }] }]); });
+    assert.equal(await page.$('[data-room-id=rm_ah] > .room-item .room-item-count'), null, 'a home row with task status omits its member count');
     await page.setViewport({ width: 1280, height: 800 });
     const measureRow = () => page.evaluate(() => {
       const row = document.querySelector('[data-room-id=rm_ah] > .room-item');
       const box = node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
       const name = row.querySelector('.room-item-name'), info = row.querySelector('.room-item-info');
       const text = document.createRange(); text.selectNodeContents(name);
-      const rowBox = box(row), nameBox = box(name), badgeNames = ['.room-health', '.room-item-count', '.room-item-attention'];
+      const rowBox = box(row), nameBox = box(name), badgeNames = ['.room-health', '.room-item-attention'];
       const badges = badgeNames.map(selector => box(row.querySelector(selector)));
       const pill = box(row.querySelector('.project-status'));
       const visible = [...row.querySelectorAll('*')].filter(node => {
@@ -1816,6 +1869,8 @@ async function main() {
         iconOff: Math.abs(centre(row.querySelector('.room-item-icon-group')) - centre(row)), chevronOff: Math.abs(centre(row.querySelector('.room-collapse')) - centre(row)) };
     });
     const setCase = async (name, width) => {
+      await page.mouse.move(1200, 780);
+      await page.evaluate(() => document.activeElement?.blur());
       await page.evaluate((name, width) => { window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; document.getElementById('app-view').style.setProperty('--rooms-w', `${width}px`); window.__sidebar.store.touch(); }, name, width);
       await settle(page);
     };
@@ -1826,10 +1881,10 @@ async function main() {
       assert.deepEqual(box.overflow, [], `${label}: no visible child crosses the row's right edge`);
       assert.ok(box.iconOff <= 2.5, `${label}: house icon is centered (${box.iconOff.toFixed(2)} px)`);
       assert.ok(box.chevronOff <= 2.5, `${label}: chevron is centered (${box.chevronOff.toFixed(2)} px)`);
-      assert.ok(box.badges.every(badge => Math.abs(badge.top - box.badges[0].top) < 2), `${label}: warning, member count and bell stay grouped`);
-      assert.ok(box.badges[0].width && box.badges[1].width && box.badges[2].width && box.pill.width, `${label}: all badges and pill render`);
+      assert.ok(box.badges.every(badge => Math.abs(badge.top - box.badges[0].top) < 2), `${label}: warning and bell stay grouped`);
+      assert.ok(box.badges[0].width && box.badges[1].width && box.pill.width, `${label}: all badges and pill render`);
       assert.ok(box.pill.top >= box.badges[0].bottom - 1 ||
-        (box.pill.left >= box.badges[2].right - 1 && box.pill.bottom > box.badges[0].top), `${label}: pill follows the badge group`);
+        (box.pill.left >= box.badges[1].right - 1 && box.pill.bottom > box.badges[0].top), `${label}: pill follows the badge group`);
       assert.ok(box.preview.top >= Math.max(box.pill.bottom, ...box.badges.map(badge => badge.bottom)) - 1, `${label}: preview follows badges and pill`);
       console.log(`project-row ${label}: scrollWidth=${box.name.scrollWidth} clientWidth=${box.name.clientWidth} contentWidth=${box.contentWidth.toFixed(2)} nameWidth=${box.name.width.toFixed(2)} badgeTop=${box.badges[0].top.toFixed(2)} pillTop=${box.pill.top.toFixed(2)}`);
     };
@@ -1855,6 +1910,82 @@ async function main() {
       if (width === 480) assert.ok(box.badges[0].top < box.name.bottom - 1, 'wide: name and badges share a line');
       await shot(label);
     }
+    // With a status, the name may share the first line with badges or take the line alone.
+    // In either layout the actions are at the row edge and clear the visible name text.
+    const hoverGeometry = async (label, theme, selected = false, focused = false) => {
+      await page.evaluate((theme, selected) => {
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('[data-room-id=rm_ah] > .room-item').classList.toggle('active', selected);
+      }, theme, selected);
+      if (focused) { await page.mouse.move(1200, 780); await page.focus('[data-room-id=rm_ah] > .room-item .room-item-name'); }
+      else await page.hover('[data-room-id=rm_ah] > .room-item');
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-room-id=rm_ah] .room-item-actions')).opacity === '1');
+      await new Promise(resolve => setTimeout(resolve, 180)); // the row's background transition finishes after the action fade
+      const geometry = await page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+        const actions = row.querySelector('.room-item-actions').getBoundingClientRect();
+        const name = row.querySelector('.room-item-name'), nameBox = name.getBoundingClientRect();
+        const text = document.createRange(); text.selectNodeContents(name);
+        const textBox = text.getBoundingClientRect(), top = row.querySelector('.room-item-top').getBoundingClientRect();
+        const visibleRight = Math.min(textBox.right, nameBox.right);
+        const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+        const pixel = colour => { context.clearRect(0, 0, 1, 1); context.fillStyle = colour; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data]; };
+        return { actionsLeft: actions.left, actionsRight: actions.right, topRight: top.right,
+          textLeft: textBox.left, visibleRight, textTop: textBox.top, textBottom: textBox.bottom,
+          actionsTop: actions.top, actionsBottom: actions.bottom, background: getComputedStyle(row.querySelector('.room-item-actions')).backgroundColor,
+          rowBackground: getComputedStyle(row).backgroundColor,
+          fade: getComputedStyle(row.querySelector('.room-item-actions'), '::before').backgroundImage,
+          actionPixel: pixel(getComputedStyle(row.querySelector('.room-item-actions')).backgroundColor),
+          rowPixel: pixel(getComputedStyle(row).backgroundColor === 'rgba(0, 0, 0, 0)' ? getComputedStyle(row).getPropertyValue('--bg-secondary') : getComputedStyle(row).backgroundColor) };
+      });
+      assert.ok(Math.abs(geometry.actionsRight - geometry.topRight) <= 1, `${label}: actions end at top-line right edge: ${JSON.stringify(geometry)}`);
+      assert.equal(geometry.actionsLeft < geometry.visibleRight && geometry.actionsRight > geometry.textLeft &&
+        geometry.actionsTop < geometry.textBottom && geometry.actionsBottom > geometry.textTop, false,
+      `${label}: actions do not cover visible name text: ${JSON.stringify(geometry)}`);
+      assert.ok(geometry.actionPixel.every((channel, index) => Math.abs(channel - geometry.rowPixel[index]) <= 1),
+        `${label}: action background matches the row after its transition: ${JSON.stringify(geometry)}`);
+      assert.ok(geometry.fade.includes(geometry.background), `${label}: action fade ends in the same colour as its background: ${JSON.stringify(geometry)}`);
+      if (process.env.AIMEBU_A134_SHOTS && ['short-narrow', 'full-narrow'].includes(label) && !selected && (theme === 'dark' || theme === 'high-contrast-dark')) {
+        await page.screenshot({ path: path.join(process.env.AIMEBU_A134_SHOTS, `after-${label}-${theme}-hover.png`) });
+      }
+      await page.mouse.move(1200, 780);
+      await page.evaluate(() => document.activeElement?.blur());
+    };
+    for (const [label, name, width] of [
+      ['short-narrow', 'Alpha', 220], ['fit-narrow', 'Wrapping Project', 220],
+      ['full-narrow', 'Alpha wrapping check with a few more words', 220], ['full-wide', 'Wrapping Project', 480],
+    ]) {
+      await setCase(name, width);
+      for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+        await hoverGeometry(label, theme);
+        await hoverGeometry(label, theme, true);
+      }
+    }
+    await setCase('Alpha', 220);
+    await hoverGeometry('focus-short-narrow', 'dark', false, true);
+    await setCase('Wrapping Project', 480);
+    await hoverGeometry('focus-fit-wide', 'light', false, true);
+    await setCase('Alpha', 220);
+    await page.setViewport({ width: 720, height: 800 });
+    await page.evaluate(() => {
+      const sidebar = document.querySelector('.sidebar'), row = document.querySelector('[data-room-id=rm_ah] > .room-item');
+      sidebar.style.position = 'relative'; sidebar.style.zIndex = '20'; sidebar.style.overflow = 'visible';
+      sidebar.style.transform = `translateX(${Math.max(0, window.innerWidth - row.getBoundingClientRect().right - 2)}px)`;
+    });
+    await page.hover('[data-room-id=rm_ah] .project-status');
+    await settle(page);
+    const tooltipState = await page.$eval('[data-room-id=rm_ah] .project-status', pill => {
+      const box = pill.getBoundingClientRect();
+      return { shown: !!document.querySelector('.project-status-tooltip'),
+        hit: document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2)?.className,
+        pill: { left: box.left, right: box.right, top: box.top, bottom: box.bottom } };
+    });
+    assert.equal(tooltipState.shown, true, `hover reveals status tooltip: ${JSON.stringify(tooltipState)}`);
+    const tip = await page.$eval('.project-status-tooltip', node => {
+      const box = node.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: innerWidth, height: innerHeight };
+    });
+    assert.ok(tip.left >= 0 && tip.right <= tip.width && tip.top >= 0 && tip.bottom <= tip.height, `status tooltip stays in viewport: ${JSON.stringify(tip)}`);
+    if (process.env.AIMEBU_A134_SHOTS) await page.screenshot({ path: path.join(process.env.AIMEBU_A134_SHOTS, 'after-tooltip-narrow-edge.png') });
+    await page.evaluate(() => { const sidebar = document.querySelector('.sidebar'); sidebar.style.transform = ''; sidebar.style.position = ''; sidebar.style.zIndex = ''; sidebar.style.overflow = ''; });
     await page.evaluate(() => { document.getElementById('app-view').style.removeProperty('--rooms-w'); localStorage.removeItem('aimebu2.ui.sidebar_preview.usr_me'); window.__sidebar.projects.get('prj_a').name = 'Alpha'; window.__sidebar.rooms.get('rm_ah').title = 'Alpha'; window.__sidebar.rooms.get('rm_api').attention_count = 0; });
     await page.evaluate(() => window.__sidebar.store.touch());
     await page.setViewport({ width: 390, height: 844 });

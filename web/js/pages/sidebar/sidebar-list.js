@@ -112,7 +112,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
   const drag = controls ? dragHandlers(room, store) : {};
   const statusCounts = room.kind === 'home' && !archivedProject ? ctx.statusCounts.get(room.project_id) : null;
   const hasProjectStatus = statusCounts && statusCounts.needs + statusCounts.waiting + statusCounts.working > 0;
-  const memberBadge = counted && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`;
+  const memberBadge = counted && room.kind !== 'home' && html`<span class="room-item-count" role="img" aria-label=${`${members} ${members === 1 ? 'member' : 'members'}`} title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>`;
   const healthBadge = (affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`;
   const attentionBadge = attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`;
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>

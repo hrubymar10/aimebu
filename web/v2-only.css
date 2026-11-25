@@ -198,7 +198,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item .room-name-line { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .room-item .room-item-name { flex: 1 1 0; min-width: 0; border: 0; background: transparent; text-align: left; }
 /* A project with a task status keeps the name and its badges as separate flex units. The name takes its full intrinsic width before
-   the badges move below it; only a name wider than the text column gets an ellipsis. Warning, member count and bell are one unbreakable
+   the badges move below it; only a name wider than the text column gets an ellipsis. Warning and bell are one unbreakable
    group, while the status pill can wrap after that group. The preview follows beneath the complete top area. */
 .room-item .room-item-top:has(.project-status) { flex-wrap: wrap; row-gap: 2px; }
 .room-group > .room-item:has(.project-status-wrap) { align-items: center; }
@@ -257,15 +257,26 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .room-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 [data-theme="high-contrast-dark"] .room-item :is(.branch, .add-room) { border: 0; background: transparent; }
-/* The row's hover controls (the project menu and the + for a new room) have a slot of their own: a zero-width anchor at the end of the name, from which they
-   open leftwards over the name's tail, fading in on hover or focus like v1's agent card actions. The slot takes no room, so showing them never makes the row taller
-   or moves anything, and they cover only the name (which is cut with an ellipsis anyway): never a badge, never the preview line. */
+/* The row's hover controls have a zero-width slot. Project controls use the top line's right edge, including when the status makes the name intrinsic-width;
+   they can fade over badges there, but the name gives them room on hover. Touch controls remain in the line as ordinary flex content. */
 .room-item { position: relative; }
 .room-item .room-item-actions-slot { position: relative; flex: none; width: 0; margin-right: -6px; /* the top line's gap before the next badge */ }
 .room-item .room-item-actions-slot:not(:has(button:not([hidden]))) { display: none; } /* a row with no controls has no slot */
 .room-item .room-item-actions { position: absolute; top: 50%; right: 6px; z-index: 1; display: flex; align-items: center; gap: 2px; padding-left: 8px; transform: translateY(-50%); background: var(--bg-tertiary); border-radius: var(--radius); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
 .room-item .room-item-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -14px; width: 14px; background: linear-gradient(to right, transparent, var(--bg-tertiary)); pointer-events: none; }
 .room-item:hover .room-item-actions, .room-item:focus-within .room-item-actions, .room-item .room-item-actions:has(.project-menu.is-open) { opacity: 1; pointer-events: auto; }
+.room-item:has(.room-collapse) .room-item-top { position: relative; }
+.room-item:has(.room-collapse) .room-item-actions-slot { position: static; }
+.room-item:has(.room-collapse) .room-item-actions { top: 0; right: 0; transform: none; background: var(--room-actions-bg, var(--bg-secondary)); }
+.room-item:has(.room-collapse) .room-item-actions::before { background: linear-gradient(to right, transparent, var(--room-actions-bg, var(--bg-secondary))); }
+.room-item:hover { --room-actions-bg: var(--bg-hover); }
+.room-item.active { --room-actions-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary)); }
+.room-item.active:hover { --room-actions-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary)); }
+.room-item:has(.room-collapse):is(.active, :hover) { background: var(--room-actions-bg); }
+.room-item:has(.room-collapse):is(:hover, :focus-within) .room-name-line { max-width: calc(100% - 62px); }
+/* A status tooltip is placed against the viewport by its component when shown. */
+.project-status-wrap { position: relative; }
+.project-status-tooltip { position: fixed; z-index: 1000; max-width: min(250px, calc(100vw - 12px)); padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text-primary); font-size: 11px; white-space: normal; box-shadow: 0 2px 8px var(--overlay-shadow); pointer-events: none; }
 /* No hover on a touch screen: the slot is part of the row's top line, a place of its own after the name. */
 @media (hover: none) and (pointer: coarse) { .room-item .room-item-actions-slot { width: auto; margin-right: 0; } .room-item .room-item-actions { position: static; transform: none; padding-left: 0; background: none; opacity: 1; pointer-events: auto; transition: none; } .room-item .room-item-actions::before { display: none; } }
 
