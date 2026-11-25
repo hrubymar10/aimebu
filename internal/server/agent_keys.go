@@ -55,9 +55,11 @@ func (s *Server) grantAgentKeys(ctx context.Context, machine *machineConn, held 
 	return grants, nil
 }
 
-// grantHandoverKey sends a key on the active connection before its first delivery for an agent released by retiring instances.
+// grantHandoverKey sends a key on the active connection before its first delivery for an agent released by retiring instances. Only an instance
+// that says it handles the standalone frame gets one: an older build that takes keys in hello_ack has no handler for it and would drop the
+// connection, so for that one nothing is rotated or sent and the key waits for its next hello_ack.
 func (s *Server) grantHandoverKey(ctx context.Context, machine *machineConn, agentID string, generation int) error {
-	if !machine.supportsAgentKeys {
+	if !machine.supportsAgentKeys || !machine.supportsAgentKeysFrame {
 		return nil
 	}
 	s.spawnMu.Lock()

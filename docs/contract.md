@@ -1633,7 +1633,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version, supervisor_environment?, drain_only?, supports_retire_at_idle?,
   supports_path_probe?, supports_directory_list?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_legacy_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, supports_handoff_outcome?, held_keys?[agent_id],
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?, supports_agent_conversation_log?, supports_telemetry_config?, supports_agent_keys?, supports_agent_keys_frame?, supports_commands?, supports_container_commands?, supports_warm?, supports_turn_interrupt?, supports_attachment_save?, supports_handoff_outcome?, held_keys?[agent_id],
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}], command_open?[{job_id, agent_id, generation, pid, pid_start?,
@@ -1676,7 +1676,7 @@ it never silently reruns a turn with uncertain effects.
   environment (`AIMEBU_SENTRY_DSN`, a DSN or `off`) wins over it.
 - `hello_ack` also carries `agent_keys[{agent_id, generation, key}]`: a new `aak_` key for each agent the supervisor should run and, per its
   `held_keys`, holds no key for (it keeps keys in memory only, so a restarted one holds none). Issuing one replaces the agent's stored key hash, so the
-  key the old process held stops authenticating. A connecting instance is not granted a key for an agent still held by a retiring instance. Before that agent's first delivery on the active instance, S→M `agent_keys{v,agent_keys[{agent_id,generation,key}]}` grants its key. Only a supervisor that announced `supports_agent_keys=true` is sent any. `spawn` and `deliver`
+  key the old process held stops authenticating. A connecting instance is not granted a key for an agent still held by a retiring instance. Before that agent's first delivery on the active instance, S→M `agent_keys{v,agent_keys[{agent_id,generation,key}]}` grants its key. Only a supervisor that announced `supports_agent_keys=true` is granted keys in `hello_ack`, and only one that also announced `supports_agent_keys_frame=true` (it handles the standalone frame; a build that has `supports_agent_keys` but not this one drops the connection on an unknown frame) is sent the standalone `agent_keys` frame: for any other instance the key is not rotated and no frame is sent, and the key waits for its next `hello_ack`. `spawn` and `deliver`
   carry `docker_only` when the instance runs agents only in docker (see [the supervisor](supervisor.md)); a supervisor refuses a native launcher then.
 - S→M `harness_set{v, req_id, harness_setting:{tool,variant,enabled,override_path}}`;
   M→S `harness_result{v,req_id,harness?,code?,message?}` validates and applies

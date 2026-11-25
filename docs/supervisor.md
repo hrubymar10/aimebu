@@ -263,7 +263,10 @@ A supervisor that restarts has lost its keys, and a confirmed spawn is not sent 
 answers in `hello_ack` with `agent_keys` (agent id, generation, a **new** key) for every agent the
 supervisor should run and holds no key for. Issuing the key replaces the stored hash, so the key
 the old process held stops authenticating (keys rotate on a supervisor restart). A supervisor that does not
-say so (an older one, which keeps keys on disk) is sent none.
+say so (an older one, which keeps keys on disk) is sent none. Before the first delivery to an agent a newer instance takes over from a
+retiring one, the server sends the key in a standalone `agent_keys` frame, but only to an instance whose hello says
+`supports_agent_keys_frame=true`: the previous build advertises `supports_agent_keys` without handling that frame (its read loop would
+drop the connection), so for it the key is not rotated and nothing is sent; the key waits for its next `hello_ack`.
 
 Claude, Codex and Pi Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing key-bearing is copied into the shared checkout. The key is not in the harness's
 argument list: the MCP entry names a variable

@@ -211,6 +211,10 @@ type Frame struct {
 	// SupportsAgentKeys says the supervisor keeps each agent's key in memory only, tells the server which keys it holds (HeldKeys) and takes new
 	// ones in hello_ack (AgentKeys). The server grants keys only to a supervisor that says so; an older one keeps its keys on disk.
 	SupportsAgentKeys bool `json:"supports_agent_keys,omitempty"`
+	// SupportsAgentKeysFrame says the supervisor handles the standalone agent_keys frame the server sends before a delivery on a new instance. A
+	// build that has SupportsAgentKeys but not this one has no handler for the frame and drops the connection on it, so the server sends it only
+	// to a supervisor that says so; for any other the key stays for the next hello_ack.
+	SupportsAgentKeysFrame bool `json:"supports_agent_keys_frame,omitempty"`
 	// SupportsCommands says the supervisor runs long commands outside a turn for an agent (CommandRun) and reports their end (CommandEnded).
 	SupportsCommands bool `json:"supports_commands,omitempty"`
 	// SupportsContainerCommands says the supervisor runs an agent's command in its container (a containerized launcher, or a docker variant
