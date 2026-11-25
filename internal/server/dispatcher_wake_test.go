@@ -17,8 +17,9 @@ import (
 // A committed change that can create dispatch work wakes the pass, so a new
 // message to an idle agent is dispatched without waiting for the fallback
 // tick: the tick here is an hour, so only the wake can deliver inside 100 ms.
+// Keep this timing assertion serial within the server package: unrelated
+// parallel fixtures can delay its goroutine under the race detector.
 func TestWakeDispatchesANewMessageInside100ms(t *testing.T) {
-	t.Parallel()
 	f := newFixture(t)
 	f.seed()
 	ctx := context.Background()
