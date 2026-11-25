@@ -1721,6 +1721,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #messages[data-empty="true"]::before { content: "No messages in this room yet."; display: block; padding: 48px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
 /* The top of a room's history, once there is nothing older to load: a quiet pill above the first message (hasOlder and empty are set by chat.js after the first page arrives). */
 #messages[data-has-older="false"][data-empty="false"]::before { content: "Start of room"; display: block; width: fit-content; margin: 10px auto 14px; padding: 2px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); font-size: 11px; }
+.chats-error { display: flex; align-items: center; gap: 6px; margin: 4px 8px; color: var(--text-muted); font-size: 12px; }
+.chats-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chats-retry { flex: none; padding: 4px 6px; }
 .rooms-empty { margin: 12px 14px; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 /* A person's card keeps its role readable: the private-chat button takes its own place after the role instead of lying over it. */
 .human-card .agent-card-actions { position: static; transform: none; padding: 0; background: none; flex: 0 0 auto; }

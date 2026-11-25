@@ -35,7 +35,8 @@ export class SidebarStore {
     // The open room the person marked unread: it is not marked read again, and it shows its count, until they leave it or mark it read.
     this.held = signal('');
     this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen(); this.revealedFor = '';
-    this.health = new Map(); this.joinable = []; this.agentChatProject = '';
+    this.health = new Map(); this.joinable = []; this.agentChatProject = ''; this.chatsFailed = false; // chatsFailed: the chats list could not be read, so its section shows the error row
+    this.chatRetryDelays = [1000, 3000]; // ms before the first and the second new read of the chats list that failed
     this.folds = new Map(); this.archiveFilter = new Map(); this.archiveHits = new Map();
     this.roomRequests = new Set(); this.listSeqs = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.saves = new Map();
     this.generation = 0; this.loadedUser = null; this.dragging = null; this.alive = true;
@@ -89,7 +90,7 @@ export class SidebarStore {
     for (const controller of this.roomRequests) controller.abort();
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
-    this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
+    this.joinable = []; this.chatsFailed = false; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
     this.holdFolds = true; this.pending.clear(); this.expected = []; this.revealedFor = '';
     batch(() => { this.active.value = ''; this.held.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
@@ -169,7 +170,7 @@ export class SidebarStore {
     try {
       // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
       chatsTicket = this.chatTicket();
-      const chatsRequest = this.roomRequest('/api/agent-dms').catch(() => null);
+      const chatsRequest = this.readAgentChats(generation).then(data => ({ data }), error => ({ error })); // settled either way: a failure is raised below, after the project lists
       projects = await this.roomRequest('/api/projects');
       if (!this.owns(generation)) return [];
       for (const project of projects) {
@@ -190,8 +191,14 @@ export class SidebarStore {
         if (this.listCurrent(project.id, tickets[index])) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); this.statusNow(project.id); }
         if (streaming) this.touchSoon(generation);
       }));
-      chats = await chatsRequest;
+      const answer = await chatsRequest;
       if (!this.owns(generation)) return [];
+      // The chats are secondary: a list that still fails never blocks the projects. A lost session (401) takes the app's sign-in path as it does for the
+      // projects; a 403 or a 404 means this person has no chats (or no right to them), so the section stays empty; anything else shows the section's error
+      // row with its retry.
+      if (answer.error?.status === 401) throw answer.error;
+      this.chatsFailed = !!answer.error && ![403, 404].includes(answer.error.status);
+      chats = answer.error ? null : answer.data;
     } catch (error) {
       if (!this.owns(generation)) return [];
       // What did arrive stays drawn; the projects still waiting are not drawn as placeholders for ever.
@@ -211,6 +218,19 @@ export class SidebarStore {
     return projects;
   }
 
+  // The chats list is read again after a failure, once for each delay of `chatRetryDelays` (a tab opened under load can lose that one read, and a list
+  // without it would look complete). A session that is gone (401), a 403 or a 404 (no chats for this person) and a list that was reset are not retried.
+  // Tests shorten the delays.
+  async readAgentChats(generation) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await this.roomRequest('/api/agent-dms'); } catch (error) {
+        if (!this.owns(generation) || error?.name === 'AbortError' || [401, 403, 404].includes(error?.status) || attempt >= this.chatRetryDelays.length) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, this.chatRetryDelays[attempt]));
+      if (!this.owns(generation)) throw new DOMException('the list was reset', 'AbortError');
+    }
+  }
+
   async addProject(project) {
     const generation = this.generation, ticket = this.listTicket(project.id);
     let list;
@@ -227,7 +247,18 @@ export class SidebarStore {
     let data;
     try { data = await this.roomRequest('/api/agent-dms'); } catch (error) { if (!this.owns(generation)) return; throw error; }
     if (!this.owns(generation) || !this.chatCurrent(ticket)) return;
-    this.applyAgentChats(data, mark); this.touch();
+    this.applyAgentChats(data, mark); this.chatsFailed = false; this.touch();
+  }
+
+  // The retry of the chats section's error row: only the chats list is read again, not the whole sidebar. Answers whether the chats are in.
+  async retryChats() {
+    const generation = this.generation;
+    try { await this.refreshAgentChats(); } catch (error) {
+      if (!this.owns(generation)) return false;
+      if (error?.status !== 401) this.chatsFailed = ![403, 404].includes(error?.status); // a lost session is the app's to handle
+      this.touch(); return false;
+    }
+    return this.owns(generation) && !this.chatsFailed;
   }
 
   // `mark: false` reads the list without marking the open room read: the refresh that follows the person's own read position moving (another tab

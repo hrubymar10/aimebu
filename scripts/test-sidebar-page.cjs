@@ -1869,6 +1869,77 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__sidebar.store.version.peek()), beforeFlush + 1, 'the status burst causes one trailing redraw');
     await page.close();
   }
+  // A read of the chats between agents that fails is read again (twice, after a delay; the page test shortens the delays), not dropped: a list without
+  // the chats would look complete. Chats are secondary, so a list that still fails never blocks the projects: the load finishes, and the chats section
+  // alone shows an error row with a retry that reads just that list. An empty answer is an answer, and a 403 or a 404 means there are no chats for this
+  // person: neither is read again, and neither shows an error row.
+  {
+    const fail = { error: 'fault', message: 'faked by the smoke' };
+    const startLoad = async () => {
+      const auto = answerAll(); delete auto['GET /api/agent-dms'];
+      const page = await mount({ auto, load: false, setup: () => { window.__sidebar.store.chatRetryDelays = [30, 60]; } });
+      await page.evaluate(() => { window.__outcome = window.__sidebar.load().then(() => 'loaded', error => `failed ${error.status}`); });
+      return page;
+    };
+    const dmsAnswer = async (page, status, body) => answer(page, await waitRequest(page, 'GET', '/api/agent-dms'), status, body);
+    const errorRow = page => page.$('.direct-rooms .chats-error');
+    // fails twice, then recovers: the chats are drawn as after a first success
+    let page = await startLoad();
+    await dmsAnswer(page, 500, fail); await dmsAnswer(page, 503, fail); await dmsAnswer(page, 200, chats());
+    assert.equal(await page.evaluate(() => window.__outcome), 'loaded');
+    assert.equal(await count(page, 'GET', '/api/agent-dms'), 3, 'two failed reads and the one that worked');
+    assert.ok(await page.$('[data-room-id=rm_chat]'), 'the chat is listed after the retry');
+    assert.ok(await page.$('[data-offer-id=rm_join]'), 'the joinable chat is offered after the retry');
+    assert.equal(await errorRow(page), null, 'no error row after a recovery');
+    await page.close();
+    // keeps failing: the projects are drawn, the chats section shows the error row, its retry reads only the chats and clears the row
+    page = await startLoad();
+    for (const status of [500, 502, 503]) await dmsAnswer(page, status, fail);
+    assert.equal(await page.evaluate(() => window.__outcome), 'loaded', 'a chats list that never loads does not fail the load');
+    await page.waitForSelector('.direct-rooms .chats-error');
+    assert.equal(await count(page, 'GET', '/api/agent-dms'), 3, 'no read beyond the retries');
+    assert.ok(await page.$('[data-room-id=rm_ah]') && await page.$('[data-room-id=rm_bh]'), 'the projects are drawn');
+    assert.equal(await page.$('[data-room-id=rm_chat]'), null, 'no chat is drawn from a failed list');
+    assert.deepEqual(await page.$eval('.chats-error', node => [node.querySelector('.chats-error-text').textContent, node.querySelector('button.chats-retry').title, node.querySelector('button.chats-retry').getAttribute('aria-label'), !!node.querySelector('button .icon-mask'), node.getAttribute('role')]),
+      ["Chats couldn't load", 'Retry loading chats', 'Retry loading chats', true, 'alert'], 'the error row says what failed and has an icon retry with a tooltip');
+    if (process.env.AIMEBU_SIDEBAR_SHOTS) { // the error row in context, default (dark) theme: the projects above it, the chats section below
+      await page.setViewport({ width: 320, height: 520 }); await page.evaluate(() => document.activeElement?.blur()); await page.mouse.move(1200, 780);
+      const box = await page.$eval('.direct-rooms', node => { const rect = node.getBoundingClientRect(); return { x: Math.max(0, rect.x), y: Math.max(0, rect.y - 180), width: Math.min(rect.width, 320), height: Math.min(rect.height + 180, 340) }; });
+      await page.screenshot({ path: path.join(process.env.AIMEBU_SIDEBAR_SHOTS, 'chats-error-row.png'), clip: box });
+    }
+    const projectReads = () => page.evaluate(() => window.__requests.filter(request => /^\/api\/projects/.test(request.path)).length);
+    const before = await projectReads();
+    await page.click('.chats-retry');
+    await dmsAnswer(page, 500, fail);
+    await page.waitForFunction(() => !document.querySelector('.chats-retry').disabled);
+    assert.ok(await errorRow(page), 'a retry that fails keeps the row');
+    await page.click('.chats-retry');
+    await dmsAnswer(page, 200, chats());
+    await page.waitForFunction(() => !document.querySelector('.direct-rooms .chats-error') && document.querySelector('[data-room-id=rm_chat]'));
+    assert.equal(await count(page, 'GET', '/api/agent-dms'), 5, 'each retry is one read of the chats');
+    assert.equal(await projectReads(), before, 'the retry reads only the chats, not the projects');
+    await page.close();
+    // an empty answer is not read again and shows no error row
+    page = await startLoad();
+    await dmsAnswer(page, 200, { project_id: 'prj_agentdm', rooms: [], joinable: [] });
+    assert.equal(await page.evaluate(() => window.__outcome), 'loaded');
+    await settle(page);
+    assert.equal(await count(page, 'GET', '/api/agent-dms'), 1, 'an empty list is an answer');
+    assert.equal(await errorRow(page), null, 'an empty list is no error');
+    await page.close();
+    // no chats or no right to them (403, 404): one read, the section stays empty without an error row, the projects are fine
+    for (const status of [403, 404]) {
+      page = await startLoad();
+      await dmsAnswer(page, status, fail);
+      assert.equal(await page.evaluate(() => window.__outcome), 'loaded', `${status}: the load finishes`);
+      await settle(page);
+      assert.equal(await count(page, 'GET', '/api/agent-dms'), 1, `${status} is not read again`);
+      assert.equal(await errorRow(page), null, `${status} shows no error row`);
+      assert.ok(await page.$('[data-room-id=rm_ah]') && await page.$('[data-room-id=rm_bh]'), `${status}: the projects are drawn`);
+      assert.equal(await page.$('[data-room-id=rm_chat]'), null, `${status}: the chats section is empty`);
+      await page.close();
+    }
+  }
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');

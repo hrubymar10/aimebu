@@ -12,6 +12,12 @@ function GlyphButton({ name, label, className, ...rest }) {
   return html`<button type="button" class=${className} title=${label} aria-label=${label} ...${rest}><span class=${`icon-mask icon-mask-${name}`} aria-hidden="true"></span></button>`;
 }
 
+// The chats section's own error: the list of chats between agents could not be read (the projects above it are fine). Retry reads just that list.
+function ChatsError({ store }) {
+  const [busy, setBusy] = useState(false);
+  return html`<div class="chats-error" role="alert"><span class="chats-error-text">Chats couldn't load</span><${GlyphButton} name="refresh" label="Retry loading chats" className="row-btn chats-retry" disabled=${busy} onClick=${async () => { setBusy(true); try { await store.retryChats(); } finally { setBusy(false); } }} /></div>`;
+}
+
 function Chevron({ direction }) {
   return html`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points=${CHEVRONS[direction]}></polyline></svg>`;
 }
@@ -240,6 +246,6 @@ export function SidebarList({ store, projectButton }) {
     ${tree.sections.map(section => section.placeholder ? html`<${Placeholder} key=${`placeholder:${section.project.id}`} project=${section.project} preview=${ctx.previewAll} />` : section.tailOnly ? html`<${Tail} key=${`${section.node.kind}:${section.node.project.id}`} node=${section.node} store=${store} ctx=${ctx} />` : html`<${Group} key=${section.room.id} view=${section} store=${store} ctx=${ctx} />`)}
     ${tree.noMatch && html`<p class="rooms-empty">${tree.noMatch}</p>`}
     ${tree.archived.length > 0 && html`<${Fold} id="archived-projects" className="archived-projects" open=${tree.filtering ? true : !!store.folds.get('archived-projects')} store=${store} summary=${`Archived projects (${tree.archived.length})`} heading>${tree.archived.map(({ project, rooms }) => html`<${ArchivedProject} key=${project.id} project=${project} rooms=${rooms} store=${store} ctx=${ctx} filtering=${tree.filtering} />`)}<//>`}
-    <div class="direct-rooms"><h3>Direct messages</h3>${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, counted, tree.many)} store=${store} ctx=${ctx} />`)}
+    <div class="direct-rooms"><h3>Direct messages</h3>${store.chatsFailed && html`<${ChatsError} store=${store} />`}${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, counted, tree.many)} store=${store} ctx=${ctx} />`)}
       ${tree.offers.length > 0 && html`<${Fold} id="offers" className="agent-chat-offers" open=${offersOpen} store=${store} summary=${`Agent chats you can join (${tree.offers.length})`}>${tree.offers.map(offer => html`<${Offer} key=${offer.id} offer=${offer} store=${store} />`)}<//>`}</div>`;
 }
