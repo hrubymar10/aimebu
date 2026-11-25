@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"agent_message","text":"I will check the state first."}}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"checked\"}]}"}}
+{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":7}}

@@ -1,0 +1,78 @@
+{
+ "id": "s02-thread-reply",
+ "title": "a reply inside a thread names the delivered note, not the thread root",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7102",
+    "room_id": "{task_room}",
+    "from": "{person}",
+    "message_id": "msg_01EVALMSG7102",
+    "no": 7102,
+    "body": "And which of those two is faster?",
+    "why": "a person's reply in a conversation you started",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ],
+    "in_reply_to": {
+     "no": 7101,
+     "from": "{worker}",
+     "excerpt": "Option A reads the cache; option B recomputes it.",
+     "yours": true
+    },
+    "conversation": {
+     "no": 7100,
+     "from": "{person}",
+     "excerpt": "Should we cache the lookups? Compare A and B."
+    }
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "messages_count",
+    "min": 1,
+    "max": 1
+   },
+   {
+    "op": "reply_to_is",
+    "values": [
+     "",
+     "7102",
+     "#7102",
+     "msg_01EVALMSG7102"
+    ]
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"123e4567-e89b-42d3-a456-426614174000"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"```json\n{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"checked\"}]}\n```"}],"usage":{"input":11,"output":7,"cost":{"total":0.01}}}}
+{"type":"agent_settled","aborted":false}

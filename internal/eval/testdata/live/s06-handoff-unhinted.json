@@ -1,0 +1,57 @@
+{
+ "id": "s06-handoff-unhinted",
+ "title": "a plain 'report back' from the briefer is answered as a handoff with an outcome",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7506",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7506",
+    "no": 7506,
+    "body": "Report back when you are done. Status: the change is made and its tests pass.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "handoff_outcome",
+    "value": "done"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

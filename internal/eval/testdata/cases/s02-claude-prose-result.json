@@ -1,0 +1,3 @@
+{"id":"s02-claude-prose-result","title":"Claude Code result that is prose, not JSON","layer":"replay",
+ "output":{"kinds":["claude"],"stream_file":"internal/eval/testdata/streams/claude_prose_result.jsonl"},
+ "expect":{"parse":"repairable","error_contains":"text around the JSON","class":"format","answer_contains":"I have replied"}}

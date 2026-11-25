@@ -1,0 +1,3 @@
+{"id":"m08-empty","title":"the empty answer is valid and strict","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"{\"messages\":[]}"},
+ "expect":{"parse":"valid","strict":true}}

@@ -1,0 +1,3 @@
+{"id":"s04-codex-turn-failed","title":"Codex turn.failed: no answer","layer":"replay",
+ "output":{"kinds":["codex"],"stream_file":"internal/eval/testdata/streams/codex_turn_failed.jsonl"},
+ "expect":{"parse":"terminal","class":"harness"}}

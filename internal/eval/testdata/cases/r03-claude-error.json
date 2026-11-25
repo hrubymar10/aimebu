@@ -1,0 +1,3 @@
+{"id":"r03-claude-error","title":"recorded Claude Code turn the API refused: no answer","layer":"replay",
+ "output":{"kinds":["claude"],"stream_file":"internal/adapter/claude/testdata/stream/warm_error.jsonl"},
+ "expect":{"parse":"terminal","class":"harness"}}

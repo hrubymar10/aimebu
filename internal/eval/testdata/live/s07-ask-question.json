@@ -1,0 +1,65 @@
+{
+ "id": "s07-ask-question",
+ "title": "a decision only a person can make is an ask of kind question with options",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7607",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7607",
+    "no": 7607,
+    "body": "Pick the storage for the cache: sqlite, plain files or memory. You cannot decide this; ask the owner and give the options.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "ask_kind",
+    "value": "question"
+   },
+   {
+    "op": "ask_options",
+    "min": 2,
+    "max": 8
+   },
+   {
+    "op": "no_attention_controls"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

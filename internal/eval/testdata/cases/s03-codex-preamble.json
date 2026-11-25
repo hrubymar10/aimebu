@@ -1,0 +1,3 @@
+{"id":"s03-codex-preamble","title":"Codex says something, then answers: the last agent message is the answer","layer":"replay",
+ "output":{"kinds":["codex"],"stream_file":"internal/eval/testdata/streams/codex_preamble_then_json.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"checked"}}

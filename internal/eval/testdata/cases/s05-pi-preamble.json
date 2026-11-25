@@ -1,0 +1,3 @@
+{"id":"s05-pi-preamble","title":"Pi message with a prose block before the JSON block","layer":"replay",
+ "output":{"kinds":["pi"],"stream_file":"internal/eval/testdata/streams/pi_preamble_then_json.jsonl"},
+ "expect":{"parse":"repairable","error_contains":"text around the JSON","class":"format","answer_contains":"Let me answer."}}

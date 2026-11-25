@@ -1,0 +1,3 @@
+{"id":"s08-vibe-preamble","title":"Vibe says something, then answers: the last assistant message is the answer","layer":"replay",
+ "output":{"kinds":["vibe"],"stream_file":"internal/eval/testdata/streams/vibe_preamble_then_json.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"checked"}}

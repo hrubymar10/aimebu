@@ -1,0 +1,61 @@
+{
+ "id": "s09-proposed-answers",
+ "title": "a human response with quick choices uses proposed_answers",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7809",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7809",
+    "no": 7809,
+    "body": "Ask the owner which name the new flag should have: --fast, --quick or --turbo. Send it as a human response with quick choices, not a blocking inbox ask.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "needs_attention"
+   },
+   {
+    "op": "proposed_answers",
+    "min": 2,
+    "max": 4
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

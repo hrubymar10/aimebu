@@ -1,0 +1,3 @@
+{"id":"m01-valid-plain","title":"a plain valid answer","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"hello\"}]}"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"hello"}}

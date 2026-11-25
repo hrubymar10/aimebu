@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"eval-model"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I have replied."}],"usage":{"input_tokens":5,"output_tokens":4}}}
+{"type":"result","result":"I have replied in the room.","usage":{"input_tokens":5,"output_tokens":4}}

@@ -1,0 +1,3 @@
+{"id":"r10-vibe-tool","title":"recorded Vibe turn that ran a tool","layer":"replay",
+ "output":{"kinds":["vibe"],"stream_file":"internal/adapter/vibe/testdata/recorded_tool.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"recorded shape"}}

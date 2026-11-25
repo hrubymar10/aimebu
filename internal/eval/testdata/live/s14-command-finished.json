@@ -1,0 +1,61 @@
+{
+ "id": "s14-command-finished",
+ "title": "a turn woken by a finished command reports its result without running it again",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8314",
+    "room_id": "{task_room}",
+    "from": "system",
+    "message_id": "msg_01EVALMSG8314",
+    "no": 8314,
+    "body": "Your command `sh scripts/test-lock.sh go test ./internal/eval` finished with exit code 0; output tail: 'ok  github.com/example/eval 0.4s'. Your brief from the dispatcher was: run the eval tests and hand off the result.",
+    "why": "your command finished",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "handoff_outcome",
+    "value": "done"
+   },
+   {
+    "op": "tool_not_called",
+    "value": "run_command"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

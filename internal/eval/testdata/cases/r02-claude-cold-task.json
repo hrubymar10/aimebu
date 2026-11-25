@@ -1,0 +1,3 @@
+{"id":"r02-claude-cold-task","title":"recorded Claude Code turn whose background task ends after the answer","layer":"replay",
+ "output":{"kinds":["claude"],"stream_file":"internal/adapter/claude/testdata/stream/cold_task_ends_after_answer.jsonl"},
+ "expect":{"parse":"valid","strict":true}}

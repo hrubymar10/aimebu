@@ -1,0 +1,61 @@
+{
+ "id": "s04-handoff-partial",
+ "title": "half-finished work is a handoff with outcome partial that names the rest",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7304",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7304",
+    "no": 7304,
+    "body": "Brief: do part A (rename the flag) and part B (migrate the stored config). State you must report: A is done and its tests pass; B is not started because it needs a decision from the owner on the old config format. Hand off.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "handoff_outcome",
+    "value": "partial"
+   },
+   {
+    "op": "body_contains",
+    "value": "B"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

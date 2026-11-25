@@ -1,0 +1,3 @@
+{"id":"m10-handoff-no-outcome","title":"a handoff without an outcome is held","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"done\",\"handoff\":true}]}"},
+ "expect":{"parse":"repairable","error_contains":"handoff without an outcome","class":"field"}}

@@ -1,0 +1,3 @@
+{"id":"m09-prose-around-empty","title":"prose around the empty answer counts as the empty answer","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"Nothing to do. {\"messages\":[]} Done."},
+ "expect":{"parse":"valid"}}

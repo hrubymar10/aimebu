@@ -1,0 +1,56 @@
+{
+ "id": "s15-waiting-on-command",
+ "title": "an agent that waits for its own run_command ends the turn with no message",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8415",
+    "room_id": "{task_room}",
+    "from": "system",
+    "message_id": "msg_01EVALMSG8415",
+    "no": 8415,
+    "body": "Your command `sh scripts/test-lock.sh go test ./...` was started as run_command c_9 and is running. It wakes you with its exit code when it ends.",
+    "why": "your command started",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "no_messages"
+   },
+   {
+    "op": "tool_not_called",
+    "value": "run_command"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

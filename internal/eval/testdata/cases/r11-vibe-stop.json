@@ -1,0 +1,3 @@
+{"id":"r11-vibe-stop","title":"recorded Vibe turn that was stopped: no answer","layer":"replay",
+ "output":{"kinds":["vibe"],"stream_file":"internal/adapter/vibe/testdata/recorded_stop.jsonl"},
+ "expect":{"parse":"terminal","class":"harness"}}

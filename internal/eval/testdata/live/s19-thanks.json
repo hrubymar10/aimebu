@@ -1,0 +1,57 @@
+{
+ "id": "s19-thanks",
+ "title": "a person's thanks gets a reaction or one short message, never nothing",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8819",
+    "room_id": "{task_room}",
+    "from": "{person}",
+    "message_id": "msg_01EVALMSG8819",
+    "no": 8819,
+    "body": "@eval-worker thanks, looks good.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "messages_count",
+    "min": 0,
+    "max": 1
+   },
+   {
+    "op": "react_if_silent"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

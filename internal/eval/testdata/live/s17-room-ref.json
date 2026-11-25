@@ -1,0 +1,57 @@
+{
+ "id": "s17-room-ref",
+ "title": "a room is referenced as #room_<id>",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8617",
+    "room_id": "{task_room}",
+    "from": "{person}",
+    "message_id": "msg_01EVALMSG8617",
+    "no": 8617,
+    "body": "Where does the summary live? Point me to the home room with a proper room reference (see the entities table).",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{home_room}",
+      "name": "Eval home",
+      "kind": "room"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "body_contains",
+    "value": "#{home_room}"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

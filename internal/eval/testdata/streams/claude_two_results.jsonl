@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"eval-model"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}],"usage":{"input_tokens":5,"output_tokens":1}}}
+{"type":"result","result":"Looking at the repository first.","usage":{"input_tokens":5,"output_tokens":1}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"usage":{"input_tokens":6,"output_tokens":3}}}
+{"type":"result","result":"{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"checked\"}]}","usage":{"input_tokens":11,"output_tokens":7}}

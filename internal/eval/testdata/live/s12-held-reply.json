@@ -1,0 +1,62 @@
+{
+ "id": "s12-held-reply",
+ "title": "a turn after a held reply sends a valid answer that fixes the fault",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8112",
+    "room_id": "{task_room}",
+    "from": "system",
+    "message_id": "msg_01EVALMSG8112",
+    "no": 8112,
+    "body": "Your previous reply was held: message 0 is a handoff without an outcome; set outcome to done, partial or failed. (For this turn, the held reply was a handoff to the dispatcher saying: Build is green, all tests pass. Send it again, correctly.)",
+    "why": "your reply was held",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "messages_count",
+    "min": 1,
+    "max": 1
+   },
+   {
+    "op": "handoff_outcome",
+    "value": "done"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

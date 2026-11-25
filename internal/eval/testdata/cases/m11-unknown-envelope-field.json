@@ -1,0 +1,3 @@
+{"id":"m11-unknown-envelope-field","title":"an unknown field on the envelope is held","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"{\"messages\":[],\"status\":\"ok\"}"},
+ "expect":{"parse":"repairable","error_contains":"unknown field","class":"field"}}

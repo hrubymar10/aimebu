@@ -1,0 +1,3 @@
+{"id":"r07-opencode-tool","title":"recorded OpenCode turn that ran a tool","layer":"replay",
+ "output":{"kinds":["opencode"],"stream_file":"internal/adapter/opencode/testdata/tool.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"tool ran"}}

@@ -1,0 +1,53 @@
+{
+ "id": "s18-fyi-silence",
+ "title": "a broadcast not addressed to the agent gets an empty answer",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8718",
+    "room_id": "{task_room}",
+    "from": "{other_agent}",
+    "message_id": "msg_01EVALMSG8718",
+    "no": 8718,
+    "body": "FYI: I pushed a small docs change to the shared branch.",
+    "why": "an agent broadcast in the room",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ],
+    "fyi": true
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "no_messages"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

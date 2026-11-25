@@ -1,0 +1,3 @@
+{"id":"r09-vibe-normal","title":"recorded Vibe turn","layer":"replay",
+ "output":{"kinds":["vibe"],"stream_file":"internal/adapter/vibe/testdata/recorded_normal.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"recorded shape"}}

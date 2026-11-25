@@ -1,0 +1,3 @@
+{"id":"r05-opencode-ok","title":"recorded OpenCode turn","layer":"replay",
+ "output":{"kinds":["opencode"],"stream_file":"internal/adapter/opencode/testdata/ok.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"BLUE-314"}}

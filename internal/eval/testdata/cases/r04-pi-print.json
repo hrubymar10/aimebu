@@ -1,0 +1,3 @@
+{"id":"r04-pi-print","title":"recorded Pi turn","layer":"replay",
+ "output":{"kinds":["pi"],"stream_file":"internal/adapter/pi/testdata/print.jsonl"},
+ "expect":{"parse":"valid","strict":true,"answer_contains":"BLUE-314"}}

@@ -1,0 +1,70 @@
+{
+ "id": "s01-plain-reply",
+ "title": "a plain reply to a person's question",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7001",
+    "room_id": "{task_room}",
+    "from": "{person}",
+    "message_id": "msg_01EVALMSG7001",
+    "no": 7001,
+    "body": "@eval-worker what does the eval package do? One sentence please.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "messages_count",
+    "min": 1,
+    "max": 1
+   },
+   {
+    "op": "reply_to_is",
+    "values": [
+     "",
+     "7001",
+     "#7001",
+     "msg_01EVALMSG7001"
+    ]
+   },
+   {
+    "op": "no_handoff"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

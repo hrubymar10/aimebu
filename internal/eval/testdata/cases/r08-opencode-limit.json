@@ -1,0 +1,3 @@
+{"id":"r08-opencode-limit","title":"recorded OpenCode turn that hit a provider limit: no answer","layer":"replay",
+ "output":{"kinds":["opencode"],"stream_file":"internal/adapter/opencode/testdata/limit.jsonl"},
+ "expect":{"parse":"terminal","class":"harness"}}

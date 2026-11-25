@@ -1,0 +1,61 @@
+{
+ "id": "s10-open-questions",
+ "title": "several decisions at once use open_questions",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7910",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7910",
+    "no": 7910,
+    "body": "Ask the owner three questions in one go as a questionnaire: database (postgres or mysql), cache (redis or memcached), deployment (docker or bare metal).",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "needs_attention"
+   },
+   {
+    "op": "open_questions",
+    "min": 3,
+    "max": 10
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

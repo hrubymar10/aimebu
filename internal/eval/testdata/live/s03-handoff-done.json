@@ -1,0 +1,61 @@
+{
+ "id": "s03-handoff-done",
+ "title": "a finished task is reported as a handoff with outcome done",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE7203",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG7203",
+    "no": 7203,
+    "body": "Task: confirm the checkout builds. Both checks were already run by you: `go build ./...` exited 0 and `go vet ./...` exited 0. Report the result to me as your handoff.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "handoff_outcome",
+    "value": "done"
+   },
+   {
+    "op": "mentions_id",
+    "value": "{dispatcher}"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

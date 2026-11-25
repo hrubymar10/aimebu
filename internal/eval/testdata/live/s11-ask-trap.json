@@ -1,0 +1,60 @@
+{
+ "id": "s11-ask-trap",
+ "title": "an ask is sent without the attention controls the prompt says to null",
+ "layer": "live",
+ "input": {
+  "notes": [
+   {
+    "note_id": "note_01EVALNOTE8011",
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "message_id": "msg_01EVALMSG8011",
+    "no": 8011,
+    "body": "Confirm with the owner whether to proceed with the deploy: yes or no. Use the inbox ask.",
+    "why": "you are mentioned",
+    "entities": [
+     {
+      "id": "{person}",
+      "name": "owner",
+      "kind": "user"
+     },
+     {
+      "id": "{dispatcher}",
+      "name": "eval-dispatch",
+      "kind": "agent"
+     },
+     {
+      "id": "{task_room}",
+      "name": "Eval task room",
+      "kind": "room"
+     }
+    ]
+   }
+  ],
+  "allowed_tools": [
+   "react",
+   "run_command",
+   "dm_agent",
+   "message_get",
+   "room_history",
+   "attachment_get"
+  ]
+ },
+ "expect": {
+  "parse": "valid",
+  "checks": [
+   {
+    "op": "room_is",
+    "value": "{task_room}"
+   },
+   {
+    "op": "ask_kind",
+    "value": "question"
+   },
+   {
+    "op": "no_attention_controls"
+   }
+  ],
+  "max_turns_to_valid": 2
+ }
+}

@@ -1,0 +1,3 @@
+{"id":"s07-opencode-two-text","title":"OpenCode text parts run together: a prose part before the JSON part","layer":"replay",
+ "output":{"kinds":["opencode"],"stream_file":"internal/eval/testdata/streams/opencode_two_text.jsonl"},
+ "expect":{"parse":"repairable","error_contains":"text around the JSON","class":"format"}}

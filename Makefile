@@ -1,4 +1,4 @@
-.PHONY: test test-race vet fmt fmt-check test-full test-ui test-web gate dev
+.PHONY: test test-race eval-replay vet fmt fmt-check test-full test-ui test-web gate dev
 
 # A bare `make` runs the Go tests, as it did before the progress runner.
 .DEFAULT_GOAL := test
@@ -42,6 +42,12 @@ test: $(GOTESTPROGRESS) ## Run unit tests
 test-race: GO_TEST_TIMEOUT = 45m
 test-race: $(GOTESTPROGRESS) ## Run tests with the race detector
 	$(call gotest,-race ./...)
+
+# The free layers of the answer-robustness eval (docs/eval.md): recorded streams and canned faults played through the real adapters, the scenario
+# validator, the scorer and the report. They need no credential and no network, and are part of `make test` and the gate as well; this runs the
+# package alone, quickly, for CI jobs and for working on a fixture. The paid layer is not here.
+eval-replay: ## Run the free eval layers (replay corpus, mock harnesses, scenario validator, scorer, report)
+	go test -race -count=1 ./internal/eval
 
 vet: ## Run go vet
 	go vet ./...

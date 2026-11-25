@@ -1,0 +1,3 @@
+{"id":"m03-prose-before","title":"prose before the JSON is held","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"Here is my answer:\n{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"hi\"}]}"},
+ "expect":{"parse":"repairable","error_contains":"text around the JSON","class":"format","answer_contains":"Here is my answer"}}

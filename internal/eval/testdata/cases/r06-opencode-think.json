@@ -1,0 +1,3 @@
+{"id":"r06-opencode-think","title":"recorded OpenCode turn with a reasoning block before the JSON","layer":"replay",
+ "output":{"kinds":["opencode"],"stream_file":"internal/adapter/opencode/testdata/think.jsonl"},
+ "expect":{"parse":"valid","warning_contains":["reasoning"]}}

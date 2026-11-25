@@ -1,0 +1,3 @@
+{"id":"r01-claude-warm-normal","title":"recorded Claude Code turn with an empty answer","layer":"replay",
+ "output":{"kinds":["claude"],"stream_file":"internal/adapter/claude/testdata/stream/warm_normal.jsonl"},
+ "expect":{"parse":"valid","strict":true}}

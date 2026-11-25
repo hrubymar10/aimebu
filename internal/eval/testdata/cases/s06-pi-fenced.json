@@ -1,0 +1,3 @@
+{"id":"s06-pi-fenced","title":"Pi message with the JSON inside a fence","layer":"replay",
+ "output":{"kinds":["pi"],"stream_file":"internal/eval/testdata/streams/pi_fenced.jsonl"},
+ "expect":{"parse":"valid","warning_contains":["fence"]}}

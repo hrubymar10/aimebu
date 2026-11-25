@@ -1,0 +1,3 @@
+{"id":"m04-prose-after","title":"prose after the JSON is held","layer":"mock",
+ "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"{\"messages\":[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"hi\"}]}\nDone."},
+ "expect":{"parse":"repairable","error_contains":"text after the JSON","class":"format"}}
