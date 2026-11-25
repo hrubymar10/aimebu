@@ -159,6 +159,16 @@ async function main() {
       await refused.waitForFunction(() => document.querySelector('#machines-error').textContent.includes('is connected'));
       await refused.close();
     }
+    // A revoked machine keeps its instance list and the write-off control (F007): nobody will reconnect it, so its open work is what a
+    // write-off exists for.
+    {
+      const revoked = { id: 'mch_revoked', name: 'Gone box', approved: true, revoked_at: '2026-01-01T00:00:00Z' };
+      const lost = { journal_id: 'journal-lost-0123456789', build: '1.0', state: 'active', connected: false, last_seen_at: '2026-02-03T04:05:06Z', turns: 1, commands: 0, agents: [{ id: 'agt_1', slug: 'vince' }] };
+      const page = await mount({ auto: { [MACHINES]: { machines: [revoked] }, 'GET /api/machines/mch_revoked/instances': { instances: [lost] } } });
+      await page.waitForSelector('.machine-instance');
+      assert.equal(await page.$eval('.machine-card[data-machine-id="mch_revoked"] .machine-instance-gone', el => el.title), 'Mark instance as gone', 'a revoked machine still offers the write-off');
+      await page.close();
+    }
     // An admin who is not the owner sees the machines with pairing, approving and revoking off and the reason on each; stopping stays on.
     {
       const page = await mount({ owner: false });

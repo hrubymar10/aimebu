@@ -267,6 +267,34 @@ func ageInstance(t *testing.T, f *fixture, journalID string) {
 	}
 }
 
+// A revoked machine's instances are still listed and written off (F007): the machine will never reconnect, so its open work is exactly the
+// case a write-off exists for, and the routes do not gate on revocation.
+func TestInstanceRoutesServeARevokedMachine(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	remoteWithLostInstance(t, f)
+	if _, err := f.exec(`UPDATE machine SET revoked_at='2026-10-24T00:00:00Z' WHERE id=?`, f.machineID); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/machines/" + f.machineID + "/instances"
+	resp := f.request("GET", base, nil, false)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("listing on a revoked machine: %d", resp.StatusCode)
+	}
+	var listed instancesAnswer
+	_ = json.NewDecoder(resp.Body).Decode(&listed)
+	if len(listed.Instances) != 1 || listed.Instances[0].JournalID != "journal-lost" || listed.Instances[0].Turns != 1 {
+		t.Fatalf("listing on a revoked machine: %+v", listed)
+	}
+	ageInstance(t, f, "journal-lost")
+	resp = f.request("POST", base+"/journal-lost/gone", nil, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("write-off on a revoked machine: %d", resp.StatusCode)
+	}
+}
+
 func TestInstanceRoutesRefuseTheHostMachine(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

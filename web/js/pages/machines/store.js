@@ -40,9 +40,10 @@ export class MachinesStore {
     }
   }
 
-  // A remote machine's supervisor instances sit next to its card; a machine that cannot answer simply shows none.
+  // A remote machine's supervisor instances sit next to its card; a machine that cannot answer simply shows none. A revoked machine keeps
+  // its list: its instances may still own open work, and a write-off is the one action nobody will ever preempt by reconnecting.
   async loadInstances(machines, generation) {
-    const remote = machines.filter(machine => !machine.is_host && machine.approved && !machine.revoked_at);
+    const remote = machines.filter(machine => !machine.is_host && machine.approved);
     const results = await Promise.all(remote.map(machine => request(`/api/machines/${encodeURIComponent(machine.id)}/instances`).then(result => [machine.id, result.instances || []], () => [machine.id, []])));
     if (this.alive && generation === this.generation) this.instances.value = Object.fromEntries(results);
   }
