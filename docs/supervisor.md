@@ -266,7 +266,8 @@ the old process held stops authenticating (keys rotate on a supervisor restart).
 say so (an older one, which keeps keys on disk) is sent none. Before the first delivery to an agent a newer instance takes over from a
 retiring one, the server sends the key in a standalone `agent_keys` frame, but only to an instance whose hello says
 `supports_agent_keys_frame=true`: the previous build advertises `supports_agent_keys` without handling that frame (its read loop would
-drop the connection), so for it the key is not rotated and nothing is sent; the key waits for its next `hello_ack`.
+drop the connection). For that build, the server closes the connection with WebSocket code 1013 (`try again later`) and reason
+`agent key requires reconnect`, then grants the key in its next `hello_ack` before delivering the turn.
 
 Claude, Codex and Pi Docker adapters build the HTTP toolbox entry from the same in-memory access; nothing key-bearing is copied into the shared checkout. The key is not in the harness's
 argument list: the MCP entry names a variable

@@ -182,16 +182,10 @@ func TestSupervisorInstancesRouteCommandLogAndEndToOwner(t *testing.T) {
 }
 
 func TestSupervisorInstancesGateWarmHandoverAndGrantKeyBeforeDelivery(t *testing.T) {
-	handoverKeyScenario(t, true)
+	handoverKeyScenario(t)
 }
 
-// An instance of the previous build advertises supports_agent_keys but cannot read the standalone agent_keys frame (its read loop drops the
-// connection on one): it is sent no frame, the key is not rotated, and the delivery goes through as before.
-func TestHandoverKeyIsNotSentToAnInstanceWithoutTheFrameCapability(t *testing.T) {
-	handoverKeyScenario(t, false)
-}
-
-func handoverKeyScenario(t *testing.T, frames bool) {
+func handoverKeyScenario(t *testing.T) {
 	f := newFixture(t)
 	f.srv.Version = "first"
 	agent, _, _, delivery := f.execution(t)
@@ -216,7 +210,7 @@ func handoverKeyScenario(t *testing.T, frames bool) {
 		time.Sleep(time.Millisecond)
 	}
 	f.srv.Version = "second"
-	current, ack := dialInstanceFrames(t, f, "second-journal", "second", "", nil, []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0}}, frames)
+	current, ack := dialInstanceFrames(t, f, "second-journal", "second", "", nil, []protocol.HelloAgent{{AgentID: agent.ID, Generation: 0}}, true)
 	if len(ack.AgentKeys) != 0 {
 		t.Fatalf("key rotated while the old process is warm: %+v", ack.AgentKeys)
 	}
@@ -244,18 +238,6 @@ func handoverKeyScenario(t *testing.T, frames bool) {
 	}
 	if err := f.srv.Dispatch(t.Context(), delivery); err != nil {
 		t.Fatal(err)
-	}
-	if !frames {
-		readCommandFrame(t, current, func(frame protocol.Frame) bool {
-			if frame.Type == protocol.AgentKeys {
-				t.Fatalf("an instance without supports_agent_keys_frame was sent an agent_keys frame: %+v", frame)
-			}
-			return frame.Type == protocol.Deliver
-		})
-		if err := f.srv.Auth.VerifyAgentKey(context.Background(), agent.ID, key); err != nil {
-			t.Fatalf("the key was rotated for an instance that cannot take it: %v", err)
-		}
-		return
 	}
 	keys := readCommandFrame(t, current, func(frame protocol.Frame) bool { return frame.Type == protocol.AgentKeys })
 	if len(keys.AgentKeys) != 1 || keys.AgentKeys[0].AgentID != agent.ID {

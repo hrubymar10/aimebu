@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/coder/websocket"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
@@ -56,18 +57,25 @@ func (s *Server) grantAgentKeys(ctx context.Context, machine *machineConn, held 
 }
 
 // grantHandoverKey sends a key on the active connection before its first delivery for an agent released by retiring instances. Only an instance
-// that says it handles the standalone frame gets one: an older build that takes keys in hello_ack has no handler for it and would drop the
-// connection, so for that one nothing is rotated or sent and the key waits for its next hello_ack.
+// that says it handles the standalone frame gets one. An older build that takes keys only in hello_ack must reconnect before delivery.
 func (s *Server) grantHandoverKey(ctx context.Context, machine *machineConn, agentID string, generation int) error {
-	if !machine.supportsAgentKeys || !machine.supportsAgentKeysFrame {
+	if !machine.supportsAgentKeys {
 		return nil
 	}
 	s.spawnMu.Lock()
 	defer s.spawnMu.Unlock()
 	machine.keysMu.Lock()
 	defer machine.keysMu.Unlock()
-	if machine.keys[agentID] || s.spawnKeys[fmt.Sprintf("%s/%d", agentID, generation)] != "" {
+	if machine.keys[agentID] {
 		return nil
+	}
+	if s.spawnKeys[fmt.Sprintf("%s/%d", agentID, generation)] != "" {
+		return ErrMachineUnavailable
+	}
+	if !machine.supportsAgentKeysFrame {
+		_ = machine.conn.Close(websocket.StatusTryAgainLater, "agent key requires reconnect")
+		machine.stop()
+		return ErrMachineUnavailable
 	}
 	key, err := s.Auth.IssueAgentKey(ctx, agentID)
 	if err != nil {
