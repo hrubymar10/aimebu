@@ -277,6 +277,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 /* A status tooltip is placed against the viewport by its component when shown. */
 .project-status-wrap { position: relative; }
 .project-status-tooltip { position: fixed; z-index: 1000; max-width: min(250px, calc(100vw - 12px)); padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text-primary); font-size: 11px; white-space: normal; box-shadow: 0 2px 8px var(--overlay-shadow); pointer-events: none; }
+.project-status-tooltip-summary { display: block; }
 /* No hover on a touch screen: the slot is part of the row's top line, a place of its own after the name. */
 @media (hover: none) and (pointer: coarse) { .room-item .room-item-actions-slot { width: auto; margin-right: 0; } .room-item .room-item-actions { position: static; transform: none; padding-left: 0; background: none; opacity: 1; pointer-events: auto; transition: none; } .room-item .room-item-actions::before { display: none; } }
 

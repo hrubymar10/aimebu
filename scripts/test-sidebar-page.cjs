@@ -1828,7 +1828,7 @@ async function main() {
       });
       assert.ok(found.presentation?.includes('project-status-a'), 'the status renders its one presentation');
       assert.equal(found.tooltip, '', 'native title does not duplicate the viewport-clamped tooltip');
-      assert.equal(found.described, '1 need you, 1 waiting, 1 working', 'screen reader text matches tooltip');
+      assert.equal(found.described, '1 need you, 1 waiting, 1 working', 'screen reader description keeps the counts summary');
       assert.equal(await page.$('[data-room-id=rm_bh] .project-status'), null, 'zero counts hide the status');
       for (const theme of ['dark', 'light', 'high-contrast-dark', 'high-contrast-light']) {
         const colours = await page.evaluate(theme => {
@@ -1841,8 +1841,18 @@ async function main() {
       await page.$eval('[data-room-id=rm_ah] .project-status', node => node.click());
       await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
       assert.equal(await page.$eval('[data-room-id=rm_ah]', row => row.classList.contains('collapsed')), false, 'click expands');
+      assert.deepEqual(await page.evaluate(() => window.__calls.splice(0)), [['select', 'rm_api', '']], 'the click opens the first room that needs you through the room click path');
+      await page.$eval('[data-room-id=rm_ah] .project-status', node => node.focus());
+      await page.waitForFunction(() => !!document.querySelector('.project-status-tooltip'));
+      assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-rooms', node => node.textContent), 'Needs you: api-work (finished)', 'the tooltip names the rooms that need you and why');
+      assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-summary', node => node.textContent), '1 need you, 1 waiting, 1 working', 'the tooltip keeps the counts summary below the rooms');
+      assert.equal(await page.$eval('[data-room-id=rm_ah] .project-status', node => node.getAttribute('aria-label')), 'Alpha: Needs you: api-work (finished). Click to open.', 'the accessible name names the project, the rooms and the action');
+      await page.$eval('[data-room-id=rm_ah] .project-status', node => node.blur());
+      await page.waitForFunction(() => !document.querySelector('.project-status-tooltip'));
       await page.click('[data-room-id=rm_ah] .room-collapse');
       await page.waitForFunction(() => document.querySelector('[data-room-id=rm_ah]').classList.contains('collapsed'));
+      await page.$eval('[data-room-id=rm_ah] .project-status', node => node.click());
+      assert.deepEqual(await page.evaluate(() => window.__calls.splice(0)), [['select', 'rm_api', '']], 'a collapsed project still opens its first room the second time');
       assert.equal(await page.$('.project-status-switch'), null, 'no variant switcher remains');
     }
     // The complete project row can carry a warning, attention bell and status pill at once, but no member count.
@@ -1998,6 +2008,33 @@ async function main() {
     const beforeFlush = await page.evaluate(() => window.__sidebar.store.version.peek());
     await page.waitForFunction(() => !document.querySelector('[data-room-id=rm_ah] .project-status'));
     assert.equal(await page.evaluate(() => window.__sidebar.store.version.peek()), beforeFlush + 1, 'the status burst causes one trailing redraw');
+    await page.close();
+  }
+  // A pill whose highest priority is waiting or working names its own rooms, and a click opens the first of them. The pill is
+  // focused before its project is expanded, so its accessible name is the folded one.
+  const onlyPill = async (id, patch, label, expectTitle, expectLabel) => {
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === id ? { ...item, purpose: 'task', ...patch } : item) }) });
+    await settle(page);
+    await page.$eval('[data-room-id=rm_ah] .project-status', node => node.focus());
+    await page.waitForFunction(() => !!document.querySelector('.project-status-tooltip'));
+    assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-rooms', node => node.textContent), expectTitle, `the ${label} pill names its room and why`);
+    assert.equal(await page.$eval('[data-room-id=rm_ah] .project-status', node => node.getAttribute('aria-label')), expectLabel, `the ${label} pill's accessible name names the project and the action`);
+    await page.$eval('[data-room-id=rm_ah] .project-status', node => node.click());
+    assert.deepEqual(await page.evaluate(() => window.__calls.splice(0)), [['select', id, '']], `the ${label} pill opens its room`);
+    await page.close();
+  };
+  await onlyPill('rm_notes', { gate: 'paused' }, 'waiting', 'Waiting: notes (paused)', 'Expand Alpha: Waiting: notes (paused).');
+  await onlyPill('rm_mute', { working: true, muted_until: '' }, 'working', 'Working: muted-room (working)', 'Expand Alpha: Working: muted-room (working).');
+  await onlyPill('rm_api', { finished_unseen: false, attention_open: 2 }, 'attention', 'Needs you: api-work (needs an answer)', 'Expand Alpha: Needs you: api-work (needs an answer).');
+  // Six rooms that need you: the tooltip names five and says how many more, never a raw room id.
+  {
+    const manyList = [room('rm_h2', 'prj_a', 'Alpha', { kind: 'home' }), ...Array.from({ length: 6 }, (_, index) => room(`rm_cap${index}`, 'prj_a', `cap room ${index}`, { parent_id: 'rm_h2', purpose: 'task', finished_unseen: true }))];
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': manyList }) });
+    await settle(page);
+    await page.$eval('[data-room-id=rm_h2] .project-status', node => node.focus());
+    await page.waitForFunction(() => !!document.querySelector('.project-status-tooltip'));
+    assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-rooms', node => node.textContent), 'Needs you: cap room 0 (finished), cap room 1 (finished), cap room 2 (finished), cap room 3 (finished), cap room 4 (finished) and 1 more', 'the tooltip caps the named rooms and counts the rest');
+    assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-summary', node => node.textContent), '6 need you, 0 waiting, 0 working', 'the summary line keeps every count');
     await page.close();
   }
   // A read of the chats between agents that fails is read again (twice, after a delay; the page test shortens the delays), not dropped: a list without

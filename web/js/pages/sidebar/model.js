@@ -113,15 +113,18 @@ export function roomStatus(room) {
 }
 
 // The project indicator counts rooms, not agents or inbox entries. Keep the same
-// priority as its own status display when several flags describe one room.
+// priority as its own status display when several flags describe one room. Each
+// count also keeps the rooms it names, in list order, so the pill's tooltip can
+// name them and a click can open the first.
 export function projectStatusCounts(projectID, rooms, pending = false) {
   if (pending) return null;
-  const counts = { needs: 0, waiting: 0, working: 0 };
+  const counts = { needs: 0, waiting: 0, working: 0, rooms: { needs: [], waiting: [], working: [] } };
   for (const room of rooms) {
     if (room.project_id !== projectID || !tracksStatus(room) || room.lifecycle !== 'open') continue;
-    if (room.finished_unseen || (room.attention_open || 0) > 0) counts.needs++;
-    else if (room.gate === 'paused') counts.waiting++;
-    else if (room.working) counts.working++;
+    const kind = room.finished_unseen || (room.attention_open || 0) > 0 ? 'needs' : room.gate === 'paused' ? 'waiting' : room.working ? 'working' : '';
+    if (!kind) continue;
+    counts[kind]++;
+    counts.rooms[kind].push(room);
   }
   return counts;
 }
@@ -132,13 +135,12 @@ export function memoProjectStatusCounts() {
     if (pending) { cache.delete(projectID); return null; }
     const own = [];
     for (const room of rooms) if (room.project_id === projectID && tracksStatus(room)) own.push(room);
-    const signature = own.map(room => `${room.id}:${room.lifecycle}:${!!room.finished_unseen}:${(room.attention_open || 0) > 0}:${room.gate}:${!!room.working}`).join('|');
+    const signature = own.map(room => `${room.id}:${room.lifecycle}:${!!room.finished_unseen}:${(room.attention_open || 0) > 0}:${room.gate}:${!!room.working}:${room.title}`).join('|');
     const previous = cache.get(projectID);
     if (previous?.signature === signature) return previous.counts;
     const next = projectStatusCounts(projectID, own);
-    const counts = previous && previous.counts.needs === next.needs && previous.counts.waiting === next.waiting && previous.counts.working === next.working ? previous.counts : next;
-    cache.set(projectID, { signature, counts });
-    return counts;
+    cache.set(projectID, { signature, counts: next });
+    return next;
   };
 }
 

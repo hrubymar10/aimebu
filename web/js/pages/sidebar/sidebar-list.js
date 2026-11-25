@@ -132,7 +132,7 @@ function Row({ view, store, ctx, preview, onToggle }) {
     ${!hasProjectStatus && attentionBadge}
     ${view.mention && html`<span class="room-item-mention" role="img" title="You were mentioned" aria-label="You were mentioned"></span>`}
     ${view.unread > 0 && html`<span class="room-item-unread" role="img" title=${`${view.unread} unread ${view.unread === 1 ? 'message' : 'messages'}`} aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
-    ${hasProjectStatus && html`<span class="project-badges"><span class="project-badge-group">${healthBadge}${memberBadge}${attentionBadge}</span><${ProjectStatus} counts=${statusCounts} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onExpand=${() => { if (view.folded) store.toggleCollapsed(room.id); }} /></span>`}
+    ${hasProjectStatus && html`<span class="project-badges"><span class="project-badge-group">${healthBadge}${memberBadge}${attentionBadge}</span><${ProjectStatus} counts=${statusCounts} id=${`project-status-${room.id}`} projectName=${projectName} folded=${view.folded} onOpen=${target => { if (view.folded) store.toggleCollapsed(room.id); if (target) store.onSelect(store.rooms.get(target.id) || target); }} /></span>`}
     </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || (room.user_message_count > 0 ? '📎 Attachment' : room.message_count > 0 ? 'Only system messages' : 'No messages yet')}</div>`}</div>
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
   return row;

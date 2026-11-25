@@ -24,14 +24,17 @@ const names = nodes => nodes.map(node => node.room?.id ?? node.node?.kind ?? nod
 
 const statusRoom = (id, patch = {}) => room(id, 'a', { purpose: 'task', ...patch });
 const statusRooms = [statusRoom('needs', { finished_unseen: true }), statusRoom('question', { attention_open: 1, working: true }), statusRoom('waiting', { gate: 'paused' }), statusRoom('working', { working: true }), statusRoom('idle'), statusRoom('closed', { lifecycle: 'closed', working: true }), room('dm', 'a', { kind: 'dm', purpose: 'task', working: true }), statusRoom('other', { project_id: 'b', working: true })];
-same(projectStatusCounts('a', statusRooms), { needs: 2, waiting: 1, working: 1 });
-same(projectStatusCounts('a', [statusRoom('held', { gate: 'paused', working: true })]), { needs: 0, waiting: 1, working: 0 }, 'a hold takes priority over activity');
-same(projectStatusCounts('a', [statusRoom('idle')]), { needs: 0, waiting: 0, working: 0 });
+const countsOf = counts => ({ needs: counts.needs, waiting: counts.waiting, working: counts.working });
+same(countsOf(projectStatusCounts('a', statusRooms)), { needs: 2, waiting: 1, working: 1 });
+same(countsOf(projectStatusCounts('a', [statusRoom('held', { gate: 'paused', working: true })])), { needs: 0, waiting: 1, working: 0 }, 'a hold takes priority over activity');
+same(countsOf(projectStatusCounts('a', [statusRoom('idle')])), { needs: 0, waiting: 0, working: 0 });
+same(Object.fromEntries(Object.entries(projectStatusCounts('a', statusRooms).rooms).map(([kind, list]) => [kind, list.map(item => item.id)])), { needs: ['needs', 'question'], waiting: ['waiting'], working: ['working'] }, 'the pill knows which rooms each count names, in list order');
 assert.equal(projectStatusCounts('a', [], true), null, 'a project still loading has unknown counts');
 const selectStatus = memoProjectStatusCounts();
 const firstStatus = selectStatus('a', statusRooms);
 assert.equal(selectStatus('a', [...statusRooms]), firstStatus, 'unchanged counts keep their memoised tuple');
 assert.notEqual(selectStatus('a', [statusRoom('working', { working: true })]), firstStatus, 'changed counts replace the tuple');
+assert.notEqual(selectStatus('a', statusRooms.map(item => item.id === 'needs' ? { ...item, title: 'renamed' } : item)), firstStatus, 'a renamed room replaces the tuple the tooltip reads');
 
 assert.equal(AGENT_CHAT_PROJECT, 'prj_agentdm');
 assert.equal(matchesRoom(room('Deploy', 'a'), ' dep ', projects), true);

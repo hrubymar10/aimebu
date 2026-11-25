@@ -1,7 +1,30 @@
 import { createPortal, html, useLayoutEffect, useRef, useState } from '../../ui.js';
 
-export const statusSentence = ({ needs, waiting, working }) => `${needs} need you, ${waiting} waiting, ${working} working`;
-const totalOf = counts => counts.needs + counts.waiting + counts.working;
+// The reason a room stands behind its count, in words: a room that needs you is
+// either waiting on an answer (an open attention item) or holds an agent's
+// unseen finish; a held room is paused; a working room is working.
+const REASONS = {
+  needs: room => (room.attention_open || 0) > 0 ? 'needs an answer' : 'finished',
+  waiting: () => 'paused',
+  working: () => 'working',
+};
+const KIND_LABEL = { needs: 'Needs you', waiting: 'Waiting', working: 'Working' };
+const CAP = 5;
+const kindOf = counts => counts.needs ? 'needs' : counts.waiting ? 'waiting' : 'working';
+
+// The rooms the pill stands for: the highest-priority count's rooms, first the one a click opens.
+export const statusFocus = counts => counts.rooms[kindOf(counts)][0] || null;
+
+// The rooms line of the tooltip and accessible name: the rooms behind the shown status, each with its reason in words, at most five named then "and N more".
+export const statusRoomsLine = counts => {
+  const kind = kindOf(counts), list = counts.rooms[kind];
+  const named = list.slice(0, CAP).map(room => `${room.title} (${REASONS[kind](room)})`);
+  const more = list.length - named.length;
+  return `${KIND_LABEL[kind]}: ${named.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+};
+
+// The overview under the rooms line: every count, in the pill's own words.
+export const statusSummary = ({ needs, waiting, working }) => `${needs} need you, ${waiting} waiting, ${working} working`;
 
 function Mark({ kind, size = 11 }) {
   const shape = kind === 'needs' ? html`<path d="M6 1 11 11H1Z" />`
@@ -11,15 +34,16 @@ function Mark({ kind, size = 11 }) {
 }
 
 function VariantA({ counts }) {
-  const kind = counts.needs ? 'needs' : counts.waiting ? 'waiting' : 'working';
+  const kind = kindOf(counts);
   const label = kind === 'needs' ? counts.needs === 1 ? 'Needs you' : `${counts.needs} need you`
     : kind === 'waiting' ? `${counts.waiting} waiting` : `${counts.working} working`;
   return html`<span class=${`project-status-a project-status-${kind}`}><${Mark} kind=${kind} />${label}</span>`;
 }
 
-export function ProjectStatus({ counts, id, projectName, folded, onExpand }) {
-  if (!counts || !totalOf(counts)) return null;
-  const sentence = statusSentence(counts);
+export function ProjectStatus({ counts, id, projectName, folded, onOpen }) {
+  if (!counts || !(counts.needs + counts.waiting + counts.working)) return null;
+  const rooms = statusRoomsLine(counts), summary = statusSummary(counts);
+  const label = folded ? `Expand ${projectName}: ${rooms}.` : `${projectName}: ${rooms}. Click to open.`;
   const pillRef = useRef(null), tooltipRef = useRef(null), [shown, setShown] = useState(false);
   useLayoutEffect(() => {
     if (!shown) return;
@@ -34,6 +58,6 @@ export function ProjectStatus({ counts, id, projectName, folded, onExpand }) {
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [shown, sentence]);
-  return html`<span class="project-status-wrap"><button ref=${pillRef} type="button" class="row-btn project-status" aria-label=${folded ? `Expand ${projectName}` : `${projectName} status`} aria-describedby=${id} onClick=${onExpand} onMouseEnter=${() => setShown(true)} onMouseLeave=${() => setShown(false)} onFocus=${() => setShown(true)} onBlur=${() => setShown(false)}><${VariantA} counts=${counts} /></button><span class="sr-only" id=${id}>${sentence}</span>${shown && createPortal(html`<span ref=${tooltipRef} class="project-status-tooltip" role="tooltip">${sentence}</span>`, document.body)}</span>`;
+  }, [shown, rooms]);
+  return html`<span class="project-status-wrap"><button ref=${pillRef} type="button" class="row-btn project-status" aria-label=${label} aria-describedby=${id} onClick=${() => { setShown(false); onOpen?.(statusFocus(counts)); }} onMouseEnter=${() => setShown(true)} onMouseLeave=${() => setShown(false)} onFocus=${() => setShown(true)} onBlur=${() => setShown(false)}><${VariantA} counts=${counts} /></button><span class="sr-only" id=${id}>${summary}</span>${shown && createPortal(html`<span ref=${tooltipRef} class="project-status-tooltip" role="tooltip"><span class="project-status-tooltip-rooms">${rooms}</span><span class="project-status-tooltip-summary">${summary}</span></span>`, document.body)}</span>`;
 }
