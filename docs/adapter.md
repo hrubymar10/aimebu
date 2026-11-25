@@ -689,7 +689,23 @@ checkout's `.aimebu/pi/<agent hash>/`, points `PI_CODING_AGENT_DIR` at it, and
 lists that variable and `AIMEBU_AGENT_KEY` in `HARNESS_DOCKER_FORWARD_ENV`, so
 the launcher hands both to the harness by name and the key is in neither argv
 nor a file (the config file names the variable, as natively). A launcher that
-cannot forward environment variables is refused before the turn starts. An own
+cannot forward environment variables, or run a command in the container
+(`run_command`), is refused before the turn starts. Pi reads its providers, models,
+login, settings and packages from that same directory, so the private one must not
+replace the container's own: before each turn the adapter runs one command through the
+launcher's command mode (nothing forwarded, no key) that links every entry of the
+container's agent directory (`$PI_CODING_AGENT_DIR` as the container sees it, else
+`~/.pi/agent`) into the private one, except `mcp.json` (the adapter's own file) and
+`sessions` (the turn has its own `--session-dir`). Links, not copies: Pi writes
+`auth.json` through a link, so a refreshed login stays in the one file. Pi's built-in
+MCP support has no flag for an extra config file, and trusting the project's
+`.pi/mcp.json` would also load the repository's own Pi extensions, so the directory is
+the one lever. The container may run the person's configuration with the pi-mcp-adapter
+package in place of the built-in support; it names tools `<server>_<tool>`
+(`aimebu_run_command`) rather than `mcp__<server>__<tool>`, so a Docker turn's allowlist
+names both spellings. A native turn links only the person's `models.json` and
+`auth.json` into its private directory (their settings, extensions and packages stay
+out), so a model only their `models.json` defines is found there too. An own
 server is carried only when its entry holds nothing but a `url` (and its
 exposure): a command points at a binary the container does not have, and a
 header or another field is a credential the shared checkout's file must not
@@ -702,7 +718,12 @@ No long-lived agent key is written in the checkout. The
 owner lists the models of a Pi harness in Settings → Agents → Harnesses & models (Auto-detect models
 runs `pi --offline --list-models` on the machine; ids are `provider/model`). Set
 `AIMEBU_LIVE_PI=1` or `AIMEBU_LIVE_PI_DOCKER=1` to run the respective
-two-turn nonce-recall canary.
+two-turn nonce-recall canary. `AIMEBU_LIVE_PI_DOCKER_TOOLBOX=1` with
+`AIMEBU_LIVE_PI_MODEL=<provider/model>` runs one real Docker turn against a stand-in
+MCP server (an ephemeral port; `AIMEBU_LIVE_PI_VISIBLE_HOST=<address>` when the
+container's host gateway is not the machine running it) and requires that Pi finds its
+model, lists the aimebu tools and calls `run_command` with the bearer key. It is not a
+unit test and does not need the test lock.
 
 ## OpenCode native adapter
 

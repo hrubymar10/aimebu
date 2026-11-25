@@ -106,8 +106,22 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	keyPath := filepath.Join(root, "key")
+	// The container's own agent directory: what the launcher's command mode sees as PI_CODING_AGENT_DIR, and what the person has natively.
+	realDir := filepath.Join(root, "real-agent")
+	for name, content := range map[string]string{"models.json": `{"providers":{"mine":{}}}`, "auth.json": `{"mine":{"key":"x"}}`,
+		"settings.json": `{"packages":["git:example/pkg"]}`, "mcp.json": `{"mcpServers":{}}`, "git/pkg/index.ts": "export {}", "sessions/old.jsonl": "{}", ".hidden": "h"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(realDir, name)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(realDir, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PI_CODING_AGENT_DIR", realDir)
 	script := "#!/bin/sh\n" +
-		`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; exit 0; fi` + "\n" +
+		`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; echo run_command; exit 0; fi` + "\n" +
+		// Command mode: the launcher runs the line in the container, whose own variable names its agent directory; nothing is forwarded.
+		`if [ -n "${HARNESS_DOCKER_RUN_COMMAND+x}" ]; then printf '%s' "${AIMEBU_AGENT_KEY:-}${HARNESS_DOCKER_FORWARD_ENV:-}" > ` + filepath.Join(root, "command-env") + "; PI_CODING_AGENT_DIR=" + realDir + ` exec sh -c "$HARNESS_DOCKER_RUN_COMMAND"; fi` + "\n" +
 		"printf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s' \"${PI_CODING_AGENT_DIR:-}\" > " + envPath + "\n" +
 		"printf '%s' \"${AIMEBU_AGENT_KEY:-}\" > " + keyPath + "\nprintf '%s' \"${HARNESS_DOCKER_FORWARD_ENV:-}\" > " + forwardPath + "\n" +
 		"cat " + fixture + "\n"
@@ -149,7 +163,49 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 			if !strings.Contains(string(args), "mcp__*") || strings.Contains(string(args), "--no-mcp") || strings.Contains(string(args), "--mcp-config") {
 				t.Fatalf("%s toolbox args=%q", variant, args)
 			}
+			// Pi Docker may run with the pi-mcp-adapter package, which names aimebu's tools aimebu_<tool>.
+			if hasAdapterNames := strings.Contains(string(args), "aimebu_*"); hasAdapterNames != (variant == "docker") {
+				t.Fatalf("%s allowlist must name the adapter's tool spelling only for Docker: %q", variant, args)
+			}
 			sum := sha256.Sum256([]byte("agt_test"))
+			privateDir := filepath.Join(root, "runtime", hex.EncodeToString(sum[:]))
+			if variant == "docker" {
+				privateDir = filepath.Join(checkout, ".aimebu", "pi", hex.EncodeToString(sum[:]))
+			}
+			// The private directory replaces Pi's agent directory, so what Pi needs to find its models and login must be linked into it:
+			// everything for Docker (the container's own directory, but mcp.json and sessions), and the person's models and login natively.
+			wantLinked := map[string]bool{"models.json": true, "auth.json": true}
+			if variant == "docker" {
+				for _, name := range []string{"settings.json", "git", ".hidden"} {
+					wantLinked[name] = true
+				}
+			}
+			entries, err := os.ReadDir(privateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if entry.Name() == "mcp.json" {
+					if entry.Type()&os.ModeSymlink != 0 {
+						t.Fatal("the private mcp.json must be the adapter's own file, not a link to the person's")
+					}
+					continue
+				}
+				target, err := os.Readlink(filepath.Join(privateDir, entry.Name()))
+				if err != nil || target != filepath.Join(realDir, entry.Name()) || !wantLinked[entry.Name()] {
+					t.Fatalf("unexpected entry %q in the private agent directory: target=%q err=%v", entry.Name(), target, err)
+				}
+				delete(wantLinked, entry.Name())
+			}
+			if len(wantLinked) != 0 {
+				t.Fatalf("missing links in the private agent directory: %v", wantLinked)
+			}
+			if variant == "docker" {
+				// The layering run forwards nothing: no key and no variable list.
+				if env, err := os.ReadFile(filepath.Join(root, "command-env")); err != nil || len(env) != 0 {
+					t.Fatalf("the layering command must carry no key and forward nothing: %q err=%v", env, err)
+				}
+			}
 			var configPath string
 			if variant == "native" {
 				if string(envDir) == "" {
@@ -519,5 +575,47 @@ func TestPiUsageCarriesCacheTokensWhenReported(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"input":11,"output":3}`), &usage); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Without command mode the launcher cannot build the container's agent directory: Pi would start with no model, so the turn is refused first.
+func TestDockerTurnRefusesALauncherWithoutRunCommand(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "pi-docker")
+	script := "#!/bin/sh\necho forward_env\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	_, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "no-run-command", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
+		CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal})
+	if err == nil || !strings.Contains(err.Error(), "support run_command") {
+		t.Fatalf("a launcher without command mode must be refused with the way out: %v", err)
+	}
+}
+
+// A stale link from an earlier turn is followed to the container's current entries: one that vanished is dropped, one that appeared is added.
+func TestLinkUserFilesReplacesStaleLinks(t *testing.T) {
+	root := t.TempDir()
+	source, dir := filepath.Join(root, "user"), filepath.Join(root, "private")
+	for _, d := range []string{source, dir} {
+		if err := os.MkdirAll(d, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "models.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "gone"), filepath.Join(dir, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkUserFiles(dir, source, "models.json", "auth.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "auth.json")); err == nil {
+		t.Fatal("a stale link to a file the person no longer has must be dropped")
+	}
+	if got, err := os.Readlink(filepath.Join(dir, "models.json")); err != nil || got != filepath.Join(source, "models.json") {
+		t.Fatalf("models.json link=%q err=%v", got, err)
 	}
 }

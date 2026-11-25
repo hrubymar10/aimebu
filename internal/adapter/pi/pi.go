@@ -148,8 +148,13 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		// exposed through codemode, which stays registered without being declared.
 		tools := []string{"read", "bash", "edit", "write", "grep", "find", "ls", "mcp__*"}
 		if a.variant() == "docker" {
+			// The container runs the person's own Pi configuration, which may load the pi-mcp-adapter package instead of Pi's built-in MCP
+			// support. The adapter names a server's tools <server>_<tool> (aimebu_run_command), not mcp__<server>__<tool>, so the
+			// allowlist must match both spellings or the toolbox is connected but hidden from the model (observed live).
+			tools = append(tools, "aimebu_*")
 			// The aimebu entry reaches the container as a private mcp.json under the
-			// mirrored checkout; its header names the key's variable, which the launcher
+			// mirrored checkout, in an agent directory that links the container's own
+			// (models, login, packages) beside it; its header names the key's variable, which the launcher
 			// hands over by name (HARNESS_DOCKER_FORWARD_ENV), so the key is in neither
 			// argv nor a file.
 			agentDir = filepath.Join(spec.CheckoutPath, ".aimebu", "pi", hex.EncodeToString(sum[:]))
@@ -176,8 +181,15 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			if probeErr == nil {
 				probeErr = adapter.CheckDockerFeature(features, "Pi", command, adapter.FeatureForwardEnv)
 			}
+			if probeErr == nil {
+				probeErr = adapter.CheckDockerFeature(features, "Pi", command, adapter.FeatureRunCommand)
+			}
 			if probeErr != nil {
 				return nil, probeErr
+			}
+			// Pi's models, login and packages live in the agent directory, which this turn replaces: link the container's own entries in.
+			if err := layerAgentDir(ctx, command, spec.LauncherArgs, spec.CheckoutPath, visibleAgentDir, dockerLauncherRefs(spec.LauncherEnvRefs)); err != nil {
+				return nil, err
 			}
 		} else {
 			if a.RuntimeRoot == "" {
@@ -188,6 +200,11 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 				return nil, err
 			}
 			if err := os.Chmod(agentDir, 0700); err != nil {
+				return nil, err
+			}
+			// The private directory would otherwise hide the person's providers and login: a model that only their
+			// models.json defines would be "not found". Those two files are linked in; nothing else of theirs is.
+			if err := linkUserFiles(agentDir, userAgentDir(), nativeLinked...); err != nil {
 				return nil, err
 			}
 			var aerr error
