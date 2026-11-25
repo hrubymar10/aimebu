@@ -1164,7 +1164,7 @@ async function main() {
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
     assert.deepEqual(askHistory.rowEnd, { askEndsAtItsCard: true, plainEndsAtItsCard: true }, 'each row ends at its own card');
     assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit just below the bubble, before seen-by markers');
-    assert.deepEqual(askHistory.answered, { text: 'Answer recorded by someone', buttons: 0, blocks: 1, history: 0 }, 'an answered ask shows one compact chip: the answer and who answered, offered options folded, no old history line');
+    assert.deepEqual(askHistory.answered, { text: 'Answered (1/1)', buttons: 0, blocks: 1, history: 0 }, 'an answered ask shows one compact chip: the answer and who answered, offered options folded, no old history line');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
     await first.evaluate(() => { window.__priorTheme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'high-contrast-dark'; const button = document.createElement('button'); button.id = 'answer-hover-check'; button.className = 'btn proposed-answer-btn'; button.textContent = 'Proceed'; button.style.cssText = 'position:fixed;top:80px;left:80px;z-index:100'; document.body.append(button); });
     await first.hover('#answer-hover-check');

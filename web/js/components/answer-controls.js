@@ -14,24 +14,29 @@ const answerLabel = (item, body) => item.open_questions?.length
 const Check = () => html`<span class="icon-mask icon-mask-check" aria-hidden="true" title="Answered"></span>`;
 
 function AnsweredChoices({ item, answered, author, replyNo, variant, expanded, setExpanded }) {
-  const label = answerLabel(item, answered) || 'Answer recorded';
-  const person = author || 'someone';
+  // The body of an answer the page has not read yet is empty: the receipt then says who answered from what it already has (or just "Answered").
+  const text = answerLabel(item, answered), person = author || 'someone';
+  const label = text || (author ? `Answered by ${author}` : 'Answered');
+  // One reply answers every question of a set, so a set of questions is always answered in full.
+  const total = item.open_questions?.length || 0;
+  const count = total ? html`<span class="answer-choice-count">(${total}/${total})</span>` : null;
+  const by = text ? html`<span>by ${person}</span>` : null;
   const options = item.open_questions?.length
     ? item.open_questions.flatMap((question, index) => (question.options || []).map(option => `${index + 1}. ${question.question}: ${option}`))
     : item.proposed_answers || item.options || [];
-  const receipt = `Answered by ${person}: ${label}`;
+  const receipt = text ? `Answered by ${person}${total ? ` (${total}/${total})` : ''}: ${text}` : `${label}${total ? ` (${total}/${total})` : ''}`;
   const link = replyNo && html`<a class="msg-ref answer-choice-reply answer-history-link" href=${`#${replyNo}`} data-no=${String(replyNo)} aria-label=${`Go to ${person}'s answer`} title="Go to answer"><span class="icon-mask icon-mask-external-link" aria-hidden="true"></span></a>`;
   if (variant === 'a') return html`<div class="answer-choice-compact">
-    <button type="button" class="answer-choice-chip" aria-expanded=${String(expanded)} aria-label=${`${receipt}. ${expanded ? 'Hide' : 'Show'} offered options`} title=${expanded ? 'Hide offered options' : 'Show offered options'} onClick=${() => setExpanded(!expanded)}><${Check} /><strong>${label}</strong>${' '}<span>by ${person}</span></button>${link}
+    <button type="button" class="answer-choice-chip" aria-expanded=${String(expanded)} aria-label=${`${receipt}. ${expanded ? 'Hide' : 'Show'} offered options`} title=${expanded ? 'Hide offered options' : 'Show offered options'} onClick=${() => setExpanded(!expanded)}><${Check} /><strong>${label}</strong>${count && ' '}${count}${by && ' '}${by}</button>${link}
     ${expanded && html`<div class="answer-choice-options" aria-label="Offered options">${options.map(option => html`<button type="button" class="btn proposed-answer-btn" disabled key=${option}>${option}</button>`)}</div>`}
   </div>`;
   if (variant === 'b') return html`<div class="answer-choice-row" aria-label=${receipt}>
-    ${options.length && !item.open_questions?.length ? options.map(option => html`<button type="button" class=${`answer-choice-pill${option === chosenOption(options, answered) ? ' chosen' : ''}`} key=${option} disabled aria-label=${option === chosenOption(options, answered) ? `${option}, chosen by ${person}` : `${option}, not chosen`}>${option === chosenOption(options, answered) && html`<${Check} />`}${option}</button>`)
+    ${text && options.length && !item.open_questions?.length ? options.map(option => html`<button type="button" class=${`answer-choice-pill${option === chosenOption(options, answered) ? ' chosen' : ''}`} key=${option} disabled aria-label=${option === chosenOption(options, answered) ? `${option}, chosen by ${person}` : `${option}, not chosen`}>${option === chosenOption(options, answered) && html`<${Check} />`}${option}</button>`)
       : html`<button type="button" class="answer-choice-pill chosen" disabled aria-label=${receipt}><${Check} />${label}</button>`}
-    <span class="answer-choice-by">by ${person}</span>${link}
+    ${count}${text && html`<span class="answer-choice-by">by ${person}</span>`}${link}
   </div>`;
   return html`<div class="answer-choice-inline" tabindex="0" role="group" aria-label=${`${receipt}. Focus to show offered options`}>
-    <${Check} /><strong>${label}</strong><span>by ${person}</span><span class="receipt-avatar" aria-hidden="true" title=${person}>${person.slice(0, 2).toUpperCase()}</span>${link}
+    <${Check} /><strong>${label}</strong>${count && ' '}${count}${by && ' '}${by}<span class="receipt-avatar" aria-hidden="true" title=${person}>${person.slice(0, 2).toUpperCase()}</span>${link}
     <div class="answer-choice-tooltip" role="note"><strong>Offered options</strong>${options.map(option => html`<span key=${option}>${option}</span>`)}</div>
   </div>`;
 }

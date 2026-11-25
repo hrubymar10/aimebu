@@ -1029,7 +1029,11 @@ async function main() {
     const longAnswer = `@zed ${'a'.repeat(65)}`;
     assert.equal((await history(longAnswer, choices)).text, `${'a'.repeat(65)} by owner`, 'a long free-text answer remains available in the chip');
     assert.equal((await history('@zed Q1) a) A\nQ2) a) Now', [], [{ question: 'Route?' }, { question: 'When?' }])).text,
-      'Q1) a) A · Q2) a) Now by owner', 'Open Questions show the submitted answers');
+      'Q1) a) A · Q2) a) Now (2/2) by owner', 'Open Questions show the submitted answers');
+    // A single-question ask shows no count; an answer whose body the page has not read yet says who answered (never "Answer recorded").
+    assert.equal((await history('', [], [{ question: 'Route?' }, { question: 'When?' }])).text, 'Answered by owner (2/2)', 'a set of questions whose body is not loaded still shows the count');
+    assert.equal((await history('@zed beta', ['alpha', 'beta'])).text, 'beta by owner', 'a single-question ask carries no count');
+    assert.equal((await history('', ['alpha', 'beta'])).text, 'Answered by owner', 'an answer whose body is not loaded names who answered');
     await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-reply', link => link.click());
     await page.waitForFunction(() => document.querySelector('#messages [data-message-id=rm_a_m121]')?.classList.contains('message-flash') || !!document.querySelector('#messages [data-message-id=rm_a_m121] .message-flash'));
     await page.close();
@@ -1079,9 +1083,9 @@ async function main() {
     });
     await page.waitForSelector('#messages [data-message-id=rm_a_m120] .answer-choice-chip');
     assert.deepEqual(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-controls', box => [box.querySelector('.answer-choice-chip')?.textContent.trim(), box.querySelector('a')?.getAttribute('href'), box.querySelectorAll('button').length]),
-      ['Q1) a) A · Q2) a) Now by owner', '#121', 1], 'a submitted Open Questions answer is one compact chip');
+      ['Q1) a) A · Q2) a) Now (2/2) by owner', '#121', 1], 'a submitted Open Questions answer is one compact chip');
     await openRoom(page, 'rm_b'); await opened(page); await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-chip', node => node.textContent.trim()), 'Q1) a) A · Q2) a) Now by owner', 'the answer summary survives a room change from message state');
+    assert.equal(await page.$eval('#messages [data-message-id=rm_a_m120] .answer-choice-chip', node => node.textContent.trim()), 'Q1) a) A · Q2) a) Now (2/2) by owner', 'the answer summary survives a room change from message state');
     await page.close();
   }
 

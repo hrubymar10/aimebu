@@ -44,6 +44,8 @@ async function main() {
         <section><h3>Open Questions · answered</h3><${AnswerControls} item=${questions} answered=${'Q1) a) North\nQ2) b) Later'} answerAuthor="owner" answerReplyNo=${43} /></section>
         <section><h3>Proposed answer · open</h3><${AnswerControls} item=${proposed} submit=${() => true} /></section>
         <section><h3>Open Questions · open</h3><${AnswerControls} item=${questions} submit=${() => true} /></section>
+        <section><h3>Open Questions · answered, body not loaded</h3><${AnswerControls} item=${questions} answered="" answerAuthor="owner" /></section>
+        <section><h3>Proposed answer · answered, body not loaded</h3><${AnswerControls} item=${proposed} answered="" answerAuthor="owner" /></section>
       </div>`, host);
       window.drawAnswers();
     });
@@ -55,7 +57,7 @@ async function main() {
         document.documentElement.setAttribute('data-ui-answered-choices', variant);
         document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant } }));
       }, { theme, variant });
-      await page.waitForFunction(variant => document.querySelectorAll(`#answer-style-fixture .answer-variant-${variant}`).length === 2, {}, variant);
+      await page.waitForFunction(variant => document.querySelectorAll(`#answer-style-fixture .answer-variant-${variant}`).length === 4, {}, variant);
       await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running'));
       const states = await page.$$eval('#answer-style-fixture section', sections => sections.map(section => ({
         text: section.querySelector('.answer-controls')?.textContent || '',
@@ -63,19 +65,28 @@ async function main() {
         check: !!section.querySelector('.icon-mask-check'),
         buttons: [...section.querySelectorAll('.answer-controls button')].map(button => button.disabled),
       })));
-      assert.deepEqual(states.map(state => state.resolved), [true, true, false, false]);
+      assert.deepEqual(states.map(state => state.resolved), [true, true, false, false, true, true]);
+      // A set of questions shows its count; an answer that is not loaded yet names who answered, never "Answer recorded".
+      assert.ok(states[1].text.includes('(2/2)') && !states[0].text.includes('('), 'only a set of questions carries a count');
+      assert.ok(states[4].text.includes('Answered by owner') && states[4].text.includes('(2/2)') && states[5].text.includes('Answered by owner') && !/Answer recorded/.test(states[4].text + states[5].text));
       assert.ok(states[0].text.includes('Ship now') && states[1].text.includes('North') && states[1].text.includes('Later'));
       assert.ok(states[0].text.includes('owner') && states[1].text.includes('owner') && states[0].check && states[1].check);
       assert.ok(states[2].buttons.some(disabled => !disabled) && states[3].buttons.some(disabled => !disabled));
       if (variant === 'b') {
         const colors = await page.$$eval('.answer-choice-pill.chosen', nodes => nodes.map(node => [getComputedStyle(node).opacity, getComputedStyle(node).color, getComputedStyle(node).backgroundColor]));
-        assert.deepEqual(colors.map(color => color[0]), ['1', '1']);
-        assert.deepEqual(colors[0], colors[1], 'both chosen pills retain the same contrast');
+        assert.deepEqual(colors.map(color => color[0]), ['1', '1', '1', '1']);
+        assert.ok(colors.every(color => color.join() === colors[0].join()), 'every chosen pill retains the same contrast');
       }
       if (theme === 'dark' || theme === 'high-contrast-dark') await (await page.$('#answer-style-fixture')).screenshot({ path: path.join(shots, `${variant}-${theme}.png`) });
     }
-    await page.evaluate(() => { document.documentElement.setAttribute('data-ui-answered-choices', 'a'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant: 'a' } })); });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; document.documentElement.setAttribute('data-ui-answered-choices', 'a'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant: 'a' } })); });
     await page.waitForSelector('.answer-choice-chip');
+    // The two receipts A12-4b changed, in the dark theme.
+    const changed = path.join(__dirname, '..', '.aimebu', 'a124b-shots');
+    fs.mkdirSync(changed, { recursive: true });
+    const sections = await page.$$('#answer-style-fixture section');
+    await sections[1].screenshot({ path: path.join(changed, 'multi-question-answered-dark.png') });
+    await sections[4].screenshot({ path: path.join(changed, 'body-not-loaded-dark.png') });
     await page.evaluate(() => document.querySelector('.answer-choice-chip').click());
     assert.deepEqual(await page.$$eval('.answer-choice-options button', buttons => buttons.map(button => button.disabled)), [true, true]);
     await page.evaluate(() => { document.documentElement.setAttribute('data-ui-answered-choices', 'c'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { experiment: 'answered-choices', variant: 'c' } })); });
