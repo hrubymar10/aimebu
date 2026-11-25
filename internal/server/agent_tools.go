@@ -260,16 +260,19 @@ func (s *Server) agentProviderQuota(caller store.AgentToolIdentity) agentProvide
 // agentSpawnRequest is the body of POST /api/agent/agents, the spawn_agent tool. It is decoded strictly, so a field the tool sends must be
 // here (TestAgentToolBodiesDecodeStrictly checks every tool's body against its route's type).
 type agentSpawnRequest struct {
-	RoomID    string `json:"room_id"`
-	RoleKey   string `json:"role_key"`
-	Tool      string `json:"tool"`
-	Variant   string `json:"variant"`
-	Model     string `json:"model"`
-	Reason    string `json:"reason"`
-	Provider  string `json:"provider"`
-	MachineID string `json:"machine_id"`
-	Worktree  bool   `json:"worktree"`
-	BaseRef   string `json:"base_ref"`
+	RoomID  string `json:"room_id"`
+	RoleKey string `json:"role_key"`
+	Tool    string `json:"tool"`
+	Variant string `json:"variant"`
+	Model   string `json:"model"`
+	// LauncherID is spawn_agent's launcher_id: the launcher to run the agent on. It is validated like on the person's spawn route (the
+	// shared spawnAgentRequest resolves it) and it is one of the harness choices the model-approval gate judges (spawnChoiceInPool).
+	LauncherID string `json:"launcher_id"`
+	Reason     string `json:"reason"`
+	Provider   string `json:"provider"`
+	MachineID  string `json:"machine_id"`
+	Worktree   bool   `json:"worktree"`
+	BaseRef    string `json:"base_ref"`
 	// JoinParent is spawn_agent's join_parent: the store allows it to a lead or the flow's dispatcher only (store.SpawnInput.JoinParent).
 	JoinParent bool `json:"join_parent"`
 	// ApprovedBy names the message of a person that approved this exact harness and model choice outside the role's default pool;
@@ -304,7 +307,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 	// The model-approval gate: a harness choice outside the role's default pool needs a person's message as approved_by. A person's own
 	// spawn (the other route into spawnAgentRequest) is never gated and records no approval.
 	approvedBy := ""
-	if req.Tool != "" || req.Variant != "" || req.Model != "" || req.ApprovedBy != "" {
+	if req.Tool != "" || req.Variant != "" || req.Model != "" || req.LauncherID != "" || req.ApprovedBy != "" {
 		inPool, err := s.spawnChoiceInPool(r.Context(), room.ProjectID, req.RoleKey, req)
 		if err != nil {
 			fail(w, err)
@@ -324,7 +327,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.spawnAgentRequest(w, r, room, spawnRequest{RoleKey: req.RoleKey, Tool: req.Tool,
-		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason, JoinParent: req.JoinParent, ApprovedBy: approvedBy}, "agent", caller.ID)
+		Variant: req.Variant, LauncherID: req.LauncherID, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason, JoinParent: req.JoinParent, ApprovedBy: approvedBy}, "agent", caller.ID)
 }
 
 func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {

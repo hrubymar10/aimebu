@@ -14,7 +14,10 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // toolBodyRoute is a route an agent tool sends a JSON body to: the handler registered for it in Handler and the type that handler decodes
@@ -220,5 +223,143 @@ func TestAgentToolBodiesDecodeStrictly(t *testing.T) {
 		if !strings.Contains(string(source), `mux.Handle("`+pattern+`", s.requireAgentTool(http.HandlerFunc(s.`+handler+`)))`) {
 			t.Errorf("server.go does not route %q to %s", pattern, handler)
 		}
+	}
+}
+
+// launcherMachine is a machine conn that supports launchers and lists the given
+// launchers as available, so a spawn resolves the launcher_id it is given
+// instead of falling back to the variant name. It answers the folder check a
+// launcher spawn makes through the supervisor: every folder as it is spelled.
+func launcherMachine(t *testing.T, f *fixture, launchers ...store.Launcher) {
+	t.Helper()
+	rows := make([]protocol.LauncherRow, 0, len(launchers))
+	capabilities := make([]protocol.CapabilityReport, 0, len(launchers))
+	for _, launcher := range launchers {
+		rows = append(rows, protocol.LauncherRow{LauncherDefinition: protocol.LauncherDefinition{ID: launcher.ID, Tool: launcher.Tool, Name: launcher.Name, Enabled: true}, Available: true})
+		capabilities = append(capabilities, protocol.CapabilityReport{Tool: launcher.Tool, Environment: adapter.Environment{Variant: launcherAlias(launcher.Name)}})
+	}
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 16), done: make(chan struct{}), bound: map[string]int{},
+		supportsLaunchers: true, supportsPathProbe: true, launchers: rows, capabilities: capabilities}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	t.Cleanup(func() { close(machine.done) })
+	go func() {
+		for {
+			select {
+			case request := <-machine.sendQueue:
+				if request.Type != protocol.PathProbe {
+					continue
+				}
+				machine.harnessMu.Lock()
+				waiter := machine.pathPending[request.ReqID]
+				machine.harnessMu.Unlock()
+				if waiter != nil {
+					waiter <- protocol.Frame{V: protocol.Version, Type: protocol.PathResult, ReqID: request.ReqID, CanonicalPath: request.CheckoutPath}
+				}
+			case <-machine.done:
+				return
+			}
+		}
+	}()
+}
+
+// TestAgentToolSpawnLauncherID covers spawn_agent's launcher_id: the tool
+// forwards it and the route validates it like the person's spawn route (an
+// unknown launcher is a 4xx), a launcher outside the role's default pool is
+// gated like tool, variant and model (409 model_not_approved unless
+// approved_by, whose message must name the requested model and may not name a
+// different tool or variant), and a role_key-only spawn uses the pool entry's
+// launcher.
+func TestAgentToolSpawnLauncherID(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, key := f.createToolAgent(t, "role_leader_default")
+	_ = lead
+	codexNative := f.harness(t, "codex", "native")
+	claudeNative := f.harness(t, "claude", "native")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`UPDATE machine_launcher SET enabled=1 WHERE id IN (?,?)`, codexNative.ID, claudeNative.ID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE role SET spawn_defaults_json=? WHERE role_key='worker'`,
+			`[{"launcher_id":"`+codexNative.ID+`","model":"gpt-6-sol"}]`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	launcherMachine(t, f, codexNative, claudeNative)
+
+	args := func(requestKey string, choice map[string]any) map[string]any {
+		out := map[string]any{"room_id": f.room.ID, "role_key": "worker", "reason": "the task asked for it", "request_key": requestKey}
+		for name, value := range choice {
+			out[name] = value
+		}
+		return out
+	}
+
+	// A role_key-only spawn runs on the pool entry's launcher.
+	card := spawnViaTool(t, f, key, args("lnch-default", nil))
+	if !card.DefaultUsed || card.LauncherID != codexNative.ID || card.Model != "gpt-6-sol" {
+		t.Fatalf("pool default spawn: %+v", card)
+	}
+
+	// An explicit launcher_id is forwarded: tool and model with the pool's
+	// launcher but no variant spawns on it (without the forwarded launcher_id
+	// the request is refused for a missing variant). The choice matches the
+	// pool entry, so the card says the default was used.
+	card = spawnViaTool(t, f, key, args("lnch-forward", map[string]any{"tool": "codex", "launcher_id": codexNative.ID, "model": "gpt-6-sol"}))
+	if card.LauncherID != codexNative.ID || card.Model != "gpt-6-sol" || card.Variant != "native" {
+		t.Fatalf("explicit launcher spawn: %+v", card)
+	}
+
+	// A launcher outside the pool is gated: no approval, no spawn, even though
+	// the tool, variant and model name the pool entry.
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("lnch-gate", map[string]any{"tool": "codex", "variant": "native", "model": "gpt-6-sol", "launcher_id": claudeNative.ID})); !failed ||
+		!strings.Contains(text, "model_not_approved") {
+		t.Fatalf("spawn on a launcher outside the pool: failed=%v %s", failed, text)
+	}
+
+	// A person's message that names the requested model opens the gate, and
+	// the spawn then runs on the launcher it names; one that names another
+	// variant does not.
+	approvedID, _ := personMessage(t, f, f.room.ID, "haiku is fine for this task")
+	card = spawnViaTool(t, f, key, args("lnch-approved", map[string]any{"tool": "claude", "variant": "native", "model": "haiku", "launcher_id": claudeNative.ID, "approved_by": approvedID}))
+	if card.LauncherID != claudeNative.ID || card.Model != "haiku" {
+		t.Fatalf("approved launcher spawn: %+v", card)
+	}
+	wrongVariantID, _ := personMessage(t, f, f.room.ID, "haiku on docker is fine")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("lnch-wrong-variant", map[string]any{"tool": "claude", "variant": "native", "model": "haiku", "launcher_id": claudeNative.ID, "approved_by": wrongVariantID})); !failed ||
+		!strings.Contains(text, "model_not_approved") || !strings.Contains(text, "tool or variant") {
+		t.Fatalf("spawn approved with a wrong variant named: failed=%v %s", failed, text)
+	}
+
+	// An unknown launcher is refused with the person route's answer. On the
+	// agent route the gate refuses it first without an approval; with one that
+	// names the requested model, the launcher lookup itself fails.
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("lnch-unknown-gate", map[string]any{"tool": "codex", "variant": "native", "model": "gpt-6-sol", "launcher_id": "lnch_missing"})); !failed ||
+		!strings.Contains(text, "model_not_approved") {
+		t.Fatalf("unknown launcher without approval: failed=%v %s", failed, text)
+	}
+	unknownApproved, _ := personMessage(t, f, f.room.ID, "gpt-6-sol is approved")
+	if text, failed := mcpToolCall(t, f, key, "spawn_agent", args("lnch-unknown", map[string]any{"tool": "codex", "variant": "native", "model": "gpt-6-sol", "launcher_id": "lnch_missing", "approved_by": unknownApproved})); !failed ||
+		!strings.Contains(text, "HTTP 409") || !strings.Contains(text, "launcher_unavailable") {
+		t.Fatalf("unknown launcher with approval: failed=%v %s", failed, text)
+	}
+	personReq, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+f.room.ID+"/agents",
+		strings.NewReader(`{"role_key":"worker","tool":"codex","variant":"native","model":"gpt-6-sol","launcher_id":"lnch_missing"}`))
+	personReq.Header.Set("Content-Type", "application/json")
+	personReq.Header.Set("X-CSRF-Token", f.csrf)
+	personReq.Header.Set("Idempotency-Key", "lnch-person-unknown")
+	personReq.AddCookie(f.cookie)
+	personResp, err := http.DefaultClient.Do(personReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer personResp.Body.Close()
+	if personResp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(personResp.Body)
+		t.Fatalf("person route unknown launcher: %d %s", personResp.StatusCode, body)
 	}
 }

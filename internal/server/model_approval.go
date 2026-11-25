@@ -19,8 +19,8 @@ import (
 // spawnChoiceInPool says whether the harness choice an agent's spawn request
 // names is one of the role's default pool entries. Every field the request
 // sets must match one pool entry; an empty field means the pool decides that
-// part (the launcher's tool and variant, the model it lists). The agent route
-// carries no launcher_id, so that part is always pool-decided there. A role
+// part (the launcher's tool and variant, the model it lists). A launcher_id
+// the request names must be the pool entry's launcher. A role
 // with no configured default has no pool to be outside of: nothing is
 // pre-approved, and the existing rule for that case (an unavailable default
 // needs a reason and says so in the room notice) stands. A pool entry's model
@@ -41,6 +41,9 @@ func (s *Server) spawnChoiceInPool(ctx context.Context, projectID, roleKey strin
 		}
 		if err != nil {
 			return false, err
+		}
+		if req.LauncherID != "" && req.LauncherID != choice.LauncherID {
+			continue
 		}
 		if req.Tool != "" && req.Tool != launcher.Tool {
 			continue

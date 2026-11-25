@@ -160,9 +160,10 @@ Projects, rooms, people
   `spawn_agent` with tool and model but no variant is refused with "add variant
   (e.g. docker)". An agent-initiated spawn (`POST /api/agent/agents`, the
   `spawn_agent` tool) may not pick a harness outside the role's configured
-  `default_agents` pool: a request that sets `tool`, `variant` or `model` to a
-  choice no pool entry matches — every field the request sets must match one
-  entry, an empty field means the pool decides that part — is refused with 409
+  `default_agents` pool: a request that sets `tool`, `variant`, `model` or
+  `launcher_id` to a choice no pool entry matches — every field the request
+  sets must match one entry (a `launcher_id` must be the entry's launcher), an
+  empty field means the pool decides that part — is refused with 409
   `model_not_approved` unless it carries `approved_by`: the number (`#N`) or id
   of a message a person wrote no more than 7 days ago in a room of the same
   project that the requesting agent may read. The message body must name the

@@ -1309,7 +1309,12 @@ stopped agent in the same project, updates its revision, and records the change
 in the room and system events.
 `spawn_agent` takes `role_key` and uses the next available role default when
 the tool and model are omitted. An explicit machine limits defaults to that
-machine; a matching default supplies the machine when none was named. A lead
+machine; a matching default supplies the machine when none was named. A
+`launcher_id` names the launcher to run the agent on: it is validated like on
+the person's spawn route (an unknown one answers 409 `launcher_unavailable`)
+and counts as a harness choice for the model-approval gate, so one outside the
+role's default pool needs `approved_by` like a tool, variant or model does. A
+lead
 choosing a different harness or model from an available
 default supplies a reason, recorded in the room. Using a default is recorded
 there too. An explicit choice is required when the role has no available
