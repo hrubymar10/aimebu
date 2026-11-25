@@ -28,13 +28,6 @@ func (s *Store) RecordSupervisorInstance(ctx context.Context, machineID, journal
 	return err
 }
 
-// TouchSupervisorInstance records that an instance was last in touch now (its connection just ended), so "not connected for a while" counts
-// from the disconnect and not from its hello, which may be hours old. A gone instance stays gone.
-func (s *Store) TouchSupervisorInstance(ctx context.Context, machineID, journalID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE supervisor_instance SET last_seen_at=? WHERE machine_id=? AND journal_id=? AND state<>'gone'`, timestamp(), machineID, journalID)
-	return err
-}
-
 // SetSupervisorInstanceState moves an instance between active and retiring. Marking one gone loses its work and is MarkSupervisorInstanceGone.
 func (s *Store) SetSupervisorInstanceState(ctx context.Context, machineID, journalID, state string) error {
 	if state != "active" && state != "retiring" {

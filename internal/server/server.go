@@ -127,7 +127,6 @@ type Server struct {
 	localRestartTurns                map[string]time.Time
 	telemetryTransport               sentry.Transport // tests replace the network transport; nil is the real one
 	CleanupClock                     func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
-	InstanceClock                    func() time.Time // tests set the clock of the remote lost-journal rule; nil is time.Now
 	// claudeModelsFetch gets the Anthropic SDK source Claude's model list is read from; tests replace it. nil is the real fetch.
 	claudeModelsFetch func(ctx context.Context, etag string) (body []byte, newETag string, notModified bool, err error)
 	claudeModels      claudeModelCache

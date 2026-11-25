@@ -71,12 +71,6 @@ to the one that matches its build and environment (see above). The local manager
   removed, except the legacy path. If a journal file is gone altogether and its
   instance has not connected for a minute, the manager tells the server the
   instance is gone, and the work the server still lists on it is lost, once.
-  A remote supervisor that lost its journal file reconnects with a new
-  `journal_id`: the server then marks gone any older instance of that machine
-  that has not been connected for 10 minutes (counted from its last disconnect),
-  so the turns it owned are lost with recovery and their agents are no longer
-  held back by the handover gate. An instance that is connected, or left less
-  than 10 minutes ago, is left alone.
 - **Liveness is the only bound.** A retiring instance that holds its lock
   without a server connection for about 10 minutes, or one the server sees as
   empty for about a minute that does not exit, gets the bounded handover: an

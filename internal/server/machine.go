@@ -340,14 +340,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close(websocket.StatusPolicyViolation, "invalid capabilities")
 		return
 	}
-	knownInstances, instancesErr := s.Store.SupervisorInstances(ctx, machineID)
 	if err := s.Store.RecordSupervisorInstance(ctx, machineID, hello.JournalID, hello.SupervisorVersion, hello.SupervisorEnvironment); err != nil {
 		telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: recording the supervisor instance: %w", err))
 		conn.Close(websocket.StatusInternalError, "machine state error")
 		return
-	}
-	if !localSupervisor && instancesErr == nil {
-		s.writeOffLostRemoteInstances(ctx, machineID, hello.JournalID, knownInstances)
 	}
 	if restartPending {
 		if err := s.Store.SetSupervisorInstanceState(ctx, machineID, hello.JournalID, "retiring"); err != nil {
@@ -472,8 +468,6 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		c.stop()
 		c.workers.Wait()
-		// The disconnect starts the clock of the lost-journal rule (see writeOffLostRemoteInstances).
-		_ = s.Store.TouchSupervisorInstance(context.WithoutCancel(ctx), machineID, c.journalID)
 		s.machineMu.Lock()
 		c.warmMu.Lock()
 		hasWarm := c.warm != nil && len(c.warm.Agents) > 0
@@ -1311,46 +1305,4 @@ func (s *Server) machineForDispatch(id string) (*machineConn, error) {
 		return nil, ErrMachineUnavailable
 	}
 	return c, nil
-}
-
-// remoteInstanceGoneAfter is how long a remote supervisor instance must have been disconnected before a new journal from the same machine
-// writes it off: the same ten minutes the local manager waits before it declares an instance gone.
-const remoteInstanceGoneAfter = 10 * time.Minute
-
-// writeOffLostRemoteInstances handles a remote supervisor that lost its journal file and says hello with a new journal_id: the turns the lost
-// journal owned would otherwise stay pending or running for ever (handoverBlocked refuses further delivery for their agents, and an owner stop
-// cannot settle an agent with an open turn). Every older instance that is not connected and has not been for ten minutes is marked gone, which
-// loses only its turns, with the usual recovery, and its command jobs. A connected instance, or one that left less than ten minutes ago, is
-// never touched: it may still reconnect and report its own work. Only a hello with a journal the server had not seen applies.
-func (s *Server) writeOffLostRemoteInstances(ctx context.Context, machineID, journalID string, known []store.SupervisorInstance) {
-	for _, item := range known {
-		if item.JournalID == journalID {
-			return
-		}
-	}
-	connected := map[string]bool{}
-	for _, c := range s.machineConnections(machineID) {
-		connected[c.journalID] = true
-	}
-	now := time.Now()
-	if s.InstanceClock != nil {
-		now = s.InstanceClock()
-	}
-	for _, item := range known {
-		if item.State == "gone" || connected[item.JournalID] {
-			continue
-		}
-		seen, err := time.Parse(time.RFC3339Nano, item.LastSeenAt)
-		if err != nil || now.Sub(seen) < remoteInstanceGoneAfter {
-			continue
-		}
-		turns, jobs, err := s.Store.MarkSupervisorInstanceGone(ctx, machineID, item.JournalID)
-		if err != nil {
-			telemetry.ReportError(ctx, "machine", fmt.Errorf("connection setup: writing off supervisor instance %s: %w", item.JournalID, err))
-			continue
-		}
-		if turns+jobs > 0 {
-			log.Printf("supervisor instance %s of machine %s was not connected for %s and a new journal said hello: %d turn(s) and %d command(s) it owned were lost", item.JournalID, machineID, remoteInstanceGoneAfter, turns, jobs)
-		}
-	}
 }
