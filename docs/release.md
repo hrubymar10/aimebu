@@ -225,6 +225,8 @@ The script creates an isolated server and stub Claude harness below the given
 scratch directory, holds a turn and native command across the server upgrade,
 and checks the replacement supervisor, replies, command exit, journals, and
 doctor result. It removes its own scratch run when finished.
+Name the two binaries `aimebu` or `aimebu-*`: the script's process verifier
+relies on that, and alpha.10's `supervisor status` rejects other names.
 
 Secondary options, none required for 2.0.0 and none verified here:
 
