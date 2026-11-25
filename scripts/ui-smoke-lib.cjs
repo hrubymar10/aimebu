@@ -157,13 +157,24 @@ async function start() {
       if (rowOfControl) await reachRow(page, rowOfControl);
       // A project starts folded: a click on a room inside a folded project opens the project first, as a person would.
       if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse')?.click(); }, selector);
-      await page.waitForFunction(selector => new Promise(resolve => {
-        const button = document.querySelector(selector);
-        if (!button || button.disabled || button.hidden || !button.getClientRects().length) { resolve(false); return; }
-        const box = () => { const rect = button.getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height].join(); };
-        const before = box();
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve(button.isConnected && box() === before && !button.disabled)));
-      }), {}, selector);
+      try {
+        await page.waitForFunction(selector => new Promise(resolve => {
+          const button = document.querySelector(selector);
+          if (!button || button.disabled || button.hidden || !button.getClientRects().length) { resolve(false); return; }
+          const box = () => { const rect = button.getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height].join(); };
+          const before = box();
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(button.isConnected && box() === before && !button.disabled)));
+        }), {}, selector);
+      } catch (error) {
+        // A click that never became possible: say what the page looked like, so the cases tell apart (the row missing because the chats list
+        // never loaded, a row that exists but is hidden or folded, a row that keeps moving). Printed before the same error is rethrown.
+        if (error?.name === 'TimeoutError') await page.evaluate(async selector => {
+          const node = document.querySelector(selector);
+          let dms; try { const response = await fetch('/api/agent-dms'); dms = `${response.status} ${(await response.text()).slice(0, 1500)}`; } catch (fetchError) { dms = `fetch failed: ${fetchError}`; }
+          return [`domClick timed out waiting for ${selector}`, `element: ${node ? `${node.tagName} hidden=${node.hidden} disabled=${!!node.disabled} boxes=${node.getClientRects().length} folded=${!!node.closest('.room-group.collapsed')}` : 'not in the DOM'}`, `/api/agent-dms: ${dms}`, `.direct-rooms: ${(document.querySelector('.direct-rooms')?.outerHTML ?? 'absent').slice(0, 4000)}`].join('\n');
+        }, selector).then(report => console.error(report), reason => console.error(`domClick timed out waiting for ${selector}; the page state could not be read: ${reason}`));
+        throw error;
+      }
       await page.$eval(selector, button => button.click());
       // Settings is a chunk fetched when it is first opened, so its dialog opens a moment after the click (a click that cannot open it just waits out the timeout).
       if (selector === '#settings-toggle') await page.waitForFunction(() => document.querySelector('#settings-dialog')?.open, { timeout: 3000 }).catch(() => {});
