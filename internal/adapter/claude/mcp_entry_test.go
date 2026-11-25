@@ -119,6 +119,57 @@ func TestHarnessBackgroundJobsAreOff(t *testing.T) {
 // test lives next to it in internal/adapter); the launch-level assertions that
 // both names arrive follow in the tests below.
 
+// An owner's own HARNESS_DOCKER_FORWARD_ENV (the launcher references the host
+// variable that holds it, so it reaches the turn through LauncherEnvRefs) and
+// the key's name must end up in one forwarding list on the Claude Docker path:
+// a second entry would win silently and drop the owner's names, and the key's
+// value itself must never appear in the list or in an argument.
+func TestDockerForwardListKeepsTheOwnerNamesAndTheKey(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		owner bool
+		want  string
+	}{
+		{"no owner list", false, adapter.AgentKeyEnv + "," + backgroundTasksEnvVar},
+		{"an owner's names are kept first", true, "OWNER_ONE,OWNER_TWO," + adapter.AgentKeyEnv + "," + backgroundTasksEnvVar},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Adapter{Command: "claude", Variant: "docker"}
+			spec := warmSpec(t, "turn_forward")
+			spec.Agent.Variant = "docker"
+			if tc.owner {
+				t.Setenv("OWNER_FORWARD_LIST", "OWNER_ONE,OWNER_TWO")
+				spec.LauncherEnvRefs = map[string]string{"HARNESS_DOCKER_FORWARD_ENV": "OWNER_FORWARD_LIST"}
+			}
+			l, err := a.prepare(spec, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, lists := 0, []string(nil)
+			for _, item := range l.env {
+				switch {
+				case item == adapter.AgentKeyEnv+"=aak_secret":
+					key++
+				case strings.HasPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="):
+					lists = append(lists, strings.TrimPrefix(item, "HARNESS_DOCKER_FORWARD_ENV="))
+				}
+			}
+			if key != 1 || len(lists) != 1 {
+				t.Fatalf("the turn needs the key once and exactly one forwarding list, got key %d and lists %q", key, lists)
+			}
+			if lists[0] != tc.want {
+				t.Fatalf("the forwarding list = %q, want %q", lists[0], tc.want)
+			}
+			if strings.Contains(lists[0], "aak_secret") {
+				t.Fatalf("the key's value is in the forwarding list: %q", lists[0])
+			}
+			if strings.Contains(strings.Join(l.args, "\n"), "aak_secret") {
+				t.Fatalf("the key is in the argument list: %q", l.args)
+			}
+		})
+	}
+}
+
 // The Docker entry is used inside the container: an HTTP endpoint at an address the container reaches (a loopback server becomes
 // host.docker.internal, or the launcher's own server URL), with the bearer a reference to a variable the launcher forwards into the
 // container, and no host path or command that would have to exist there.
