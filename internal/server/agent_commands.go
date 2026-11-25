@@ -77,6 +77,10 @@ func (s *Server) agentToolCommandRun(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 403, "forbidden", "you are not a member of that room: run commands from a room of your own project or one of your project's chats")
 		return
 	}
+	if err := s.Store.CommandRoomScope(r.Context(), caller.ProjectID, roomID); err != nil {
+		commandError(w, err)
+		return
+	}
 	checkout, err := s.Store.AgentCheckoutPath(r.Context(), caller.ID)
 	if err != nil {
 		fail(w, err)

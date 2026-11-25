@@ -575,6 +575,13 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		err := probe.QueryRow(`SELECT COUNT(*) FROM supervisor_instance WHERE machine_id=? AND state='active' AND journal_id<>?`, credential.MachineID, initialJournal).Scan(&count)
 		return err == nil && count > 0
 	}
+	replacementSeen := func() bool {
+		if replacementActive() {
+			return true
+		}
+		pid, held, err := supervisorPID(root)
+		return err == nil && held && pid != supervisorPIDAtStart
+	}
 	if restartNow {
 		var out, errOut bytes.Buffer
 		if code := run([]string{"supervisor", "restart"}, &out, &errOut); code != 0 {
@@ -623,7 +630,7 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		deadline = time.Now().Add(30 * time.Second)
 		replaced, continued := false, false
 		for time.Now().Before(deadline) {
-			if replacementActive() {
+			if replacementSeen() {
 				replaced = true
 			}
 			var count int
@@ -670,7 +677,7 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 				replaced := false
 				deadline = time.Now().Add(30 * time.Second)
 				for time.Now().Before(deadline) {
-					if replacementActive() {
+					if replacementSeen() {
 						replaced = true
 						break
 					}

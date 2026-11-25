@@ -174,6 +174,32 @@ func (s *Store) CreateCommandJob(ctx context.Context, job CommandJob, request Re
 	return created, reused, nil
 }
 
+// CommandRoomScope checks the destination before the server asks a machine to
+// run a command. CreateCommandJob repeats the check in its write transaction.
+func (s *Store) CommandRoomScope(ctx context.Context, projectID, roomID string) error {
+	var roomProject, roomKind string
+	if err := s.db.QueryRowContext(ctx, `SELECT project_id,kind FROM room WHERE id=?`, roomID).Scan(&roomProject, &roomKind); err != nil {
+		return err
+	}
+	if roomKind == "dm" && roomProject == AgentDMProjectID {
+		var foreign int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM room_member m WHERE m.room_id=? AND m.left_at IS NULL AND (
+			(m.member_kind='agent' AND EXISTS (SELECT 1 FROM agent a WHERE a.id=m.member_id AND a.project_id<>?))
+		 OR (m.member_kind='user' AND NOT EXISTS (SELECT 1 FROM membership mb WHERE mb.user_id=m.member_id AND mb.project_id=?)
+			 AND m.member_id<>`+firstUserSQL+`))`, roomID, projectID, projectID).Scan(&foreign); err != nil {
+			return err
+		}
+		if foreign > 0 {
+			return fmt.Errorf("%w: run commands from a room of your own project; this chat includes another project's agent", ErrScopeMismatch)
+		}
+		return nil
+	}
+	if roomProject != projectID {
+		return fmt.Errorf("%w: that room is in another project: run commands from a room of your own project or one of your project's chats", ErrScopeMismatch)
+	}
+	return nil
+}
+
 // CreateCommandJob inserts the job row after checking the per-agent cap. The log path is the caller's (the supervisor writes there).
 func (tx *Tx) CreateCommandJob(job CommandJob) (CommandJob, error) {
 	job, err := validateCommand(job)
