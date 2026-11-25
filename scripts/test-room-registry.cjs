@@ -72,8 +72,10 @@ const task = roomFacts({ kind: 'task', lifecycle: 'open', project_id: 'p' }, { r
 assert.deepEqual([task.home, task.scope, task.memory, task.notes, task.worktree, task.lifecycle, task.leave, task.remove_room], [false, true, true, true, true, true, false, true]);
 const home = roomFacts({ kind: 'home', lifecycle: 'open', project_id: 'p' }, { role: 'owner', project: { importer: true, archive: true, reopen: false, remove: true } });
 assert.deepEqual([home.home, home.lifecycle, home.leave, home.remove_room, home.archive, home.reopen, home.importer], [true, false, false, false, true, false, true], 'a home room cannot be archived, left or deleted as a room; the project can');
-const dm = roomFacts({ kind: 'dm', lifecycle: 'open', project_id: 'p' }, { role: 'owner' });
-assert.deepEqual([dm.scope, dm.remove_room], [false, false]);
+const dm = roomFacts({ kind: 'dm', lifecycle: 'open', project_id: 'p', can_delete: true }, { role: 'owner' });
+assert.deepEqual([dm.scope, dm.remove_room, dm.leave], [false, true, false]);
+assert.equal(roomFacts({ kind: 'dm', dm_key: 'users:p:a:b', can_delete: true }).leave, true);
+assert.equal(roomFacts({ kind: 'dm', dm_key: 'user:a:agent:b', can_delete: true }).leave, false);
 assert.deepEqual(plain(roomFacts(null)), {}, 'no room: no facts');
 const before = roomFacts({ kind: 'home', lifecycle: 'open', project_id: 'p' }, {});
 assert.deepEqual([before.archive, before.remove, before.importer], [true, true, true], 'before the project loads its categories are not dropped');

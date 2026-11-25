@@ -37,8 +37,28 @@ func (s *Store) BeginRoomClose(ctx context.Context, id, actor string, rev int64,
 	return room, controls, err
 }
 
+// BeginDMCloseForDeletion uses the ordinary close transition after checking
+// the broader permission to remove a private chat.
+func (s *Store) BeginDMCloseForDeletion(ctx context.Context, id, actor string, rev int64) (Room, []AgentCard, error) {
+	controls := []AgentCard{}
+	err := s.Tx(ctx, func(tx *Tx) error {
+		var closeErr error
+		controls, closeErr = tx.beginRoomCloseWithPermission(id, actor, rev, false, true)
+		return closeErr
+	})
+	if err != nil {
+		return Room{}, nil, err
+	}
+	room, err := s.RoomByID(ctx, id)
+	return room, controls, err
+}
+
 // beginRoomClose is shared with the idempotent lead toolbox route.
 func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (controls []AgentCard, err error) {
+	return tx.beginRoomCloseWithPermission(id, actor, rev, cascade, false)
+}
+
+func (tx *Tx) beginRoomCloseWithPermission(id, actor string, rev int64, cascade, forDeletion bool) (controls []AgentCard, err error) {
 	controls = []AgentCard{}
 	err = func() error {
 		var projectID, kind, lifecycle string
@@ -46,7 +66,18 @@ func (tx *Tx) beginRoomClose(id, actor string, rev int64, cascade bool) (control
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind,lifecycle,lifecycle_rev FROM room WHERE id=?`, id).Scan(&projectID, &kind, &lifecycle, &currentRev); err != nil {
 			return err
 		}
-		if err := tx.roomClosePermission(projectID, id, kind, actor); err != nil {
+		if forDeletion {
+			if kind != "dm" {
+				return ErrInvalidTransition
+			}
+			allowed, err := dmRemovalAllowed(tx.ctx, tx.tx, id, actor)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrForbidden
+			}
+		} else if err := tx.roomClosePermission(projectID, id, kind, actor); err != nil {
 			return err
 		}
 		var agentActor bool
@@ -462,13 +493,15 @@ func (s *Store) AdvanceRoomClosures(ctx context.Context, grace time.Duration) ([
 			if err != nil {
 				return err
 			}
-			var actor string
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT user_id FROM membership WHERE project_id=? AND role='owner' ORDER BY user_id LIMIT 1`, projectID).Scan(&actor); err != nil {
-				return err
-			}
 			cards, err := tx.roomHomeAgents(id)
 			if err != nil {
 				return err
+			}
+			var actor string
+			if len(cards) > 0 {
+				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT user_id FROM membership WHERE project_id=? AND role='owner' ORDER BY user_id LIMIT 1`, projectID).Scan(&actor); err != nil {
+					return err
+				}
 			}
 			withinGrace := time.Since(begin) < grace
 			waiting := false

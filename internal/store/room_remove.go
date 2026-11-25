@@ -7,15 +7,40 @@ import (
 	"fmt"
 	"log"
 	"os"
+
+	json "github.com/goccy/go-json"
 )
 
-// ErrRoomNotRemovable: a home room, a private chat, or a room with a live worktree.
+// ErrRoomNotRemovable: a room with a live worktree.
 var ErrRoomNotRemovable = errors.New("room_not_removable")
 
 // ErrRoomNotClosed: a room is removed only after it has been archived (closed).
 var ErrRoomNotClosed = errors.New("room_not_closed")
 
-// RemoveRoom deletes an archived task room and everything that belongs to it: its
+// DMRemovalAllowed permits a chat's human member, a global administrator, or,
+// for a chat between agents, an owner of either agent's project.
+func (s *Store) DMRemovalAllowed(ctx context.Context, roomID, actor string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	return dmRemovalAllowed(ctx, s.db, roomID, actor)
+}
+
+func dmRemovalAllowed(ctx context.Context, q singleRowQuerier, roomID, actor string) (bool, error) {
+	var allowed bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r JOIN user u ON u.id=? AND u.disabled_at IS NULL
+		WHERE r.id=? AND r.kind='dm' AND (
+			u.id=`+firstUserSQL+` OR u.admin=1
+			OR (r.project_id!=`+agentDMProjectSQL+` AND EXISTS (SELECT 1 FROM room_member m
+				WHERE m.room_id=r.id AND m.member_kind='user' AND m.member_id=u.id AND m.left_at IS NULL))
+			OR (r.project_id=`+agentDMProjectSQL+` AND EXISTS (SELECT 1 FROM room_member m
+				JOIN agent a ON a.id=m.member_id JOIN membership p ON p.project_id=a.project_id
+				WHERE m.room_id=r.id AND m.member_kind='agent' AND m.left_at IS NULL
+				AND p.user_id=u.id AND p.role='owner'))))`, actor, roomID).Scan(&allowed)
+	return allowed, err
+}
+
+// RemoveRoom deletes an archived task room or private chat and everything that belongs to it: its
 // messages, reactions, notes, turns, inbox items, usage records, schedules, task notes,
 // members, read cursors and the attachment rows and files. Rows elsewhere that merely
 // point at the room or one of its messages (events, memory records, an agent's home
@@ -31,8 +56,6 @@ func (s *Store) RemoveRoom(ctx context.Context, id string) error {
 		switch {
 		case kind == "home":
 			return ErrHomeRoom
-		case kind == "dm":
-			return ErrRoomNotRemovable
 		case lifecycle != "closed":
 			return ErrRoomNotClosed
 		}
@@ -58,6 +81,29 @@ func (s *Store) RemoveRoom(ctx context.Context, id string) error {
 		}
 		if agentTrees > 0 {
 			return ErrRoomNotRemovable
+		}
+		var audience []string
+		if projectID == AgentDMProjectID {
+			rows, err := tx.tx.QueryContext(tx.ctx, `SELECT DISTINCT u.id FROM user u WHERE u.disabled_at IS NULL AND (u.id=`+firstUserSQL+`
+				OR EXISTS (SELECT 1 FROM room_member m JOIN agent a ON a.id=m.member_id
+					JOIN membership p ON p.project_id=a.project_id AND p.user_id=u.id
+					WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL))`, id)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var userID string
+				if err := rows.Scan(&userID); err != nil {
+					rows.Close()
+					return err
+				}
+				audience = append(audience, userID)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
 		}
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT path FROM attachment WHERE room_id=? OR message_id IN (SELECT id FROM message WHERE room_id=?)`, id, id)
 		if err != nil {
@@ -87,7 +133,15 @@ func (s *Store) RemoveRoom(ctx context.Context, id string) error {
 			return err
 		}
 		// The room is gone, so the event carries its id in the payload only.
-		_, err = tx.AppendEvent(Event{Kind: "room_removed", ProjectID: projectID, PayloadJSON: payloadJSON(map[string]string{"room_id": id})})
+		payload := payloadJSON(map[string]string{"room_id": id})
+		if projectID == AgentDMProjectID {
+			data, err := json.Marshal(map[string]any{"room_id": id, "user_ids": audience})
+			if err != nil {
+				return err
+			}
+			payload = string(data)
+		}
+		_, err = tx.AppendEvent(Event{Kind: "room_removed", ProjectID: projectID, PayloadJSON: payload})
 		return err
 	})
 	if err != nil {

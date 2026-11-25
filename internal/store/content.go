@@ -157,6 +157,7 @@ type Room struct {
 	// chat must not be archived.
 	AgentChat bool  `json:"agent_chat,omitempty"`
 	CanWrite  *bool `json:"can_write,omitempty"`
+	CanDelete bool  `json:"can_delete,omitempty"`
 }
 
 // MarshalJSON gives a room that no list has described yet (just created, or answered by a tool) the default notification level, so the

@@ -1848,7 +1848,7 @@ async function main() {
     let page = await show({});
     let state = await dialog(page);
     assert.deepEqual([state.open, state.rename, state.facts, state.debug], [true, [true, 'rm_a'], ['Kind', 'Task room', 'Status', 'Open', 'Members', '2', 'Room ID', 'rm_a'], 4], 'an owner renames the task room in its own field');
-    assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: false, label: 'Delete room', title: 'Delete this room and its messages for good' }, true]);
+    assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: false, label: 'Delete room', title: 'Delete room' }, true]);
     assert.deepEqual([state.notes, state.worktree.shown, state.memory.shown], [{ shown: true, text: 'Task notes Notes the agents keep for this task. They stay with this room. Open task notes' }, true, true]);
     await page.$eval('#room-info-close', node => node.click());
     assert.equal((await dialog(page)).open, false, 'Close closes the dialog');
@@ -1856,7 +1856,7 @@ async function main() {
     assert.deepEqual((await dialog(page)).lifecycle, { shown: true, disabled: true, label: 'Closing…', title: 'Closing…' }, 'a room that is closing cannot be archived again');
     await page.evaluate(() => window.__chat.setRoomFacts({ ...window.__chat.room, lifecycle: 'closed' })); await settle(page);
     state = await dialog(page);
-    assert.deepEqual([state.lifecycle, state.remove], [{ shown: true, disabled: false, label: 'Reopen room', title: 'Reopen room' }, { shown: true, disabled: false, label: 'Delete room', title: 'Delete this room and its messages for good' }], 'the open dialog follows the room\'s lifecycle');
+    assert.deepEqual([state.lifecycle, state.remove], [{ shown: true, disabled: false, label: 'Reopen room', title: 'Reopen room' }, { shown: true, disabled: false, label: 'Delete room', title: 'Delete room' }], 'the open dialog follows the room\'s lifecycle');
     await page.close();
     page = await show({});
     await page.$eval('#room-remove', node => node.click());
@@ -1875,11 +1875,29 @@ async function main() {
     await page.close();
     page = await show({ kind: 'dm' });
     state = await dialog(page);
-    assert.deepEqual([state.rename[0], state.remove.shown, state.notes.shown, state.worktree.shown], [false, false, false, false], 'a private chat has no title field, removal, notes or worktree');
+    assert.deepEqual([state.rename[0], state.remove.shown, state.notes.shown, state.worktree.shown], [false, false, false, false], 'a private chat without deletion rights has no title field, removal, notes or worktree');
     await page.$eval('#room-info-agents-tab', node => node.click()); await settle(page);
     assert.deepEqual(await page.$$eval('#room-info-dialog .settings-sub-row', nodes => nodes.map(node => node.textContent.trim())), ['Schedules'], 'a private chat has no agent Control subcategory');
     await page.$eval('#room-info-workspace-tab', node => node.click()); await settle(page);
     assert.deepEqual(await page.$$eval('#room-info-dialog .settings-sub-row', nodes => nodes.map(node => node.textContent.trim())), ['Usage'], 'a private chat has no Git worktree subcategory');
+    await page.close();
+    page = await show({ kind: 'dm', dm_key: 'user:u:agent:a', can_delete: true });
+    await page.$eval('#room-info-leave-tab', node => node.click()); await settle(page);
+    assert.deepEqual(await page.evaluate(() => ['lifecycle', 'remove'].map(name => {
+      const button = document.querySelector(`#room-${name}`), row = button.closest('.settings-row');
+      return [row.querySelector('.settings-label').textContent, !!row.querySelector('.settings-desc').textContent, button.title, !!button.querySelector('.icon-mask')];
+    })), [['Archive room', true, 'Archive room', true], ['Delete room', true, 'Delete room', true]], 'DM actions have labels, descriptions, tooltips and SVG icons');
+    assert.equal((await dialog(page)).leave.shown, false, 'a person-agent chat cannot be left');
+    await page.$eval('#room-remove', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    assert.match(await page.$eval('#app-dialog', node => node.textContent), /for everyone.*cannot be restored/s);
+    await page.$eval('#app-dialog .app-dialog-ok', node => node.click());
+    await page.waitForFunction(() => window.__requests.some(request => request.method === 'DELETE' && request.path === '/api/rooms/rm_a'));
+    await page.close();
+    page = await show({ kind: 'dm', dm_key: 'users:p:u:v', can_delete: true });
+    assert.equal((await dialog(page)).leave.shown, true, 'a person-person chat can be left');
+    await page.$eval('#room-leave', node => node.click());
+    await page.waitForFunction(() => window.__requests.some(request => request.method === 'PATCH' && request.path === '/api/rooms/rm_a/preferences'));
     await page.close();
     page = await show({ agent_chat: true });
     state = await dialog(page);

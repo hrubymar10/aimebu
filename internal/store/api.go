@@ -298,6 +298,13 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		return nil, err
 	}
 	for i := range out {
+		if out[i].Kind == "dm" {
+			allowed, err := s.DMRemovalAllowed(ctx, out[i].ID, userID)
+			if err != nil {
+				return nil, err
+			}
+			out[i].CanDelete = allowed
+		}
 		if IsAgentDM(out[i]) {
 			writable, err := s.AgentDMWriteAllowed(ctx, userID, out[i].ID)
 			if err != nil {
@@ -348,6 +355,9 @@ func (s *Store) showPeerTitles(ctx context.Context, rooms []Room, userID string)
 func (s *Store) RoomForViewer(ctx context.Context, room Room, userID string) (Room, error) {
 	rooms := []Room{room}
 	err := s.showPeerTitles(ctx, rooms, userID)
+	if err == nil && room.Kind == "dm" {
+		rooms[0].CanDelete, err = s.DMRemovalAllowed(ctx, room.ID, userID)
+	}
 	return rooms[0], err
 }
 
@@ -439,10 +449,10 @@ func (s *Store) EventBounds(ctx context.Context) (min, max int64, err error) {
 }
 
 // eventVisible is the one rule for who may see an event, shared by the live
-// stream and the system-events history. It takes seven user-ID arguments after
+// stream and the system-events history. It takes eight user-ID arguments after
 // the membership join's own: the private-chat membership check, the owner
-// check, the removed-project check (a removed project has no members left
-// to join on, so its removal event names the people it is for), then two for a
+// check, the removed-project and removed-chat checks (their removal events name
+// the people they are for after their rows are gone), then two for a
 // chat between agents: its members who still have a footing in it see all of its
 // events, and anyone with a footing sees that one was created (so the list of
 // chats to join updates). A project event is visible to project members, with private
@@ -457,6 +467,7 @@ func (s *Store) EventBounds(ctx context.Context) (min, max int64, err error) {
 // see the room; the seventh (last) user-ID argument is for that.
 const eventVisible = `(((m.user_id IS NOT NULL AND (r.kind IS NULL OR r.kind!='dm' OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL) OR (m.role IN ('owner','operator') AND e.kind IN ('inbox_item_created','inbox_item_updated','inbox_item_resolved') AND EXISTS (SELECT 1 FROM inbox_item i WHERE i.id=json_extract(e.payload_json,'$.inbox_item_id') AND i.kind='recovery')))) OR (COALESCE(e.project_id,'')='' AND e.kind NOT IN ('auth_session_created','auth_session_revoked','user_password_rehashed') AND EXISTS (SELECT 1 FROM user viewer WHERE viewer.id=? AND (viewer.id=(SELECT id FROM user ORDER BY created_at,id LIMIT 1) OR (e.kind='update_status' AND viewer.admin=1 AND viewer.disabled_at IS NULL))))
 	OR (e.kind='project_removed' AND e.project_id IS NULL AND EXISTS (SELECT 1 FROM json_each(e.payload_json,'$.user_ids') WHERE value=?))
+	OR (e.kind='room_removed' AND e.project_id=` + agentDMProjectSQL + ` AND EXISTS (SELECT 1 FROM json_each(e.payload_json,'$.user_ids') WHERE value=?))
 	OR (r.project_id=` + agentDMProjectSQL + ` AND EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL) AND ` + agentDMEligibleSQL + `)
 	OR (r.project_id=` + agentDMProjectSQL + ` AND e.kind='room_created' AND ` + agentDMEligibleSQL + `)) AND (e.kind<>'read_cursor_moved' OR json_extract(e.payload_json,'$.user_id')=?))`
 
@@ -464,7 +475,7 @@ func (s *Store) EventsAfter(ctx context.Context, userID string, after, through i
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID, userID, userID, userID, userID, userID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID, userID, userID, userID, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +498,7 @@ func (s *Store) EventsBatchAfter(ctx context.Context, userID string, after, thro
 	if limit < 1 || limit > 5000 {
 		return nil, errors.New("invalid event batch limit")
 	}
-	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, userID, userID, userID, userID, userID, limit)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, userID, userID, userID, userID, userID, userID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -620,8 +620,9 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 #notification-sound-upload { color: var(--text-muted); }
 #notification-status[hidden] { display: none; }
 
-/* Room actions stay icon-only, with an accessible name and a tooltip. */
-#room-info-dialog .room-info-actions { flex-wrap: wrap; }
+/* The room actions use the same labeled setting rows as the project controls. */
+#room-info-dialog .room-info-actions { display: block; }
+#room-info-dialog .room-info-actions .settings-group { width: 100%; }
 
 /* The two selects in a room's notification settings are one width, whatever their option text. */
 .room-notify-setting select { width: 220px; max-width: 60%; }
@@ -1129,7 +1130,7 @@ input[type="file"] { color: var(--text-secondary); font-size: 12px; }
 /* A settings dialog shows one category at a time: the blocks of the others stay in the page but are off (room-info-dialog, see room-panel/page.js applyBlocks). */
 .shell-off { display: none !important; }
 #room-info-dialog .room-usage-link { display: flex; justify-content: flex-end; margin: 0 0 6px; }
-#room-info-dialog .room-info-actions { display: flex; justify-content: flex-start; gap: 8px; }
+#room-info-dialog .room-info-actions { display: block; }
 #room-info-dialog .room-view-actions { margin: 0 0 14px; }
 #room-info-dialog .room-view-actions button { border: 1px solid var(--border); }
 

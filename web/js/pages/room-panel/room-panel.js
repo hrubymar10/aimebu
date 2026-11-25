@@ -25,9 +25,16 @@ export function RoomActions({ store }) {
   const room = store.room.value, busy = store.busy.value;
   const life = room ? lifecycleControl(room) : { hidden: true, disabled: false, glyph: 'archive', label: 'Archive room' };
   const remove = room ? removeControl(room, store.host.role(room.project_id)) : { hidden: true, disabled: true, title: '' };
-  return html`<${IconButton} id="room-lifecycle" name=${life.glyph} label=${life.label} hidden=${life.hidden} disabled=${life.disabled || busy.lifecycle} onClick=${() => store.changeLifecycle()} />
-    <${IconButton} id="room-leave" name="left" label="Leave chat" hidden=${!room || !canLeave(room)} disabled=${busy.leave} onClick=${() => store.leave()} />
-    <${IconButton} id="room-remove" name="trash" label="Delete room" danger title=${remove.title} hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />`;
+  const leaveDesc = room?.agent_chat ? 'Leave this chat between agents.' : 'Hide this chat from your list. The other person keeps it, and opening it again restores it.';
+  return html`<div class="settings-group" role="group" aria-label="Leave and remove">
+    <${RoomActionRow} id="room-lifecycle" glyph=${life.glyph} label=${life.label} desc=${life.label === 'Reopen room' ? 'Let this room accept changes again.' : 'Make this room read-only while keeping its history.'} hidden=${life.hidden} disabled=${life.disabled || busy.lifecycle} onClick=${() => store.changeLifecycle()} />
+    <${RoomActionRow} id="room-leave" glyph="left" label="Leave chat" desc=${leaveDesc} hidden=${!room || !canLeave(room)} disabled=${busy.leave} onClick=${() => store.leave()} />
+    <${RoomActionRow} id="room-remove" glyph="trash" label="Delete room" desc="Remove this room and its history for everyone, for good." danger hidden=${remove.hidden} disabled=${remove.disabled || busy.remove} onClick=${() => store.remove()} />
+  </div>`;
+}
+
+function RoomActionRow({ id, glyph, label, desc, danger, hidden, disabled, onClick }) {
+  return html`<div class="settings-row" hidden=${hidden}><div class="settings-row-info"><label class="settings-label" for=${id}>${label}</label><span class="settings-desc" id=${`${id}-desc`}>${desc}</span></div><div class="settings-control"><${IconButton} id=${id} name=${glyph} label=${label} danger=${danger} disabled=${disabled} aria-describedby=${`${id}-desc`} onClick=${onClick} /></div></div>`;
 }
 
 export const InfoError = ({ store }) => store.infoError.value;

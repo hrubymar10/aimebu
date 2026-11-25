@@ -175,10 +175,11 @@ export class RoomPanelStore {
 
   async leave() {
     const room = this.room.peek(), call = this.begin('leave');
-    if (!room?.agent_chat) return;
+    if (!room || !(room.agent_chat || room.kind === 'dm' && room.dm_key?.startsWith('users:'))) return;
     this.setBusy({ leave: true }); this.infoError.value = '';
     try {
-      await request(`/api/rooms/${room.id}/leave`, { method: 'POST' });
+      if (room.agent_chat) await request(`/api/rooms/${room.id}/leave`, { method: 'POST' });
+      else await request(`/api/rooms/${room.id}/preferences`, { method: 'PATCH', body: { hidden: true } });
       if (!this.current(call, room.id)) return;
       this.host.closeInfo();
       await this.host.left(room);
@@ -188,9 +189,10 @@ export class RoomPanelStore {
 
   async remove() {
     const room = this.room.peek();
-    if (!room || room.kind === 'home' || room.kind === 'dm' || room.lifecycle === 'closing') return;
+    if (!room || room.kind === 'home' || room.lifecycle === 'closing' || (room.kind === 'dm' && !room.can_delete)) return;
     const call = this.begin('remove');
-    if (!await confirmDialog(`Delete ${room.title} for good? Agents homed here stop. Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Delete room', confirm: 'Delete for good', danger: true })) return;
+    const loss = room.kind === 'dm' ? 'Its messages, reactions, notes, attachments, Inbox items, memory references and usage records are removed for everyone and cannot be restored.' : 'Agents homed here stop. Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.';
+    if (!await confirmDialog(`Delete ${room.title} for good? ${loss}`, { title: 'Delete room', confirm: 'Delete for good', danger: true })) return;
     if (!this.current(call, room.id)) return;
     this.setBusy({ remove: true }); this.infoError.value = '';
     try {

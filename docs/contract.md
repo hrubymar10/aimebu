@@ -1304,6 +1304,13 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   lifecycle=closed. `closing` is distinct from a manual pause.
 - Reopen: lifecycle=open, gate follows the room's bulk control state; no
   automatic respawn.
+- Delete: a task room's project owner, a private chat's human member, or the
+  instance owner or an admin may archive it and remove it when closure finishes.
+  For a chat between agents, a person who owns either agent's project may also
+  do so. Agents have no delete tool: removing history is a person's decision.
+  The room and its history disappear for everyone; its attachments, Inbox items,
+  notes, usage and room-scoped references follow the task-room removal path.
+  A new chat between the same peers starts with an empty history.
 - Closing a room never removes its worktree, and neither does anything else
   automatically (the daily cleanup, [cleanup](cleanup.md), only lists it in
   Health with its state; automatic removal of merged worktrees is planned

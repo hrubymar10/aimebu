@@ -121,11 +121,13 @@ function closeOpenRoom() {
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
 async function roomRemoved(projectID, roomID) {
   const generation = sessionGeneration;
+  const removedChat = sidebar.isAgentChatProject(projectID) && chat.room?.id === roomID ? chat.room : null;
   sidebar.forgetRoom(roomID);
   await sidebar.refreshProject(projectID);
   if (generation !== sessionGeneration || chat.room?.id !== roomID) return;
   await chat.panel?.address?.unwinding; // the settings dialog's history walk (it was open on this room) must end first, or selectRoom's replaceState lands before it
   if (generation !== sessionGeneration || chat.room?.id !== roomID) return;
+  if (removedChat) { await chat.onChatLeft(removedChat); return; }
   const home = [...sidebar.rooms.values()].find(room => room.project_id === projectID && room.kind === 'home');
   if (home) await selectRoom(home);
 }
@@ -143,9 +145,9 @@ async function roomGone(room) {
 chat.onChatLeft = async room => {
   const generation = sessionGeneration;
   sidebar.forgetRoom(room.id);
-  try { await sidebar.refreshAgentChats(); } catch (error) { captureError(error, 'sidebar.agent-chats'); /* the list is read again with the next event; the chat is already gone from here */ }
+  try { await sidebar.refreshProject(room.project_id); } catch (error) { captureError(error, 'sidebar.chats'); /* the list is read again with the next event; the chat is already gone from here */ }
   if (generation !== sessionGeneration || chat.room?.id !== room.id) return;
-  const home = [...sidebar.rooms.values()].find(item => item.kind === 'home');
+  const home = [...sidebar.rooms.values()].find(item => item.kind === 'home' && (sidebar.isAgentChatProject(room.project_id) || item.project_id === room.project_id));
   if (home) await selectRoom(home); else { chat.reset(); refreshEmptyState(); }
 };
 // A deleted project: its rooms leave the list, and a room of it that was open gives way to the empty state.

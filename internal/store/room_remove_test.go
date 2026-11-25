@@ -136,6 +136,69 @@ func TestRemoveRoomDeletesItsContentAndKeepsReferencesElsewhere(t *testing.T) {
 	}
 }
 
+func TestRemovePrivateChatUsesRoomDeletionPath(t *testing.T) {
+	s, project, _, agent, _ := wakeFixture(t)
+	ctx := t.Context()
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_chat','chat','hash','{}','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_chat','viewer')`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	room, err := s.OpenDM(ctx, "usr_chat", agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "usr_chat", Body: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "dm.png")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO attachment(id,project_id,room_id,message_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_dm',?,?,?,'h','image/png',1,?,'usr_chat','t')`, []any{project.ID, room.ID, message.ID, file}},
+		{`INSERT INTO project_memory(id,project_id,body,author_kind,author_id,created_at,updated_at,source_message_id) VALUES ('mem_dm',?,'fact','user','usr_chat','t','t',?)`, []any{project.ID, message.ID}},
+		{`INSERT INTO inbox_item(id,project_id,room_id,message_id,agent_id,requester_kind,requester_id,kind,created_at) VALUES ('inb_dm',?,?,?,?,'agent',?,'question','t')`, []any{project.ID, room.ID, message.ID, agent.ID, agent.ID}},
+		{`INSERT OR REPLACE INTO room_read_cursor(user_id,room_id,last_read_seq) VALUES ('usr_chat',?,?)`, []any{room.ID, message.Seq}},
+	} {
+		if _, err := s.db.Exec(query.sql, query.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if countRows(t, s, `SELECT COUNT(*) FROM note WHERE room_id=?`, room.ID) == 0 {
+		t.Fatal("expected a queued note")
+	}
+	if countRows(t, s, `SELECT COUNT(*) FROM inbox_item WHERE room_id=?`, room.ID) == 0 || countRows(t, s, `SELECT COUNT(*) FROM room_read_cursor WHERE room_id=?`, room.ID) == 0 {
+		t.Fatal("expected an inbox item and a read cursor")
+	}
+	if _, err := s.db.Exec(`UPDATE room SET lifecycle='closed' WHERE id=?`, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveRoom(ctx, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{`SELECT COUNT(*) FROM room WHERE id=?`, `SELECT COUNT(*) FROM message WHERE room_id=?`, `SELECT COUNT(*) FROM note WHERE room_id=?`, `SELECT COUNT(*) FROM attachment WHERE room_id=?`, `SELECT COUNT(*) FROM room_member WHERE room_id=?`, `SELECT COUNT(*) FROM room_read_cursor WHERE room_id=?`, `SELECT COUNT(*) FROM inbox_item WHERE room_id=?`} {
+		if got := countRows(t, s, query, room.ID); got != 0 {
+			t.Errorf("%s: %d", query, got)
+		}
+	}
+	if got := countRows(t, s, `SELECT COUNT(*) FROM project_memory WHERE id='mem_dm' AND source_message_id IS NULL`); got != 1 {
+		t.Errorf("memory reference: %d", got)
+	}
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("attachment remains: %v", err)
+	}
+	fresh, err := s.OpenDM(ctx, "usr_chat", agent.ID)
+	if err != nil || fresh.ID == room.ID || fresh.MessageCount != 0 {
+		t.Fatalf("fresh chat: %+v %v", fresh, err)
+	}
+}
+
 func TestRemoveRoomSucceedsEvenIfAnAttachmentFileCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 	s, project, task, _, _ := wakeFixture(t)

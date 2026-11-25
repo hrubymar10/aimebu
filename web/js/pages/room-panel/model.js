@@ -40,12 +40,11 @@ export function lifecycleControl(room) {
   return { hidden: room.kind === 'home', disabled: room.lifecycle === 'closing', glyph: closed ? 'reopen' : 'archive', label: closed ? 'Reopen room' : room.lifecycle === 'closing' ? 'Closing…' : 'Archive room' };
 }
 
-// Deleting is for task rooms only: never a home room or a private chat.
 export function removeControl(room, role) {
-  return { hidden: room.kind === 'home' || room.kind === 'dm' || role !== 'owner', disabled: room.lifecycle === 'closing', title: 'Delete this room and its messages for good' };
+  return { hidden: room.kind === 'home' || (room.kind === 'dm' ? !room.can_delete : role !== 'owner'), disabled: room.lifecycle === 'closing', title: 'Delete this room and its messages for good' };
 }
 
-export const canLeave = room => !!room.agent_chat;
+export const canLeave = room => !!room.agent_chat || !!(room.kind === 'dm' && room.dm_key?.startsWith('users:'));
 
 export function worktreeView(item, room) {
   const state = item.state;

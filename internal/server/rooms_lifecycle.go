@@ -112,7 +112,14 @@ func (s *Server) sendRoomControls(ctx context.Context, controls []store.AgentCar
 // not-closed conflict as an explicit archive followed by delete.
 func (s *Server) archiveRoomForDeletion(ctx context.Context, room store.Room, actor string) (store.Room, error) {
 	if room.Lifecycle == "open" {
-		closed, controls, err := s.Store.BeginRoomClose(ctx, room.ID, actor, room.LifecycleRev, false)
+		var closed store.Room
+		var controls []store.AgentCard
+		var err error
+		if room.Kind == "dm" {
+			closed, controls, err = s.Store.BeginDMCloseForDeletion(ctx, room.ID, actor, room.LifecycleRev)
+		} else {
+			closed, controls, err = s.Store.BeginRoomClose(ctx, room.ID, actor, room.LifecycleRev, false)
+		}
 		if err != nil {
 			return room, err
 		}
@@ -136,32 +143,40 @@ func (s *Server) archiveRoomForDeletion(ctx context.Context, room store.Room, ac
 	return room, nil
 }
 
-// DELETE /api/rooms/{room}: the project owner archives a live task room and
-// removes it when its close can finish immediately.
+// DELETE /api/rooms/{room}: archive a live room and remove it when its close
+// can finish immediately.
 func (s *Server) removeRoom(w http.ResponseWriter, r *http.Request) {
 	room, err := s.Store.RoomByID(r.Context(), r.PathValue("room"))
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if !s.projectAccess(w, r, room.ProjectID) {
-		return
-	}
-	role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID)
-	if err != nil {
-		userError(w, err)
-		return
-	}
-	if role != "owner" {
-		apiError(w, 403, "forbidden", "project owner required")
-		return
+	if room.Kind == "dm" {
+		allowed, err := s.Store.DMRemovalAllowed(r.Context(), room.ID, userID(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if !allowed {
+			apiError(w, 403, "forbidden", "chat member, administrator, or agent project owner required")
+			return
+		}
+	} else {
+		if !s.projectAccess(w, r, room.ProjectID) {
+			return
+		}
+		role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID)
+		if err != nil {
+			userError(w, err)
+			return
+		}
+		if role != "owner" {
+			apiError(w, 403, "forbidden", "project owner required")
+			return
+		}
 	}
 	if room.Kind == "home" {
 		roomRemoveError(w, store.ErrHomeRoom)
-		return
-	}
-	if room.Kind == "dm" {
-		roomRemoveError(w, store.ErrRoomNotRemovable)
 		return
 	}
 	room, err = s.archiveRoomForDeletion(r.Context(), room, userID(r))
@@ -185,7 +200,7 @@ func roomRemoveError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrOpenChildren):
 		apiError(w, 409, "has_children", "remove the child rooms first")
 	case errors.Is(err, store.ErrRoomNotRemovable):
-		apiError(w, 409, "room_not_removable", "private chats and rooms with a live worktree cannot be removed")
+		apiError(w, 409, "room_not_removable", "rooms with a live worktree cannot be removed")
 	case errors.Is(err, store.ErrStaleRev), errors.Is(err, store.ErrInvalidTransition):
 		roomLifecycleError(w, err)
 	default:
