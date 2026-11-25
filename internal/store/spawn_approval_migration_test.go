@@ -126,3 +126,30 @@ func TestSpawnApprovalMigrationAddsTheResearcherRule(t *testing.T) {
 		})
 	}
 }
+
+// A14-9: the dispatcher's duties are part of the shipped default (which an unedited built-in role resolves to, see
+// TestOldRoleBodiesBecomeCurrentDefaults) and of the leader-dispatcher flow's dispatcher text, which replaces the body on delivery.
+func TestDispatcherDutiesAreInTheDefaultAndTheFlowText(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	bodies := resolvedRoleBodies(t, s)
+	flow, ok := teamFlowTemplate("leader-dispatcher")
+	if !ok {
+		t.Fatal("no leader-dispatcher flow")
+	}
+	for name, body := range map[string]string{"default body": bodies["dispatcher"], "flow text": flow.RoleTextOverrides["dispatcher"]} {
+		for _, want := range []string{
+			"goes to the leader as a proposal first", "never ask people through a worker",
+			"list_recoveries and resolve_recovery", "more than about 30 minutes", "replace it right away",
+			"through its own shell tool", "run_command only for long jobs",
+			"as file:line", "check those citations before you pass it on", "when a citation does not hold",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+	}
+	if strings.Contains(bodies["leader"], "list_recoveries") {
+		t.Error("the leader body gained the dispatcher's duties")
+	}
+}

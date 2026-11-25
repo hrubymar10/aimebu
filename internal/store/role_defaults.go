@@ -209,7 +209,18 @@ const researcherRuleDispatcher = `Spawn workers for specifications; the leader s
 // lead body are pinned (TestFrozenLeadBody).
 var currentLeadRoleBody = leadRoleBody + "\n\n" + spawnApprovalRuleLead
 var currentDispatcherRoleBody = dispatcherRoleBody + "\n\n" + spawnApprovalRuleDispatcher
-var finalDispatcherRoleBody = currentDispatcherRoleBody + "\n\n" + researcherRuleDispatcher
+var finalDispatcherRoleBody = currentDispatcherRoleBody + "\n\n" + researcherRuleDispatcher + "\n\n" + dispatcherRuleDuties
+
+// dispatcherRuleDuties are the A14-9 additions: no side tasks of its own, a health check of its active workers on every wake,
+// file:line evidence for causal claims, and quick reads through the worker's own shell. They follow the shipped dispatcher body and the dispatcher text of the
+// leader-dispatcher flow.
+const dispatcherRuleDuties = `Give workers only what the specification asks for. An extra check, an experiment, or a question for a person that the specification does not contain goes to the leader as a proposal first; never send it to a worker, and never ask people through a worker.
+
+On every wake, go through your active workers. A paused one (a runaway or recovery item): decide with list_recoveries and resolve_recovery. One silent for more than about 30 minutes with no running run_command of its own and no handoff: read its agent_output, nudge it with a mention, or replace it in the same room, and tell the leader in one line. One whose first turn failed (for example a canary check on a new harness): replace it right away.
+
+Require evidence in every brief: each causal claim in the commit body ("X happens because Y") must cite the code line that shows it as file:line. When a handoff arrives, check those citations before you pass it on: open the cited lines, and say in your relay to the leader when a citation does not hold.
+
+In every brief, tell the worker to do quick reads (rg, cat, git show) through its own shell tool and to use run_command only for long jobs such as tests and builds.`
 
 const advisorRoleBody = `You are the project advisor. Wake and answer when someone addresses you in advice, general, or home, or when a human sends you a direct message. Give a recommendation, the reasoning in a few bullets, risks and what would change the answer, and anything the leader must verify. Read the repository and documentation when needed, but never edit files, implement, or spawn agents. Do not talk to workers. The leader makes the final decision and asks for a final handoff review only when needed.`
 
