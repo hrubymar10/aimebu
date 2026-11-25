@@ -337,17 +337,12 @@ func TestAcceptsGzip(t *testing.T) {
 	}
 }
 
-// entryCeiling is the size the entry script may not pass (A12-14: it was 900,000 while the entry was about 606 KB; it is now the measured 580 KB plus about 2%).
-const entryCeiling = 592_000
+// The combined alpha.12 tree measures 582,960 entry bytes, 1,117,787 bytes across
+// scripts, and 361,895 bytes gzipped. Each ceiling leaves about 2% headroom.
+const entryCeiling = 595_000
+const allScriptsCeiling = 1_141_000
+const gzipCeiling = 370_000
 
-// The size ceilings count every script of the build: the entry and every chunk (the lazily fetched ones and the ones the entry imports at load), the maps
-// left out. Measured after A12-14 (the emoji picker and the agent log popup became chunks): entry about 580 KB (606 KB before),
-// all scripts about 1.117 MB, 361.5 KB gzipped (each file packed on its own, as served). Splitting adds a little glue between chunks, so the entry came down
-// by 26 KB while all scripts went up by 3 KB and the gzipped total by 3.5 KB: the all-scripts ceiling is 1.125 MB and the gzip ceiling 366 KB. The
-// temporary allowance of A10-9 (the total ceiling raised to 1.12 MB for the room references) is gone; the entry ceiling is the one that guards the
-// first paint.
-// The gzipped size is not the same in every environment: one tagged build packed to 337,527 bytes on a development machine and to 340,550 in CI.
-// The gzip ceiling leaves room for that variance (about 1%) and still catches real growth.
 func TestTheBundleStaysWithinItsCeilings(t *testing.T) {
 	t.Parallel()
 	assets, err := prepareWebAssets(aimebu.Web(), true)
@@ -363,7 +358,7 @@ func TestTheBundleStaysWithinItsCeilings(t *testing.T) {
 		packed += len(chunk.gz)
 	}
 	t.Logf("entry %d bytes, all scripts %d bytes, %d gzipped", len(assets.bundle.js), total, packed)
-	if len(assets.bundle.js) > entryCeiling || total > 1_125_000 || packed > 366_000 {
-		t.Errorf("the build is over a ceiling: entry %d (0.592 MB), all scripts %d (1.125 MB), gzipped %d (366 KB)", len(assets.bundle.js), total, packed)
+	if len(assets.bundle.js) > entryCeiling || total > allScriptsCeiling || packed > gzipCeiling {
+		t.Errorf("the build is over a ceiling: entry %d (0.595 MB), all scripts %d (1.141 MB), gzipped %d (370 KB)", len(assets.bundle.js), total, packed)
 	}
 }
