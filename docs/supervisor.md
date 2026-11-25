@@ -82,6 +82,19 @@ to the one that matches its build and environment (see above). The local manager
   records a `supervisor_journal_stuck` event for the system-events feed, so a
   person sees the journal needs a look. After the back-off one more drain is
   tried, and the rule starts over.
+- **A superseded exit is settled, not resent.** The server refuses every frame
+  of a superseded agent generation with `stale_generation` (an exit report of
+  a turn it has already decided on a newer generation, but also that turn's
+  activity frames and acks; the error does not say which frame it answers).
+  When such an error names an exit the journal still holds as unacknowledged
+  (a row that is exited and not yet acknowledged, of that agent and turn), the
+  supervisor marks it settled, logs once per turn that the server has
+  superseded the generation and drops the late exit, and never sends it again.
+  A turn that is still running is left alone: its exit is reported normally
+  when it ends, and a refused activity frame never cuts the connection. Any
+  other error code keeps the exit journaled. This is what lets a drain empty
+  the journal of an older build whose last exit the server refuses: the
+  journal empties on the first refusal and is removed, with no manual step.
 - **Liveness is the only bound.** A retiring instance that holds its lock
   without a server connection for about 10 minutes, or one the server sees as
   empty for about a minute that does not exit, gets the bounded handover: an

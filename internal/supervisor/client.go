@@ -104,7 +104,10 @@ type Client struct {
 	telemetryEnv       map[string]string         // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
 	currentConn        *websocket.Conn
 	stopping           bool
-	turns              sync.WaitGroup
+	// staleSettled holds the exits a stale_generation refusal already settled, so the one log line per turn stays one across repeated
+	// refusals of the same turn's frames.
+	staleSettled map[string]bool
+	turns        sync.WaitGroup
 	// unreported counts the turns that left admission (c.active) but whose process frame was not sent yet: a supervisor retiring at idle
 	// waits for them too, or it would close the socket between a turn's release and its exit (see runTurnRestartable).
 	unreported atomic.Int64
@@ -918,6 +921,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			}
 		case protocol.Error:
 			c.handleServerError(frame)
+			c.settleStaleExit(ctx, frame)
 		default:
 			return fmt.Errorf("unexpected machine frame %q", frame.Type)
 		}
@@ -1942,6 +1946,40 @@ func (c *Client) handleServerError(frame protocol.Frame) {
 		return // a late frame (an ack) for an agent this supervisor already stopped: the server refuses it, as expected
 	}
 	telemetry.ReportCause(context.Background(), "supervisor", "server error frame: "+frame.Code)
+}
+
+// settleStaleExit is what a stale_generation refusal of a journaled exit gets: the server has already decided that turn on a newer generation
+// of the agent (it lost the turn, or settled it from a newer instance's hello), so the late exit report has nowhere to go and resending it
+// would keep the journal open forever (the endless drain loop of A13-13). The exit is marked settled in the journal and never sent again.
+// The Error frame does not say which frame it answers, so the settle is the journal's to bound: only an exited, unacknowledged row of that
+// agent and turn matches, and a turn with none (a live turn whose activity frame was refused) is left alone, with no error for the read loop.
+// Only the code is matched, never the message text: the server's two refusal paths send different texts. Everything else keeps the exit
+// journaled, as today.
+func (c *Client) settleStaleExit(ctx context.Context, frame protocol.Frame) {
+	if frame.Code != "stale_generation" || frame.AgentID == "" || frame.TurnID == "" {
+		return
+	}
+	generation, settled, err := c.Journal.SettleStaleExit(ctx, frame.AgentID, frame.TurnID)
+	if err != nil {
+		c.report("a stale exit could not be settled", fmt.Errorf("agent %s turn %s: %w", frame.AgentID, frame.TurnID, err))
+		return
+	}
+	if !settled {
+		return
+	}
+	key := frame.AgentID + "/" + frame.TurnID
+	c.mu.Lock()
+	once := !c.staleSettled[key]
+	if once {
+		if c.staleSettled == nil {
+			c.staleSettled = make(map[string]bool)
+		}
+		c.staleSettled[key] = true
+	}
+	c.mu.Unlock()
+	if once {
+		log.Printf("supervisor: agent %s turn %s generation %d: the server has superseded this generation; dropping the late exit", frame.AgentID, frame.TurnID, generation)
+	}
 }
 
 // agentStopped says whether the supervisor has an agent on record that is no longer desired active.
