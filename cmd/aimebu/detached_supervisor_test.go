@@ -564,6 +564,17 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		pid, held, pidErr := supervisorPID(root)
 		t.Fatalf("fake turn did not start: running=%d err=%v turns=%q notes=%q supervisor pid=%d held=%t err=%v; server log: %s; supervisor log: %s", running, err, turns, notes, pid, held, pidErr, tailOfFile(serverLogPath(root), 40), tailOfFile(filepath.Join(root, "supervisor", "aimebu.log"), 20))
 	}
+	// The replacement may own a new journal while the old instance still holds
+	// the legacy journal. Track its active instance instead of that path's PID.
+	var initialJournal string
+	if err := probe.QueryRow(`SELECT journal_id FROM turn WHERE agent_id=? ORDER BY rowid LIMIT 1`, agent.ID).Scan(&initialJournal); err != nil || initialJournal == "" {
+		t.Fatalf("initial turn journal=%q err=%v", initialJournal, err)
+	}
+	replacementActive := func() bool {
+		var count int
+		err := probe.QueryRow(`SELECT COUNT(*) FROM supervisor_instance WHERE machine_id=? AND state='active' AND journal_id<>?`, credential.MachineID, initialJournal).Scan(&count)
+		return err == nil && count > 0
+	}
 	if restartNow {
 		var out, errOut bytes.Buffer
 		if code := run([]string{"supervisor", "restart"}, &out, &errOut); code != 0 {
@@ -612,7 +623,7 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 		deadline = time.Now().Add(30 * time.Second)
 		replaced, continued := false, false
 		for time.Now().Before(deadline) {
-			if pid, held, err := supervisorPID(root); err == nil && held && pid != supervisorPIDAtStart {
+			if replacementActive() {
 				replaced = true
 			}
 			var count int
@@ -659,7 +670,7 @@ func testDetachedSupervisorAcrossServerRestart(t *testing.T, changeEnvironment, 
 				replaced := false
 				deadline = time.Now().Add(30 * time.Second)
 				for time.Now().Before(deadline) {
-					if pid, held, err := supervisorPID(root); err == nil && held && pid != supervisorPIDAtStart {
+					if replacementActive() {
 						replaced = true
 						break
 					}
