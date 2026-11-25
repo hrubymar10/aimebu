@@ -71,6 +71,34 @@ const waitFor = async (cond, what) => { for (let i = 0; i < 300 && !cond(); i++)
   assert.equal(quietReports, 1, 'no repeated report while holder and position stay the same');
   assert.equal(changedReports.length, 1, 'the waiter reports its new position immediately');
 
+  // Priority lane: after the holder, a priority caller runs before normal waiters (never before the holder), priority callers keep their own
+  // order, normal waiters keep theirs, and an unset variable changes nothing (the cases above). Private lock and queue, as everywhere here.
+  const penv = { ...env, AIMEBU_TEST_LOCK: path.join(work, 'plock'), AIMEBU_TEST_QUEUE: path.join(work, 'pqueue') };
+  const pRun = (extra, name) => {
+    const child = spawn('sh', [script, 'sh', '-c', name === 'holder' ? `echo holder-started; ${until(path.join(work, 'rel-prio'))}` : `echo ${name} >> ${order}-prio; sleep 0.2`], { env: { ...penv, ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const run = { out: '', err: '' };
+    child.stdout.on('data', d => { run.out += d; });
+    child.stderr.on('data', d => { run.err += d; });
+    run.done = new Promise(r => child.on('close', code => r(code)));
+    return run;
+  };
+  const pHolder = pRun({}, 'holder');
+  await waitFor(() => pHolder.out.includes('holder-started'), 'the priority-case holder is running');
+  const pw = {};
+  for (const [name, extra] of [['n1', {}], ['n2', {}], ['p1', { AIMEBU_TEST_LOCK_PRIORITY: '1' }], ['p2', { AIMEBU_TEST_LOCK_PRIORITY: '1' }]]) {
+    pw[name] = pRun(extra, name);
+    await waitFor(() => pw[name].err.includes('waiting for the test lock'), `${name} reports`);
+  }
+  assert.match(pw.p1.err, /position 1, priority lane, held by sh -c echo holder-started/, 'a priority waiter jumps ahead of the normal ones and says so');
+  assert.match(pw.p2.err, /position 2, priority lane, /);
+  await sleep(300);
+  assert.match(pw.n1.err, /position 3, held by/, 'normal waiters are pushed back and do not claim the lane');
+  assert.doesNotMatch(pw.n1.err, /priority lane/);
+  assert.equal(fs.existsSync(`${order}-prio`), false, 'the priority waiter does not preempt the holder');
+  fs.writeFileSync(path.join(work, 'rel-prio'), '');
+  assert.deepEqual(await Promise.all([pHolder.done, ...Object.values(pw).map(w => w.done)]), [0, 0, 0, 0, 0]);
+  assert.deepEqual(fs.readFileSync(`${order}-prio`, 'utf8').split('\n').filter(Boolean), ['p1', 'p2', 'n1', 'n2'], 'priority callers first, each lane in ticket order');
+
   // The exit status of the command is the script's.
   assert.equal(await lockRun('sh', ['-c', 'exit 7']).done, 7);
 

@@ -7,6 +7,9 @@
 #   - a waiter holds an exclusive flock on its own ticket for as long as it waits. A ticket is stale when that lock can be taken: the kernel
 #     frees it when the owner dies, in whatever PID namespace or container it ran (a pid check cannot see across them, and a pid can collide
 #     with a live local one). Whoever finds a stale ticket drops it;
+#   - with AIMEBU_TEST_LOCK_PRIORITY=1 the ticket is named so that it sorts before every normal ticket: the caller queues ahead of the normal
+#     waiters (never ahead of the current holder, which it cannot preempt), and priority callers stay first come first served among
+#     themselves. It is for release gates only, and the wait line says "priority lane";
 #   - while it waits it prints on arrival, when its position or the holder changes, and every AIMEBU_TEST_LOCK_REPORT seconds otherwise;
 #   - the holder writes a small metadata file (its command line and start time) next to the tickets and keeps a flock on it while it runs, so
 #     a metadata file nobody holds (a crashed holder, or a plain-flock holder after it) is not believed.
@@ -16,7 +19,8 @@
 # The queue directory is world-writable and sticky like /tmp, so callers running as different users can share it.
 # usage: scripts/test-lock.sh <command> [args...]
 # env:   AIMEBU_TEST_LOCK (default /tmp/aimebu-test.lock), AIMEBU_TEST_QUEUE (default /tmp/aimebu-test.queue),
-#        AIMEBU_TEST_LOCK_POLL (seconds between tries, default 1), AIMEBU_TEST_LOCK_REPORT (seconds between reports, default 60)
+#        AIMEBU_TEST_LOCK_POLL (seconds between tries, default 1), AIMEBU_TEST_LOCK_REPORT (seconds between reports, default 60),
+#        AIMEBU_TEST_LOCK_PRIORITY (1 = queue ahead of normal waiters; release gates only, default unset)
 set -u
 if [ $# -eq 0 ]; then
 	echo "usage: scripts/test-lock.sh <command> [args...]" >&2
@@ -60,9 +64,24 @@ printf 'id=%s\nsince=%s\ncmd=%s\n' "$id" "$(now)" "$(printf '%s' "$*" | tr '\n' 
 chmod 644 "$tmp" 2>/dev/null
 exec 7>>"$tmp"
 flock 7
-ticket=$QUEUE/$(printf '%012d' "$n").ticket
+# A priority ticket gets the prefix "0-": '-' sorts before every digit, so it sits ahead of all normal tickets, in counter order among its own.
+lane=
+prefix=
+if [ "${AIMEBU_TEST_LOCK_PRIORITY:-}" = 1 ]; then lane="priority lane, "; prefix=0-; fi
+ticket=$QUEUE/$prefix$(printf '%012d' "$n").ticket
 mv "$tmp" "$ticket"
 exec 8>&-
+
+# ticket_lane FILE sets tl (0 priority, 1 normal) and tn (its counter) from the name; compared as numbers, not strings, so no locale's
+# collation of '-' can reorder the queue.
+ticket_lane() {
+	_b=${1##*/}
+	case $_b in 0-*) tl=0; _b=${_b#0-} ;; *) tl=1 ;; esac
+	tn=${_b%.ticket}
+}
+ticket_lane "$ticket"
+ml=$tl
+mn=$tn
 
 exec 9>>"$LOCK"
 last_report=-1
@@ -76,7 +95,8 @@ while :; do
 		[ -e "$t" ] || continue
 		if [ "$t" != "$ticket" ]; then
 			if unowned "$t"; then rm -f "$t"; continue; fi
-			if [ "$t" \< "$ticket" ]; then position=$((position + 1)); fi
+			ticket_lane "$t"
+			if [ "$tl" -lt "$ml" ] || { [ "$tl" -eq "$ml" ] && [ "$tn" -lt "$mn" ]; }; then position=$((position + 1)); fi
 		fi
 	done
 	if [ "$position" -eq 1 ] && flock -n 9; then break; fi
@@ -90,7 +110,7 @@ while :; do
 		since="an unknown time"
 	fi
 	if [ "$last_report" -lt 0 ] || [ "$position" != "$last_position" ] || [ "$holder_id" != "$last_holder" ] || [ $((waited - last_report)) -ge "$REPORT" ]; then
-		echo "waiting for the test lock (position $position, held by $by since $since)" >&2
+		echo "waiting for the test lock (position $position, ${lane}held by $by since $since)" >&2
 		last_report=$waited
 		last_position=$position
 		last_holder=$holder_id
