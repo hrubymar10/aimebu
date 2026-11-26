@@ -496,6 +496,23 @@ func (s *Store) PoolRespawnsQueued(ctx context.Context) (bool, error) {
 	return queued, err
 }
 
+// PoolRespawnDeciderAllowed says the actor a queued respawn names as its decider may still decide the project's pool item (an owner, or an
+// admin who is a member): the decision was authorised when it was made, and the dispatcher pass re-checks it before each switch begins.
+func (s *Store) PoolRespawnDeciderAllowed(ctx context.Context, projectID, actorID string) (bool, error) {
+	allowed := false
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.poolChangeDecider(projectID, actorID); err != nil {
+			if errors.Is(err, ErrForbidden) {
+				return nil
+			}
+			return err
+		}
+		allowed = true
+		return nil
+	})
+	return allowed, err
+}
+
 // FailPoolRespawn takes an agent off the respawn queue because its switch could not begin, and says why where the person will see it: the
 // project's pool_change item is raised again (or updated, when one is open) listing the agent with "respawn failed: <reason>", so the
 // person can try the respawn again or keep the model. The agent itself is untouched.

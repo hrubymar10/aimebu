@@ -867,7 +867,10 @@ Inbox, usage, events, settings
   so several agents of a role spread over the pool. An agent
   switched to an explicit choice (a person's own switch) is taken off the
   respawn queue when the switch is requested, and the queue's pass drops any
-  queued agent whose origin is no longer `pool`. A respawn that cannot begin
+  queued agent whose origin is no longer `pool`. The dispatcher pass
+  re-checks before each switch begins that the decision's decider is still an
+  owner or admin of the project; one who is not any more fails the respawn with
+  that reason, and the agent stays as it is. A respawn that cannot begin
   (machine unavailable, launcher missing, ...) raises the item again, or
   updates the open one, listing the agent with `respawn_error` (`respawn
   failed: <reason>`); the person can respawn again or keep. A kept agent is recorded against the pool in force

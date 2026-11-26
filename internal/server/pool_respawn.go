@@ -32,6 +32,17 @@ func (s *Server) advancePoolRespawns(ctx context.Context) error {
 		return err
 	}
 	for _, item := range ready {
+		// The decision was authorised when it was made; before the switch begins, check again that its decider is still an owner or admin
+		// of the project. One who is not any more cannot start the switch: the agent stays as it is, and the card carries the reason.
+		if allowed, err := s.Store.PoolRespawnDeciderAllowed(ctx, item.ProjectID, item.DecidedBy); err != nil {
+			return err
+		} else if !allowed {
+			log.Printf("pool respawn %s: the decider is no longer an owner or admin", item.AgentID)
+			if err := s.Store.FailPoolRespawn(ctx, item.AgentID, "the decider of the change is no longer an owner or admin of the project"); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := s.respawnOnPool(ctx, item.AgentID, item.ProjectID, item.DecidedBy); err != nil {
 			log.Printf("pool respawn %s: %v", item.AgentID, err)
 			if err := s.Store.FailPoolRespawn(ctx, item.AgentID, err.Error()); err != nil {

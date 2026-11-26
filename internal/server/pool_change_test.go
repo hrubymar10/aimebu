@@ -246,3 +246,59 @@ func TestPoolRespawnFailureComesBackWithItsReason(t *testing.T) {
 		t.Fatalf("a kept agent came back: %+v", left)
 	}
 }
+
+// A respawn does not run for a decider who lost the right between the decision and the agent's idle moment: the switch never begins, and the
+// card comes back listing the agent with the reason. The decider here is an instance admin who is a project member (not the global owner,
+// whose privilege no demotion strips), and the demotion takes the admin flag away.
+func TestPoolRespawnRefusesADeciderWhoIsNoLongerAllowed(t *testing.T) {
+	t.Parallel()
+	f, cards := poolMovedFixture(t, 1)
+	cookie, csrf := registerSecondUser(t, f, "decider1")
+	user, err := f.db.UserByLogin(t.Context(), "decider1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`UPDATE user SET admin=1 WHERE id=?`, user.ID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'viewer')`, f.project.ID, user.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items := poolItemsAs(t, f, cookie, csrf)
+	if len(items) != 1 {
+		t.Fatalf("the admin's items: %+v", items)
+	}
+	if status := decidePoolAs(t, f, cookie, csrf, items[0], "respawn"); status != http.StatusCreated {
+		t.Fatalf("decision: %d", status)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE user SET admin=0 WHERE id=?`, user.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.srv.advancePoolRespawns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := f.db.AgentCardByID(t.Context(), cards[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Switch != nil {
+		t.Fatalf("the respawn ran for a decider who lost the right: %+v", card.Switch)
+	}
+	// Give the right back to read the reason off the card.
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE user SET admin=1 WHERE id=?`, user.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	back := poolItemsAs(t, f, f.cookie, f.csrf)
+	if len(back) != 1 || len(back[0].PoolAgents) != 1 || !strings.HasPrefix(back[0].PoolAgents[0].RespawnError, "respawn failed: ") {
+		t.Fatalf("the item did not carry the reason: %+v", back)
+	}
+}
