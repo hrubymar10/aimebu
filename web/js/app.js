@@ -559,7 +559,7 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
     // A room that is open here but gone from the lists gives way to its project's home room.
     const open = chat.room;
     const home = open && !sidebar.rooms.has(open.id) ? [...sidebar.rooms.values()].find(room => room.project_id === open.project_id && room.kind === 'home') : null;
-    const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || addressProjectHome() || sidebar.rooms.get(remembered);
+    const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || addressProjectHome() || (sidebar.rooms.get(remembered)?.hidden ? undefined : sidebar.rooms.get(remembered));
     // A room that is open and still listed is brought up to date where it is, not opened again: opening it again throws away the reader's place,
     // the history they loaded and the thread they have open. If it can no longer be read (removed, or taken away), the reopen below says so.
     const synced = selected && chat.room?.id === selected.id && !home ? await syncOpenRoom(selected, generation) : '';

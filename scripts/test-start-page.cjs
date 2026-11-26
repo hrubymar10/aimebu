@@ -93,13 +93,13 @@ async function main() {
     ...Object.fromEntries(Object.entries(rooms()).map(([id, list]) => [`GET /api/projects/${id}/rooms`, list])),
     ...extra,
   });
-  const mount = async ({ hash = '', lastRoom = '', viewport = null } = {}) => {
+  const mount = async ({ hash = '', lastRoom = '', viewport = null, extra = {} } = {}) => {
     const context = await browser.createBrowserContext();
     const page = await context.newPage();
     if (viewport) await page.setViewport(viewport);
     page.on('pageerror', error => errors.push(`pageerror: ${error.message}`));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(`console: ${message.text()}`); });
-    await page.evaluateOnNewDocument(bootMocks, startupRules(), { lastRoom });
+    await page.evaluateOnNewDocument(bootMocks, startupRules(extra), { lastRoom });
     await page.goto(`${origin}/fixture.html${hash}`);
     // The page is up when the startup status is gone (ready) and the app view is shown.
     await page.waitForFunction(() => !document.querySelector('#app-view').hidden && document.querySelector('#startup-status').hidden, { timeout: 20000 });
@@ -159,6 +159,16 @@ async function main() {
     assert.equal(seen.error, '', 'stale remembered room: no error line');
     assert.equal(seen.title, 'Choose a room', 'stale remembered room: the header says what to do');
     assert.equal(errors.length, 0, `stale remembered room: nothing went wrong on the page: ${JSON.stringify(errors)}`);
+    await page.close();
+  }
+  // 3b. A remembered room that is hidden opens nothing, as if none were remembered.
+  {
+    const hiddenRooms = rooms();
+    hiddenRooms.prj_a = hiddenRooms.prj_a.map(item => item.id === 'rm_gen' ? { ...item, hidden: true } : item);
+    const page = await mount({ lastRoom: 'rm_gen', extra: { 'GET /api/projects/prj_a/rooms': hiddenRooms.prj_a } });
+    const seen = await state(page);
+    assert.equal(seen.noRoom, true, 'hidden remembered room: no room is selected');
+    assert.equal(seen.chatOpen, false, 'hidden remembered room: the chat is not drawn');
     await page.close();
   }
   // 4. An explicit deep link opens its room, remembered room or not.
