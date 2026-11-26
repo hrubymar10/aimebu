@@ -841,7 +841,14 @@ Inbox, usage, events, settings
   A worker recovery is assigned to whoever manages the worker when `worker_recovery_to_lead` is on: the agent that spawned it (a lead, or a role that can spawn, such as a flow's dispatcher) while it is active and healthy, otherwise an active project lead. While `lead_due_at` is set it is hidden from the people's Inbox and cannot be decided by a person; a `worker_recovery` note wakes that manager. It may list and decide only its project's assigned recoveries (`list_recoveries`, `resolve_recovery`). The periodic dispatcher sweep clears `lead_due_at` after the configured interval or when the manager becomes unavailable, and emits `inbox_item_created` so the ordinary human card and notification appear. A lead's own recovery goes directly to people. A worker paused by the loop budget (60 turns woken by another agent's message in one room within ten minutes) raises the same kind of item — choices Continue and Abandon, no `turn_id`, reason `turn_budget` — and is routed to its manager the same way, except in the project's home room, where it stays with people. Only a wake caused by another agent's message counts toward that budget: a finished `run_command`, a scheduled or any other system note, and a person's message never do.
   A `pool_change` item (requester `system`, `requester_id` `pool:<project>`, in the
   project's home room, at most one open per project) lists the agents a pool
-  change left on a model the pool no longer lists. Only the project's owner and
+  change left on a model the pool no longer lists. Every transition emits the
+  events the web client refreshes on: `inbox_item_created` when the item is
+  raised, `inbox_item_updated` when the open one changes (a respawn failure
+  recorded, an agent added or dropped), and `inbox_item_resolved` when it is
+  decided or withdrawn — each with `inbox_item_id`. A re-check that changes
+  nothing (a role save that did not touch the pool in force) writes nothing and
+  leaves the item's revision alone, so a card on screen does not go stale. Only
+  the project's owner and
   admins who are members see it (an operator does not) and may decide it
   (`POST /api/inbox/{item}/decision`, 403 for anyone else): `respawn` (the
   default) switches each listed agent to its role's next pool choice through the

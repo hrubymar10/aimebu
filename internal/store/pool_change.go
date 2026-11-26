@@ -169,9 +169,9 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 	if err != nil {
 		return err
 	}
-	var itemID string
+	var itemID, roomID string
 	var rev int64
-	err = tx.tx.QueryRowContext(tx.ctx, `SELECT id,rev FROM inbox_item WHERE kind='pool_change' AND project_id=? AND state='open'`, projectID).Scan(&itemID, &rev)
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT id,room_id,rev FROM inbox_item WHERE kind='pool_change' AND project_id=? AND state='open'`, projectID).Scan(&itemID, &roomID, &rev)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -180,7 +180,11 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 		if !exists {
 			return nil
 		}
-		_, err := tx.Exec(`UPDATE inbox_item SET state='withdrawn',rev=rev+1,resolved_at=? WHERE id=?`, timestamp(), itemID)
+		if _, err := tx.Exec(`UPDATE inbox_item SET state='withdrawn',rev=rev+1,resolved_at=? WHERE id=?`, timestamp(), itemID); err != nil {
+			return err
+		}
+		_, err := tx.AppendEvent(Event{Kind: "inbox_item_resolved", ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "resolution": "withdrawn", "reason": "no affected agents left"})})
 		return err
 	}
 	next := inboxAsk{Text: poolChangeText(len(affected)), Options: PoolChangeOptions}
@@ -207,7 +211,16 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID)
+		// Nothing changed (a role save that did not touch the pool, or a look after a failure was recorded): leave the row and its revision
+		// alone, so a card on screen does not go stale and the next decision or respawn is not refused as 409 stale_rev.
+		if string(encoded) == options {
+			return nil
+		}
+		if _, err := tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID); err != nil {
+			return err
+		}
+		_, err = tx.AppendEvent(Event{Kind: "inbox_item_updated", ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "kind": "pool_change"})})
 		return err
 	}
 	ask, err := json.Marshal(next)
@@ -223,6 +236,10 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 	}
 	if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,requester_kind,requester_id,kind,options_json,created_at)
 		VALUES (?,?,?,'system',?,'pool_change',?,?)`, itemID, projectID, homeID, "pool:"+projectID, string(ask), timestamp()); err != nil {
+		return err
+	}
+	if _, err := tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: homeID,
+		PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "kind": "pool_change", "agents": strconv.Itoa(len(affected))})}); err != nil {
 		return err
 	}
 	_, err = tx.AppendEvent(Event{Kind: "pool_change_detected", ProjectID: projectID, RoomID: homeID,
@@ -332,9 +349,9 @@ func (s *Store) DecidePoolChange(ctx context.Context, itemID, actorID, key, choi
 	digest := sha256.Sum256([]byte(itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev) + "\x00" + fmt.Sprint(keep)))
 	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: "user", ActorID: actorID,
 		Kind: "recovery_decision", Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *Tx) (string, error) {
-		var projectID, state, kind string
-		var currentRev int
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,state,kind,rev FROM inbox_item WHERE id=?`, itemID).Scan(&projectID, &state, &kind, &currentRev)
+		var projectID, state, kind, roomID string
+		var currentRev int64
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,state,kind,room_id,rev FROM inbox_item WHERE id=?`, itemID).Scan(&projectID, &state, &kind, &roomID, &currentRev)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && kind != "pool_change" {
 			return "", ErrForbidden
 		}
@@ -347,7 +364,7 @@ func (s *Store) DecidePoolChange(ctx context.Context, itemID, actorID, key, choi
 		if choice != PoolChangeRespawn && choice != PoolChangeKeep {
 			return "", ErrChoiceNotOffered
 		}
-		if currentRev != rev {
+		if currentRev != int64(rev) {
 			return "", ErrStaleInboxRev
 		}
 		if state != "open" {
@@ -386,6 +403,10 @@ func (s *Store) DecidePoolChange(ctx context.Context, itemID, actorID, key, choi
 		if _, err := tx.AppendEvent(Event{Kind: "pool_change_decided", ProjectID: projectID,
 			PayloadJSON: payloadJSON(map[string]string{"item_id": itemID, "choice": choice, "actor_id": actorID,
 				"respawn": strconv.Itoa(queued), "kept": strconv.Itoa(kept)})}); err != nil {
+			return "", err
+		}
+		if _, err := tx.AppendEvent(Event{Kind: "inbox_item_resolved", ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "choice": choice, "actor": actorID})}); err != nil {
 			return "", err
 		}
 		encoded, err := json.Marshal(RecoveryDecision{ItemID: itemID, Choice: choice, Rev: rev + 1})
@@ -503,7 +524,15 @@ func (s *Store) FailPoolRespawn(ctx context.Context, agentID, reason string) err
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID)
+		if _, err := tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID); err != nil {
+			return err
+		}
+		var roomID string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM inbox_item WHERE id=?`, itemID).Scan(&roomID); err != nil {
+			return err
+		}
+		_, err = tx.AppendEvent(Event{Kind: "inbox_item_updated", ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "kind": "pool_change"})})
 		return err
 	})
 }

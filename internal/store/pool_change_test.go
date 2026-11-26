@@ -99,14 +99,15 @@ func TestPoolChangeFlagsEveryoneWhoseChoiceLeftThePool(t *testing.T) {
 	if l := byID[f.lead.ID]; !l.Lead || l.RoomID != f.room.ID {
 		t.Fatalf("lead entry: %+v", l)
 	}
-	// The same pool change again (and a server restart) updates the one item; nothing is raised twice.
+	// The same pool change again (and a server restart) raises nothing twice; the affected list being unchanged, the item and its revision
+	// stay as they are, so a card on screen does not go stale.
 	before := items[0].Rev
 	f.setPool(t, "worker", f.b, SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-c"})
 	if err := f.s.DetectPoolChanges(ctx); err != nil {
 		t.Fatal(err)
 	}
 	items = f.openItems(t, "usr_owner")
-	if len(items) != 1 || items[0].Rev <= before {
+	if len(items) != 1 || items[0].Rev != before {
 		t.Fatalf("second change: %+v", items)
 	}
 	var total int
@@ -355,4 +356,50 @@ func TestPoolProvenanceMigrationIsConservative(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE kind='pool_change'`).Scan(&items); err != nil || items != 0 {
 		t.Fatalf("the migration raised %d items", items)
 	}
+}
+
+func TestPoolChangeEventsFireOnEveryTransitionAndAnUnchangedSaveLeavesTheRevAlone(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	f.setPool(t, "lead", f.b)
+	item := f.openItems(t, "usr_owner")[0]
+	countEvents := func(kind, extra string) int {
+		t.Helper()
+		var got int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='`+kind+`' AND json_extract(payload_json,'$.inbox_item_id')=?`+extra, item.ID).Scan(&got); err != nil {
+			t.Fatalf("%s events: %v", kind, err)
+		}
+		return got
+	}
+	expectEvents := func(kind, extra string, want int) {
+		t.Helper()
+		if got := countEvents(kind, extra); got != want {
+			t.Fatalf("%s events: %d, want %d", kind, got, want)
+		}
+	}
+	expectEvents("inbox_item_created", "", 1)
+	// The second pool save (the lead's) moved the one item from one listed agent to two, so one update has flown already; the counts below
+	// are relative to it.
+	updates := countEvents("inbox_item_updated", "")
+	// A role save that does not change the pool in force leaves the row and its revision alone, so a card on screen does not go stale.
+	before := item.Rev
+	f.setPool(t, "worker", f.b)
+	if now := f.openItems(t, "usr_owner")[0].Rev; now != before {
+		t.Fatalf("a save without a change moved the revision: %d -> %d", before, now)
+	}
+	expectEvents("inbox_item_updated", "", updates)
+	// A change that moves an agent off the list (the lead's pool lists its choice again) updates the open item and says so.
+	f.setPool(t, "lead", f.b, f.a)
+	item = f.openItems(t, "usr_owner")[0]
+	if item.Rev <= before {
+		t.Fatalf("the item did not move: %d -> %d", before, item.Rev)
+	}
+	expectEvents("inbox_item_updated", "", updates+1)
+	// The decision resolves the item and says so.
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_owner", "k-ev", PoolChangeKeep, int(item.Rev), nil); err != nil {
+		t.Fatal(err)
+	}
+	expectEvents("inbox_item_resolved", " AND json_extract(payload_json,'$.choice')='keep'", 1)
 }
