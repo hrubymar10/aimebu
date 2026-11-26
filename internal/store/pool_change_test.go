@@ -457,3 +457,52 @@ func TestPoolRespawnsReadyDropsAnAgentThatIsNotFromThePool(t *testing.T) {
 		t.Fatalf("the row stayed: %d (%v)", queued, err)
 	}
 }
+
+// An empty pool in force (an empty project override, cleared default_agents, a role reset) is not a pool change: an empty pool means manual
+// choice, so nobody is flagged, and an open item whose pool became empty is withdrawn.
+func TestPoolChangeIgnoresAnEmptyPool(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	// An empty project override flags nobody.
+	f.setPool(t, "worker")
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("an empty override raised an item: %+v", items)
+	}
+	// An open item whose pool becomes empty is withdrawn.
+	f.setPool(t, "worker", f.b)
+	item := f.openItems(t, "usr_owner")[0]
+	f.setPool(t, "worker")
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("the item stayed with an empty pool: %+v", items)
+	}
+	var resolved int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?`, item.ID).Scan(&resolved); err != nil || resolved != 1 {
+		t.Fatalf("withdrawal events: %d (%v)", resolved, err)
+	}
+	// Cleared default_agents: with the override inherited away the role's own pool decides, so giving it one entry raises the item and a
+	// role save that clears it withdraws it (a role reset writes the same empty list).
+	if _, err := f.s.SetProjectRoleSpawnDefaults(ctx, f.project.ID, "usr_owner", "worker", true, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	var rev int64
+	if err := f.s.db.QueryRow(`SELECT rev FROM role WHERE id='role_worker'`).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.ManageRole(ctx, "usr_owner", RoleDefinition{ID: "role_worker", Key: "worker", Label: "Worker", Cardinality: "multi", DefaultAgents: []SpawnDefaultChoice{f.b}, Rev: rev}, false); err != nil {
+		t.Fatal(err)
+	}
+	item = f.openItems(t, "usr_owner")[0]
+	if err := f.s.db.QueryRow(`SELECT rev FROM role WHERE id='role_worker'`).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.ManageRole(ctx, "usr_owner", RoleDefinition{ID: "role_worker", Key: "worker", Label: "Worker", Cardinality: "multi", DefaultAgents: []SpawnDefaultChoice{}, Rev: rev}, false); err != nil {
+		t.Fatal(err)
+	}
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("the item stayed with an empty role pool: %+v", items)
+	}
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?`, item.ID).Scan(&resolved); err != nil || resolved != 1 {
+		t.Fatalf("withdrawal events: %d (%v)", resolved, err)
+	}
+}

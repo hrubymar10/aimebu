@@ -136,6 +136,11 @@ func poolAffected(ctx context.Context, q poolQuerier, projectID string) ([]PoolA
 			}
 			pools[c.agent.RoleKey] = p
 		}
+		if len(p.items) == 0 {
+			// An empty pool in force (a role reset, a cleared default_agents, an empty project override) is not a pool change: the contract
+			// says an empty pool means manual choice, so nobody is flagged and no item is raised for it.
+			continue
+		}
 		if poolHas(p.items, c.agent.LauncherID, c.agent.Model) || c.kept == p.sig {
 			continue
 		}

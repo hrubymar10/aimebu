@@ -188,9 +188,15 @@ Projects, rooms, people
   `default_agents`, a project's override, team setup, a team-flow change) and at
   server start, the server finds the agents with `desired=active`, origin
   `pool`, not switching, whose launcher and model the role's pool in force no
-  longer lists. Leaders and the dispatcher count like any agent. They raise one
+  longer lists. An empty pool in force (a role reset, a cleared `default_agents`,
+  an empty project override) is not a pool change: an empty pool means manual
+  choice, so nobody is flagged, and an open item whose pool became empty is
+  withdrawn. Leaders and the dispatcher count like any agent. They raise one
   `pool_change` Inbox item per project (see Inbox): another change before a
-  decision updates that item, and an agent that stopped drops off it.
+  decision updates that item, and an agent that stopped drops off it. An agent
+  that stopped, was revoked, or was switched to an explicit choice drops off it
+  the same way: the stop, revoke and switch paths re-sync the item, so one whose
+  last affected agent leaves is withdrawn.
   In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
