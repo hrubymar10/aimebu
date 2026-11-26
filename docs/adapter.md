@@ -38,9 +38,23 @@ failed"); an outcome on any other message is dropped with a receipt warning. `ne
 up to ten questions with two to eight options each. The two answer formats
 cannot appear together. An `ask` already puts the message in the person's
 Inbox, so `needs_attention`, `proposed_answers` and `open_questions` sent with it are dropped
-with a receipt warning instead of rejecting the reply. When a final answer is invalid and the
+with a receipt warning instead of rejecting the reply. Claude's schema flag and the
+`submit_answer` MCP tool use the same answer-envelope schema. OpenCode and Pi
+prompt normal turns to call that tool; a successful call supplies the final answer,
+with the last call winning over later text. When no call is made, their existing
+free-text answer path remains available. Their fallback prompt and held-reply
+repair note include the exact schema JSON. An invalid tool argument returns a
+field-specific, content-free error so the agent can correct it in the turn.
+The tool instruction is gated by the probed CLI version: OpenCode 1.19.6 and
+Pi 1.6.1 or newer receive it; older or unknown versions keep the original
+free-text prompt. `aimebu doctor` and `aimebu doctor --machine` name an upgrade for a detected
+older version. Pi receives the tool through its existing aimebu MCP entry and
+`mcp__*` allowlist (also `aimebu_*` in Docker); no separate installation is
+needed. The native provider extension loaded with `--extension` is unrelated
+to this toolbox.
+When a final answer is invalid and the
 harness cannot be asked for a correction (no `no_action_mode`, as for Claude), the reply is held
-and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (quote-bearing parser errors are described, not echoed). A turn woken by such a note and held again gets no further note.
+and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (a known parser field is named; answer content is never echoed). For OpenCode and Pi the note includes the exact schema and asks for `submit_answer`; it is a nonempty repair prompt. A turn woken by such a note and held again gets no further note.
 A message refused only for its target (a room in another project, a closed room, a room the agent is not in) never holds the whole reply: the other messages are delivered and the agent gets a note "Part of your previous reply was held: ..." with the held text and, for another project's room, the hint to use `dm_agent`.
 `Turn.Wait()` returns exit code,
 terminal-event evidence, and cancel intent separately. Exit code zero alone
@@ -751,10 +765,12 @@ turns pass `-s <id>`; an unknown ID makes it print `Error: Session not found` on
 stderr, which resets the session the way a missing Codex thread does.
 
 The stream is JSONL (`step_start`, `text`, `tool_use`, `step_finish`, `error`).
-A turn is terminal only when a step finishes with reason `stop` after text, no
+A turn is terminal only when a step finishes with reason `stop` after text or
+`submit_answer`, no
 error event, and the session ID stayed the same. The answer is all the text
 parts of the last step, joined as they arrive; narration in earlier steps
-(before a tool call) is ignored. Usage sums the turn's steps
+(before a tool call) is ignored. A successful `submit_answer` call overrides
+text, with the last call winning. Usage sums the turn's steps
 (tokens, cost, and the last step's prompt as context used). A finished tool
 call is reported once and is activity; the start of a tool call is not reported, so the supervisor takes a process under
 the harness that began after its last output as a tool in flight (native turns only; see the turn limits in

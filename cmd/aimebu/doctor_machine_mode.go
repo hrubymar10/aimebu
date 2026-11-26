@@ -56,6 +56,7 @@ func checkMachineMode(ctx context.Context, config serverConfig) []doctorCheck {
 	checks = append(checks, checkAgentLogs(filepath.Join(config.root, "supervisor", "agent-logs")))
 	candidates := doctorDetectHarnesses(ctx)
 	checks = append(checks, checkHarnessExecutables(candidates))
+	checks = append(checks, checkHarnessAnswerTools(candidates)...)
 	checks = append(checks, checkDockerForLaunchers(candidates)...)
 	checks = append(checks, checkDockerLauncherFeatures(ctx, candidates)...)
 	if credential != nil {
@@ -218,6 +219,20 @@ func checkHarnessExecutables(candidates []protocol.HarnessCandidate) doctorCheck
 	}
 	sort.Strings(native)
 	return doctorCheck{Name: name, Status: statusOK, Description: strings.Join(native, "; ")}
+}
+
+func checkHarnessAnswerTools(candidates []protocol.HarnessCandidate) []doctorCheck {
+	var checks []doctorCheck
+	for _, candidate := range candidates {
+		if candidate.Version == "" {
+			continue
+		}
+		if supported, reason := adapter.AnswerToolSupport(candidate.Family, candidate.Version); !supported && reason != "" {
+			checks = append(checks, doctorCheck{Name: candidate.Family + " submit_answer", Status: statusWarn,
+				Description: candidate.Command + ": " + reason + "; free-text answers remain available", Hint: reason})
+		}
+	}
+	return checks
 }
 
 // checkDockerForLaunchers reports the Docker CLI and daemon. They only matter

@@ -9,9 +9,30 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite the prompt golden files")
+
+func TestPromptUsesToolParameterSchema(t *testing.T) {
+	if !strings.Contains(turnPrompt, "Pass every field required by its schema") ||
+		!strings.Contains(turnPrompt, "<json-schema>"+string(answer.ResponseSchema)+"</json-schema>") ||
+		!strings.Contains(turnPrompt, "calling the aimebu submit_answer tool") {
+		t.Fatal("prompt and tool schema disagree")
+	}
+}
+
+func TestAnswerToolPromptVersionGate(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{{"1.6.0", false}, {adapter.MinPiAnswerTool, true}, {"1.6.2", true}} {
+		got := promptFor(adapter.TurnSpec{HarnessVersion: tc.version})
+		if strings.Contains(got, "calling the aimebu submit_answer tool") != tc.want {
+			t.Fatalf("version %s prompt gate=%t", tc.version, tc.want)
+		}
+	}
+}
 
 // The goldens were captured from the hand-written prompt before the text moved
 // into the shared prompt package. They pin the exact bytes sent on stdin.

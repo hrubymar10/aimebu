@@ -39,6 +39,7 @@ import (
 
 type Server struct {
 	Store           *store.Store
+	commandLogPolls commandLogPoller
 	socketMu        sync.Mutex
 	socketClosing   bool
 	socketCtx       context.Context

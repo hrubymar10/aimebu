@@ -304,6 +304,17 @@ func (s *Store) RunningTurnRoom(ctx context.Context, agentID string) (string, er
 	return roomID, err
 }
 
+// RunningTurnID identifies the caller's current turn for transient tool state.
+func (s *Store) RunningTurnID(ctx context.Context, agentID string) (string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return "", err
+	}
+	var turnID string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM turn WHERE agent_id=? AND exec IN ('pending','running') ORDER BY id DESC LIMIT 1`,
+		agentID).Scan(&turnID)
+	return turnID, err
+}
+
 // RecordCommandStarted marks a job as running on its machine, with the spellings of its log and working directory the agent can open. A
 // job that already ended (a fast command's end can arrive before its start is recorded) keeps its end and only gains those spellings: the
 // current row is returned either way, and sql.ErrNoRows means there is no such job.

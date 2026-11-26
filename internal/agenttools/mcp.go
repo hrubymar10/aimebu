@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 type Server struct {
@@ -47,8 +48,18 @@ type tool struct {
 }
 
 var empty = map[string]any{"type": "object", "properties": map[string]any{}}
+
+func answerSchema() map[string]any {
+	var schema map[string]any
+	if err := json.Unmarshal(answer.ResponseSchema, &schema); err != nil {
+		panic(err)
+	}
+	return schema
+}
+
 var agentIDPattern = regexp.MustCompile(`^agt_[A-Za-z0-9_-]+$`)
 var catalog = []tool{
+	{"submit_answer", "End this turn with the final answer envelope. If the result reports an error, correct the named field and call again.", answerSchema()},
 	{"list_recoveries", "Active project lead only. List worker recoveries awaiting your decision.", empty},
 	{"resolve_recovery", "Active project lead only. Resolve a worker recovery with resume, retry, or abandon; retries are idempotent. A broken-session recovery takes restart (a fresh session) or abandon; a held answer takes retry (ask the agent to resend) or abandon.", map[string]any{"type": "object", "properties": map[string]any{"item_id": map[string]string{"type": "string"}, "choice": map[string]any{"type": "string", "enum": []string{"resume", "retry", "abandon", "restart"}}, "note": map[string]string{"type": "string"}}, "required": []string{"item_id", "choice"}}},
 	{"list_rooms", "List rooms where you are an active member, including archived rooms, without message previews.", empty},
@@ -61,14 +72,14 @@ var catalog = []tool{
 	}, "required": []string{"room_id", "body", "kind", "timezone", "request_key"}}},
 	{"delete_schedule", "Active lead, or the flow's coordinator (the dispatcher), in a room you belong to. Delete a schedule an agent created; a person's schedule stays theirs.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "schedule_id": map[string]string{"type": "string"}}, "required": []string{"room_id", "schedule_id"}}},
 	{"usage_left", "Show remaining project agent slots, spawn rate capacity, and available provider quota.", empty},
-	{"run_command", "Start a long command that runs outside your turn, under the supervisor, in your own checkout: the same rights your own Bash has there, and nothing more. It keeps running while no turn runs; when it ends you are woken with a note carrying the exit code, the duration, the last lines of output and the path to the full log. At most two run at a time for you. Cwd stays inside your checkout. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"run_command", "Start a long command that runs outside your turn, under the supervisor, in your own checkout: the same rights your own Bash has there, and nothing more. It keeps running while no turn runs; when it ends you are woken with a note carrying the exit code, the duration, the last lines of output and the path to the full log; after starting it, end your turn; do not poll or wait. At most two run at a time for you. Cwd stays inside your checkout. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"cmd": map[string]string{"type": "string"}, "cwd": map[string]string{"type": "string"},
 		"timeout_seconds": map[string]string{"type": "integer"}, "label": map[string]string{"type": "string"},
 		"room_id":     map[string]string{"type": "string", "description": "Where the completion note goes; defaults to the room your current turn runs in"},
 		"request_key": map[string]string{"type": "string"},
 	}, "required": []string{"cmd", "request_key"}}},
 	{"list_commands", "List the commands you started outside your turn, running and finished: state, exit code, duration and the log path.", empty},
-	{"command_log", "Read a bounded tail of the full log of one of your commands.", map[string]any{"type": "object", "properties": map[string]any{
+	{"command_log", "Read a bounded tail of the full log of one of your commands. For a running job, do not poll; end your turn. Its completion will wake you.", map[string]any{"type": "object", "properties": map[string]any{
 		"job_id": map[string]string{"type": "string"}, "lines": map[string]string{"type": "integer"}, "max_bytes": map[string]string{"type": "integer"},
 	}, "required": []string{"job_id"}}},
 	{"cancel_command", "Cancel one of your running commands. Its end still wakes you with a note. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
@@ -252,6 +263,11 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	}
 	getBool := func(field string) bool { var value bool; _ = json.Unmarshal(args[field], &value); return value }
 	switch name {
+	case "submit_answer":
+		if _, err := answer.Parse(raw, false); err != nil {
+			return toolResult(answer.SafeError(err), true)
+		}
+		return toolResult("Answer accepted. End the turn now.", false)
 	case "list_recoveries":
 		path = "/api/agent/recoveries"
 	case "resolve_recovery":

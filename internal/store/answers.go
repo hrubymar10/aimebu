@@ -479,6 +479,9 @@ const outsideProjectDetail = "room is outside the agent project"
 // heldDetail makes a held-answer reason safe to put in a note the room can read: a parser error quotes what the agent wrote (a field name, a
 // character), so only fixed texts go in as they are and a quoting one is described instead.
 func heldDetail(detail string) string {
+	if strings.HasPrefix(detail, "invalid_answer:") {
+		return answer.SafeError(errors.New(detail))
+	}
 	if strings.ContainsAny(detail, `"'`) || strings.Contains(detail, "json:") {
 		return "it was not one valid JSON answer object (malformed JSON, an unknown or misplaced field, or text around the object)"
 	}
@@ -579,6 +582,13 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 	// validation texts go in as they are and a quoting one is described instead.
 	detail = heldDetail(detail)
 	body := heldReplyNotePrefix + detail + ". Your previous answer is in your session; send your final answer again as exactly one JSON object with a messages array."
+	var tool string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT tool FROM agent WHERE id=?`, turn.agentID).Scan(&tool); err != nil {
+		return false, err
+	}
+	if tool == "opencode" || tool == "pi" {
+		body += " End the turn by calling submit_answer. If the tool is unavailable, use this exact answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>."
+	}
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err == nil, err
 }

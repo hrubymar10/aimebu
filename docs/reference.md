@@ -1333,6 +1333,9 @@ lead-to-lead chat included) is refused with what is wrong and what to do — the
 scope is the agent and its checkout, not the room's project, and one project's
 output never lands in another project's room. `list_commands`, `command_log` and
 `cancel_command` list, read and end them; at most two run at a time per agent.
+After starting a command, end the turn; its completion wakes the agent. A
+`command_log` read of a running job advises this when repeated without new
+output, and escalates after three unchanged repeats in the same turn.
 An agent in Docker needs a launcher whose harness-docker has the `run_command`
 feature, and is refused with the update to make until it does (see
 [the design note](design/harness-docker-run-command.md)).

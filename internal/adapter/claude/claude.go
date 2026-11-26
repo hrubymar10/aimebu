@@ -19,6 +19,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/v2/internal/harness"
 )
@@ -147,7 +148,7 @@ func systemPromptFor(spec adapter.TurnSpec) string {
 	return base + "\n\nRole instructions:\n" + roleText
 }
 
-var responseSchema = []byte(`{"type":"object","additionalProperties":false,"required":["messages"],"properties":{"messages":{"type":"array","maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["room","body","reply_to","attachments","ask","handoff","outcome","force","visual_plan","appendix_pages","needs_attention","proposed_answers","open_questions"],"properties":{"room":{"type":"string"},"body":{"type":"string"},"reply_to":{"type":["string","null"]},"attachments":{"type":["array","null"],"items":{"type":"string"}},"ask":{"type":["object","null"],"additionalProperties":false,"required":["kind","text","options","free_text"],"properties":{"kind":{"type":"string","enum":["question","approval"]},"text":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"free_text":{"type":"boolean"}}},"handoff":{"type":["boolean","null"]},"outcome":{"type":["string","null"],"enum":["done","partial","failed",null]},"force":{"type":["boolean","null"]},"visual_plan":{"type":["array","null"],"maxItems":80,"items":{"type":"object","additionalProperties":false,"required":["id","type","title","data","order"],"properties":{"id":{"type":["string","null"]},"type":{"type":"string"},"title":{"type":["string","null"]},"data":{"type":"string"},"order":{"type":["integer","null"]}}}},"appendix_pages":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":["string","null"]},"body":{"type":"string"}}}},"needs_attention":{"type":["boolean","null"]},"proposed_answers":{"type":["array","null"],"maxItems":4,"items":{"type":"string"}},"open_questions":{"type":["array","null"],"maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["question","description","options"],"properties":{"question":{"type":"string"},"description":{"type":["string","null"]},"options":{"type":"array","minItems":2,"maxItems":8,"items":{"type":"string"}}}}}}}}}}`)
+var responseSchema = answer.ResponseSchema
 
 func (a *Adapter) Catalog() []adapter.CatalogEntry {
 	version := a.version

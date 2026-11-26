@@ -1183,9 +1183,11 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   receives a system notice for answers held during validation. When the answer
   was held because no correction could be requested (`no_action_mode` false),
   the author also gets a system note "Your previous reply was held: <reason>"
-  (`OnlyTargets` the author; parser errors that quote the agent's text are
-  described, not echoed). The note is written once per held receipt (a replay
-  of the same digest returns the stored receipt). It wakes the author, so a turn
+  (`OnlyTargets` the author; a known parser field is named and answer content
+  is never echoed). For OpenCode and Pi the note includes the exact
+  `submit_answer` schema as a fallback repair guide. The note is written once
+  per held receipt (a replay of the same digest returns the stored receipt).
+  It wakes the author, so a turn
   that was itself woken by such a note and is held again gets no second note:
   a repeating invalid reply ends in the delivery-failed card, not a loop. A
   committed reply clears the author's earlier open delivery failures for its

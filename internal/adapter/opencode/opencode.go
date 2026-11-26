@@ -38,6 +38,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 )
 
@@ -262,11 +263,13 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 }
 
 // turnPrompt is the instruction text ahead of the turn JSON on standard input.
+var legacyOutput = prompt.ReturnOneObject + " For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object. " + prompt.HumanResponse("choices")
+
 var turnDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON below.",
 	Role:        "Obey context.role_body.",
 	Attachments: prompt.AttachmentGetTool,
-	Output:      prompt.ReturnOneObject + " " + "For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object." + " " + prompt.HumanResponse("choices"),
+	Output:      prompt.ReturnOneObject + " End the turn by calling the aimebu submit_answer tool with that answer object. Pass every field required by its schema; use null when a field does not apply. If the tool is unavailable, return the JSON object as text. Answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>. " + "For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object." + " " + prompt.HumanResponse("choices"),
 	Ack:         prompt.AckByReaction,
 	Closing:     prompt.OutsideRoomContext,
 }
@@ -275,6 +278,11 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
+	if !adapter.SupportsAnswerTool("opencode", spec.HarnessVersion) || spec.Mode != "" && spec.Mode != adapter.ModeNormal {
+		legacy := turnDeltas
+		legacy.Output = legacyOutput
+		return prompt.ForContext(legacy, prompt.Build(legacy), spec.ContextJSON)
+	}
 	return prompt.ForContext(turnDeltas, turnPrompt, spec.ContextJSON)
 }
 
@@ -548,6 +556,11 @@ type ocEvent struct {
 		Text   string `json:"text"`
 		Reason string `json:"reason"`
 		CallID string `json:"callID"`
+		Tool   string `json:"tool"`
+		State  struct {
+			Status string          `json:"status"`
+			Input  json.RawMessage `json:"input"`
+		} `json:"state"`
 		Tokens struct {
 			Input     *int64 `json:"input"`
 			Output    *int64 `json:"output"`
@@ -620,6 +633,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	var candidate []byte
+	var submitted []byte
 	var usage usageTotals
 	lastError := ""
 	sessionSeen, stopped := false, false
@@ -661,6 +675,11 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "tool_use":
 			// A tool part is reported once, already finished.
 			transcribeTool(t.conv, scanner.Bytes())
+			if event.Part.Tool == "aimebu_submit_answer" || event.Part.Tool == "mcp__aimebu__submit_answer" {
+				if event.Part.State.Status == "completed" && len(event.Part.State.Input) > 0 {
+					submitted = append([]byte(nil), event.Part.State.Input...)
+				}
+			}
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type, Tools: []adapter.ToolEvent{{ID: event.Part.CallID}, {ID: event.Part.CallID, Done: true}}})
 		case "step_finish":
 			usage.add(event)
@@ -677,6 +696,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		if t.cmd.Process != nil {
 			_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
 		}
+	}
+	if submitted != nil {
+		candidate = submitted
 	}
 	terminal := sessionSeen && stopped && candidate != nil && lastError == "" && scanError == nil
 	// What the steps cost is known whether or not the turn finished; one that did not is recorded as partial, so a failed or killed turn's

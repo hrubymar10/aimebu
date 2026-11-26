@@ -179,6 +179,19 @@ func TestCheckHarnessExecutables(t *testing.T) {
 	}
 }
 
+func TestCheckHarnessAnswerToolVersions(t *testing.T) {
+	checks := checkHarnessAnswerTools([]protocol.HarnessCandidate{
+		{Family: "pi", Version: "1.6.0", Command: "/bin/pi"},
+		{Family: "opencode", Version: "1.19.5", Command: "/bin/opencode"},
+		{Family: "pi", Version: "1.6.1", Command: "/bin/pi-new"},
+		{Family: "opencode", Version: "1.19.6", Command: "/bin/opencode-new"},
+	})
+	if len(checks) != 2 || !strings.Contains(checks[0].Description, "update pi to 1.6.1") ||
+		!strings.Contains(checks[1].Description, "update opencode to 1.19.6") {
+		t.Fatalf("version checks=%+v", checks)
+	}
+}
+
 func TestCheckDockerLauncherFeatures(t *testing.T) {
 	original := doctorDockerFeatures
 	t.Cleanup(func() { doctorDockerFeatures = original })

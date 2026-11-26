@@ -249,8 +249,15 @@ func (s *Server) agentToolCommandLog(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 502, "command_log_unavailable", result.Message)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"job_id": job.ID, "state": job.State, "log": result.Log,
-		"truncated": result.LogTruncated, "log_bytes": job.LogBytes})
+	response := map[string]any{"job_id": job.ID, "state": job.State, "log": result.Log,
+		"truncated": result.LogTruncated, "log_bytes": job.LogBytes}
+	turnID, err := s.Store.RunningTurnID(r.Context(), caller.ID)
+	if err == nil {
+		if hint := s.commandLogPolls.observe(caller.ID, turnID, job.ID, job.State, result.Log); hint != "" {
+			response["hint"] = hint
+		}
+	}
+	writeJSON(w, 200, response)
 }
 
 // agentToolCommandCancel ends one of the caller's jobs. Its end still arrives as a CommandEnded frame, which wakes the agent with a note.

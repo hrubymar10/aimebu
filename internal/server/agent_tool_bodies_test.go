@@ -120,6 +120,10 @@ func TestAgentToolBodiesDecodeStrictly(t *testing.T) {
 		t.Fatalf("tools/list: %s %v", listed, err)
 	}
 	for _, tool := range catalog.Result.Tools {
+		if tool.Name == "submit_answer" {
+			// This tool validates its envelope locally and sends no HTTP request.
+			continue
+		}
 		variants := toolArgVariants[tool.Name]
 		if variants == nil {
 			variants = [][]string{nil}

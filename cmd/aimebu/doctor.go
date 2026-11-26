@@ -90,6 +90,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		result.Checks = append(result.Checks, check)
 	}
 	result.Checks = append(result.Checks, checkSwitcher()...)
+	result.Checks = append(result.Checks, scopeAll(checkHarnessAnswerTools(doctorDetectHarnesses(ctx)), scopeServer)...)
 	result.Checks = append(result.Checks, checkCredentialTargets(config.root)...)
 	// The offline checks need a readable config root and a database that passed
 	// its integrity check; a server answering at all is what lets them judge

@@ -24,6 +24,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 	"github.com/hrubymar10/aimebu/v2/internal/cmdprobe"
 )
 
@@ -330,11 +331,13 @@ func writePrivate(path string, data []byte) error {
 }
 
 // turnPrompt is the instruction text ahead of the turn JSON on standard input.
+var legacyOutput = prompt.ReturnOneObject + " Visual plan blocks have type, optional title, and JSON data; appendix pages have optional title and Markdown body. " + prompt.HumanResponse("choices")
+
 var turnDeltas = prompt.Deltas{
 	Opening:     "Complete this aimebu turn from the JSON below.",
 	Role:        "Obey context.role_body.",
 	Attachments: "use attachment_get when available. In Pi Docker, fetch an attachment ID from attachment_access.base_url plus the ID with an Authorization: Bearer header using attachment_access.bearer. Download only when needed to your own temporary directory; never echo the bearer.",
-	Output:      prompt.ReturnOneObject + " " + "Visual plan blocks have type, optional title, and JSON data; appendix pages have optional title and Markdown body." + " " + prompt.HumanResponse("choices"),
+	Output:      prompt.ReturnOneObject + " End the turn by calling the aimebu submit_answer tool with that answer object. Pass every field required by its schema; use null when a field does not apply. If the tool is unavailable, return the JSON object as text. Answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>. " + "Visual plan blocks have type, optional title, and JSON data; appendix pages have optional title and Markdown body." + " " + prompt.HumanResponse("choices"),
 	Ack:         "Acknowledge only with a reaction when available; never send acknowledgement-only or status-only messages.",
 	Closing:     prompt.OutsideRoomContext,
 }
@@ -343,6 +346,11 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
+	if !adapter.SupportsAnswerTool("pi", spec.HarnessVersion) || spec.Mode != "" && spec.Mode != adapter.ModeNormal {
+		legacy := turnDeltas
+		legacy.Output = legacyOutput
+		return prompt.ForContext(legacy, prompt.Build(legacy), spec.ContextJSON)
+	}
 	return prompt.ForContext(turnDeltas, turnPrompt, spec.ContextJSON)
 }
 
@@ -474,6 +482,8 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	var candidate []byte
+	var submitted []byte
+	toolArgs := make(map[string]json.RawMessage)
 	// lastError is the newest provider failure Pi reported. Pi retries
 	// retryable failures itself and may exit 0 once the retries run out, so
 	// without it the only evidence of a silent exit is an unrelated stderr
@@ -528,13 +538,26 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			}
 		case "agent_settled":
 			settled, aborted = true, event.Aborted
+		case "tool_execution_start":
+			if event.ToolName == "mcp__aimebu__submit_answer" || event.ToolName == "aimebu_submit_answer" {
+				toolArgs[event.ToolCallID] = append(json.RawMessage(nil), event.Args...)
+			}
+			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type, Tools: []adapter.ToolEvent{{ID: event.ToolCallID}}})
+		case "tool_execution_end":
+			if args, ok := toolArgs[event.ToolCallID]; ok {
+				if !event.IsError && len(args) > 0 {
+					submitted = append([]byte(nil), args...)
+				}
+				delete(toolArgs, event.ToolCallID)
+			}
+			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type, Tools: []adapter.ToolEvent{{ID: event.ToolCallID, Done: true}}})
 		case "compaction_end":
 			if !event.Aborted && event.Result.TokensBefore != nil && event.Result.EstimatedTokensAfter != nil {
 				t.emit(adapter.Event{Kind: adapter.EventCompaction, Compaction: &adapter.Compaction{
 					PreTokens: *event.Result.TokensBefore, PostTokens: *event.Result.EstimatedTokensAfter}})
 			}
 		default:
-			if event.Type == "turn_start" || event.Type == "tool_execution_start" || event.Type == "tool_execution_end" {
+			if event.Type == "turn_start" {
 				activity := adapter.Event{Kind: adapter.EventActivity, Summary: event.Type}
 				switch event.Type {
 				case "tool_execution_start":
@@ -548,6 +571,9 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	}
 	if scanner.Err() != nil && t.cmd.Process != nil {
 		_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if submitted != nil {
+		candidate = submitted
 	}
 	terminal := sessionConfirmed && sawTurnEnd && settled && !aborted && candidate != nil && scanner.Err() == nil
 	if terminal {
@@ -592,10 +618,13 @@ func withoutSessionNotice(stderr string) string {
 }
 
 type piEvent struct {
-	Type       string `json:"type"`
-	ID         string `json:"id"`
-	ToolCallID string `json:"toolCallId"`
-	Aborted    bool   `json:"aborted"`
+	Type       string          `json:"type"`
+	ID         string          `json:"id"`
+	ToolCallID string          `json:"toolCallId"`
+	ToolName   string          `json:"toolName"`
+	Args       json.RawMessage `json:"args"`
+	IsError    bool            `json:"isError"`
+	Aborted    bool            `json:"aborted"`
 	// ErrorMessage is set on auto_retry_start (the failure being retried);
 	// FinalError and Success describe how auto_retry_end ended.
 	ErrorMessage string `json:"errorMessage"`

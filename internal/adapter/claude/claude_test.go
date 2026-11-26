@@ -16,6 +16,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/v2/internal/answer"
 	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
@@ -710,10 +711,20 @@ func TestNativeTurnKeyIsInTheEnvironmentOnly(t *testing.T) {
 	}
 	lines := strings.Split(string(args), "\n")
 	var inline string
+	var schemaFlag bool
 	for i, line := range lines {
+		if line == "--json-schema" {
+			schemaFlag = true
+			if i+1 >= len(lines) || lines[i+1] != string(answer.ResponseSchema) {
+				t.Fatal("Claude flag and submit_answer do not use the same schema")
+			}
+		}
 		if line == "--mcp-config" && i+1 < len(lines) {
 			inline = lines[i+1]
 		}
+	}
+	if !schemaFlag {
+		t.Fatal("Claude schema flag missing")
 	}
 	var config struct {
 		Servers map[string]struct {
