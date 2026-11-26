@@ -138,7 +138,9 @@ export function contextOf(usage) {
   const usedKnown = Number.isFinite(used) && used >= 0, windowKnown = Number.isFinite(window) && window > 0, known = usedKnown && windowKnown;
   const number = amount => (Number.isFinite(amount) && amount >= 0 ? new Intl.NumberFormat().format(amount) : '—');
   const cost = Number.isFinite(usage?.cost_so_far) && usage.cost_so_far >= 0 ? `$${usage.cost_so_far.toFixed(usage.cost_so_far > 0 && usage.cost_so_far < 0.01 ? 4 : 2)}` : '—';
-  const title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(usage?.tokens_in)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}${usage?.cost_estimated ? ' (includes estimates)' : ''}`;
+  const input = [usage?.tokens_in, usage?.tokens_cache_read, usage?.tokens_cache_write].filter(Number.isFinite);
+  const total = input.length ? input.reduce((sum, part) => sum + part, 0) : undefined;
+  const title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(total)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}${usage?.cost_estimated ? ' (includes estimates)' : ''}`;
   return { known, width: known ? `${Math.min(100, used / window * 100)}%` : '0%', value: known ? `${Math.round(Math.min(100, used / window * 100))}%` : '—', title };
 }
 

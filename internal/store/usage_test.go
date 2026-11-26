@@ -15,7 +15,8 @@ func TestUsageReadAndCompactionNoticeDedup(t *testing.T) {
 	f := seedExecution(t, s)
 	ctx := context.Background()
 	usageFrame, _ := json.Marshal(map[string]any{"type": "usage", "usage": map[string]any{
-		"tokens_in": 5000, "tokens_out": 1200, "context_used": 180000, "context_window": 200000, "cost_estimate": 0.35,
+		"tokens_in": 5000, "tokens_out": 1200, "tokens_cache_read": 9000, "tokens_cache_write": 1000,
+		"context_used": 180000, "context_window": 200000, "cost_estimate": 0.35,
 	}})
 	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "usage-1", "usage", "", usageFrame); err != nil {
 		t.Fatal(err)
@@ -26,6 +27,9 @@ func TestUsageReadAndCompactionNoticeDedup(t *testing.T) {
 	usage, err := s.AgentUsage(ctx, f.agent.ID)
 	if err != nil || usage == nil || usage.ContextUsed == nil || *usage.ContextUsed != 180000 || usage.ContextWindow == nil || *usage.ContextWindow != 200000 || usage.CostSoFar == nil || *usage.CostSoFar != 0.35 {
 		t.Fatalf("usage=%+v err=%v", usage, err)
+	}
+	if usage.TokensCacheRead == nil || *usage.TokensCacheRead != 9000 || usage.TokensCacheWrite == nil || *usage.TokensCacheWrite != 1000 {
+		t.Fatalf("latest usage cache categories: %+v", usage)
 	}
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM usage_record WHERE agent_id=?`, f.agent.ID).Scan(&count); err != nil || count != 1 {

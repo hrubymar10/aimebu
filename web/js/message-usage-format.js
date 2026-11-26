@@ -15,11 +15,24 @@ export function formatCost(value) {
   return Number.isFinite(value) && value >= 0 ? `$${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}` : DASH;
 }
 
+function inputTotal(usage) {
+  const parts = [usage?.tokens_in, usage?.tokens_cache_read, usage?.tokens_cache_write].filter(Number.isFinite);
+  return parts.length ? parts.reduce((sum, value) => sum + value, 0) : undefined;
+}
+
+function inputSummary(usage) {
+  const total = inputTotal(usage);
+  if (!Number.isFinite(total)) return DASH;
+  const cached = (Number.isFinite(usage?.tokens_cache_read) ? usage.tokens_cache_read : 0)
+    + (Number.isFinite(usage?.tokens_cache_write) ? usage.tokens_cache_write : 0);
+  return `${formatTokens(total)}${cached > 0 && total > 0 ? ` (${Math.round(100 * cached / total)}% cached)` : ''}`;
+}
+
 // The rows of the popover, as [label, value].
 export function usageRows(usage) {
   const rows = [
     ['Model', usage?.model || DASH],
-    ['Input', formatTokens(usage?.tokens_in)],
+    ['Input', inputSummary(usage)],
     ['Output', formatTokens(usage?.tokens_out)],
     ['Cache read', formatTokens(usage?.tokens_cache_read)],
     ['Cache written', formatTokens(usage?.tokens_cache_write)],
@@ -46,9 +59,8 @@ export function usageTooltip(usage) {
   // The input is what the model read, and most of it is usually cached: a harness reports the new tokens (tokens_in), the ones read from the cache and
   // the ones written to it separately, and "2 in" for a turn that read forty thousand tokens looks wrong. So "in" is all of them, with the split
   // (named as the popover names its rows) when there is more than the new tokens.
-  const input = [usage?.tokens_in, usage?.tokens_cache_read, usage?.tokens_cache_write].filter(Number.isFinite);
-  if (input.length) {
-    const total = input.reduce((sum, value) => sum + value, 0);
+  const total = inputTotal(usage);
+  if (Number.isFinite(total)) {
     const split = [];
     if (Number.isFinite(usage.tokens_in)) split.push(`${formatTokens(usage.tokens_in)} new`);
     if (usage.tokens_cache_read > 0) split.push(`${formatTokens(usage.tokens_cache_read)} cache read`);
@@ -66,7 +78,7 @@ export function usageTooltip(usage) {
 export function totalsRows(totals) {
   return [
     ['Turns', String(Number(totals?.turns) || 0)],
-    ['Input', formatTokens(totals?.tokens_in)],
+    ['Input', inputSummary(totals)],
     ['Output', formatTokens(totals?.tokens_out)],
     ['Cache read', formatTokens(totals?.tokens_cache_read)],
     ['Cache written', formatTokens(totals?.tokens_cache_write)],
@@ -89,7 +101,7 @@ export function totalsNotes(totals) {
 // One line of a breakdown by agent or model.
 export function groupLine(group) {
   const parts = [`${Number(group?.turns) || 0} ${Number(group?.turns) === 1 ? 'turn' : 'turns'}`];
-  if (Number.isFinite(group?.tokens_in) || Number.isFinite(group?.tokens_out)) parts.push(`${formatTokens(group?.tokens_in)} in / ${formatTokens(group?.tokens_out)} out`);
+  if (Number.isFinite(inputTotal(group)) || Number.isFinite(group?.tokens_out)) parts.push(`${inputSummary(group)} in / ${formatTokens(group?.tokens_out)} out`);
   parts.push(formatCost(group?.cost) + (group?.cost_estimated ? ' estimated' : ''));
   return parts.join(' \u00b7 ');
 }

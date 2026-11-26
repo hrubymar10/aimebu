@@ -29,7 +29,7 @@ for (const bad of [undefined, null, NaN, -0.5]) assert.equal(formatCost(bad), DA
 
 // The rows name every figure, and a figure nobody reported is a dash, never 0.
 const full = { model: 'claude-haiku-4-5', tokens_in: 12, tokens_out: 3, tokens_cache_read: 90, tokens_cache_write: 4, cost: 0.004, index: 1, count: 1 };
-assert.deepEqual(usageRows(full), [['Model', 'claude-haiku-4-5'], ['Input', '12'], ['Output', '3'], ['Cache read', '90'], ['Cache written', '4'], ['Cost (estimate)', '$0.0040']]);
+assert.deepEqual(usageRows(full), [['Model', 'claude-haiku-4-5'], ['Input', '106 (89% cached)'], ['Output', '3'], ['Cache read', '90'], ['Cache written', '4'], ['Cost (estimate)', '$0.0040']]);
 assert.deepEqual(usageRows({ tokens_in: 5 }), [['Model', DASH], ['Input', '5'], ['Output', DASH], ['Cache read', DASH], ['Cache written', DASH], ['Cost (estimate)', DASH]]);
 assert.deepEqual(usageRows(undefined).map(row => row[1]), [DASH, DASH, DASH, DASH, DASH, DASH]);
 assert.deepEqual(usageRows({ cost: 0.003, cost_source: 'estimated' }).at(-1), ['Cost (price estimate)', '$0.0030']);
@@ -60,7 +60,7 @@ assert.equal(usageTooltip({}), 'Usage');
 
 // The totals of a room or project.
 const totals = { turns: 3, turns_with_cost: 2, cost_coverage: 'partial', tokens_in: 2200, tokens_out: 40, tokens_cache_read: 9000, cost: 1.5, partial: true };
-assert.deepEqual(plain(context.api.totalsRows(totals)), [['Turns', '3'], ['Input', '2,200'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', DASH], ['Cost (estimate)', '$1.50']]);
+assert.deepEqual(plain(context.api.totalsRows(totals)), [['Turns', '3'], ['Input', '11,200 (80% cached)'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', DASH], ['Cost (estimate)', '$1.50']]);
 const notes = plain(context.api.totalsNotes(totals));
 assert.equal(notes.length, 2);
 assert.match(notes[0], /known for 2 of 3 turns.*floor/);
@@ -71,6 +71,8 @@ assert.deepEqual(plain(context.api.totalsNotes({ turns: 2, turns_with_cost: 2, c
 assert.deepEqual(plain(context.api.totalsNotes({ turns: 2, turns_with_cost: 2, turns_with_estimated_cost: 1, cost_coverage: 'estimated' })), ['1 turn uses the dated model price list; that cost is estimated.']);
 assert.deepEqual(plain(context.api.totalsRows({})).map(row => row[1]), ['0', DASH, DASH, DASH, DASH, DASH]);
 assert.equal(context.api.groupLine({ turns: 1, tokens_in: 10, tokens_out: 2, cost: 0.5 }), '1 turn \u00b7 10 in / 2 out \u00b7 $0.50');
+assert.equal(context.api.groupLine({ turns: 471, tokens_in: 3336, tokens_cache_read: 100000, tokens_cache_write: 1000, tokens_out: 50, cost: 0.5 }), '471 turns \u00b7 104,336 (97% cached) in / 50 out \u00b7 $0.50');
+assert.equal(context.api.groupLine({ turns: 1, tokens_in: 15, tokens_cache_read: 80, tokens_cache_write: 5, tokens_out: 7 }), `1 turn \u00b7 100 (85% cached) in / 7 out \u00b7 ${DASH}`);
 assert.equal(context.api.groupLine({ turns: 2 }), `2 turns \u00b7 ${DASH}`);
 assert.match(context.api.groupLine({ turns: 1, cost: 0.01, cost_estimated: true }), /estimated$/);
 console.log('message usage test passed');

@@ -176,6 +176,16 @@ func newOptions(t *testing.T, st *stub, ids ...string) *Options {
 		NewAdapter: func(string) (adapter.Adapter, error) { return st, nil }}
 }
 
+func TestUsageInIncludesBothCacheCategories(t *testing.T) {
+	fresh, read, write := int64(12), int64(90), int64(4)
+	if got := usageIn(adapter.Usage{TokensIn: &fresh, TokensCacheRead: &read, TokensCacheWrite: &write}); got != 106 {
+		t.Fatalf("total input = %d, want 106", got)
+	}
+	if got := usageIn(adapter.Usage{TokensCacheRead: &read}); got != 90 {
+		t.Fatalf("cache-only input = %d, want 90", got)
+	}
+}
+
 func TestRunScoresAndRepairsInTheSameSession(t *testing.T) {
 	good := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"It scores answers.","reply_to":"7001"}]}`
 	st := &stub{reply: func(spec adapter.TurnSpec, n int) []adapter.Event {

@@ -136,9 +136,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	tools := o.MCP.Calls(key)
 	a := eval.Attempt{Tools: tools}
 	if usage != nil {
-		if usage.TokensIn != nil {
-			a.TokIn = *usage.TokensIn
-		}
+		a.TokIn = usageIn(*usage)
 		if usage.TokensOut != nil {
 			a.TokOut = *usage.TokensOut
 		}
@@ -180,10 +178,13 @@ func heldDetail(detail string) string {
 }
 
 func usageIn(u adapter.Usage) int64 {
-	if u.TokensIn == nil {
-		return 0
+	var total int64
+	for _, part := range []*int64{u.TokensIn, u.TokensCacheRead, u.TokensCacheWrite} {
+		if part != nil {
+			total += *part
+		}
 	}
-	return *u.TokensIn
+	return total
 }
 
 func usageOut(u adapter.Usage) int64 {

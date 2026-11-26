@@ -14,6 +14,7 @@ type Attempt struct {
 	Correct bool    `json:"correct"`
 	Class   string  `json:"class,omitempty"`
 	Err     string  `json:"err,omitempty"`
+	// TokIn is total prompt input, including cache reads and writes.
 	TokIn   int64   `json:"tokens_in,omitempty"`
 	TokOut  int64   `json:"tokens_out,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`

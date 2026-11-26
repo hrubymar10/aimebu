@@ -12,18 +12,20 @@ import (
 // AgentUsage holds the latest measured context for the current process
 // generation and the sum of reported costs over the agent's lifetime.
 type AgentUsage struct {
-	TokensIn      *int64   `json:"tokens_in,omitempty"`
-	TokensOut     *int64   `json:"tokens_out,omitempty"`
-	ContextUsed   *int64   `json:"context_used,omitempty"`
-	ContextWindow *int64   `json:"context_window,omitempty"`
-	CostSoFar     *float64 `json:"cost_so_far,omitempty"`
-	CostEstimated bool     `json:"cost_estimated,omitempty"`
+	TokensIn         *int64   `json:"tokens_in,omitempty"`
+	TokensCacheRead  *int64   `json:"tokens_cache_read,omitempty"`
+	TokensCacheWrite *int64   `json:"tokens_cache_write,omitempty"`
+	TokensOut        *int64   `json:"tokens_out,omitempty"`
+	ContextUsed      *int64   `json:"context_used,omitempty"`
+	ContextWindow    *int64   `json:"context_window,omitempty"`
+	CostSoFar        *float64 `json:"cost_so_far,omitempty"`
+	CostEstimated    bool     `json:"cost_estimated,omitempty"`
 }
 
 // latestUsageSQL reads the newest record (by timestamp, the later insert on a tie) of the agent's current process generation. A partial record
 // (a turn that ended with no report) carries no context, so it is skipped: the card shows the last complete report. The generation comes from a subquery, not a join, so the
 // agent+time index also gives the order and no sort is needed (the agent's history can be long).
-const latestUsageSQL = `SELECT u.tokens_in,u.tokens_out,u.context_used,u.context_window
+const latestUsageSQL = `SELECT u.tokens_in,u.tokens_out,u.tokens_cache_read,u.tokens_cache_write,u.context_used,u.context_window
 	FROM usage_record u JOIN turn t ON t.id=u.turn_id
 	WHERE u.agent_id=? AND u.partial=0 AND t.generation=(SELECT generation FROM agent WHERE id=?) ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`
 
@@ -34,15 +36,21 @@ func (s *Store) AgentUsage(ctx context.Context, agentID string) (*AgentUsage, er
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	var input, output, used, window sql.NullInt64
+	var input, output, read, write, used, window sql.NullInt64
 	err := s.db.QueryRowContext(ctx, latestUsageSQL, agentID, agentID).
-		Scan(&input, &output, &used, &window)
+		Scan(&input, &output, &read, &write, &used, &window)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
 	usage := &AgentUsage{}
 	if input.Valid {
 		usage.TokensIn = &input.Int64
+	}
+	if read.Valid {
+		usage.TokensCacheRead = &read.Int64
+	}
+	if write.Valid {
+		usage.TokensCacheWrite = &write.Int64
 	}
 	if output.Valid {
 		usage.TokensOut = &output.Int64

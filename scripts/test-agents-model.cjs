@@ -99,6 +99,7 @@ assert.deepEqual(plain(m.contextOf(undefined)), { known: false, width: '0%', val
 const usage = plain(m.contextOf({ tokens_in: 5000, tokens_out: 1200, context_used: 150000, context_window: 200000, cost_so_far: 0.35, cost_estimated: true }));
 assert.deepEqual([usage.known, usage.width, usage.value], [true, '75%', '75%']);
 assert.equal(usage.title, 'Context 150,000 / 200,000 tokens · Input 5,000 · Output 1,200 · Cost so far $0.35 (includes estimates)');
+assert.match(m.contextOf({ tokens_in: 12, tokens_cache_read: 90, tokens_cache_write: 4 }).title, /Input 106/);
 assert.equal(m.contextOf({ context_used: 300, context_window: 200 }).width, '100%', 'the bar never passes its end');
 assert.match(m.contextOf({ cost_so_far: 0.004 }).title, /\$0\.0040/);
 assert.deepEqual(plain(m.liveOf({ observed: 'in_turn', activity: 'tool inspect', activity_at: at })), { at, label: 'tool' });

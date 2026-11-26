@@ -137,6 +137,8 @@ const (
 )
 
 type Usage struct {
+	// TokensIn is uncached input only. Prompt-cache reads and writes are separate
+	// categories; total input is their sum with TokensIn when reported.
 	TokensIn      *int64   `json:"tokens_in,omitempty"`
 	TokensOut     *int64   `json:"tokens_out,omitempty"`
 	ContextUsed   *int64   `json:"context_used,omitempty"`
