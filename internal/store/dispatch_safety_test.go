@@ -335,3 +335,28 @@ func TestAdmittedNormalTurnCannotBeCancelledAsUnsent(t *testing.T) {
 		t.Fatalf("admitted normal state=%+v %v", state, err)
 	}
 }
+
+func TestStopBetweenPrepareAndAdmissionRefusesTheTurn(t *testing.T) {
+	t.Parallel()
+	s, _, room, agent, _ := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, agent.ID, "")
+	if err != nil || !ready || len(delivery.Notes) != 1 {
+		t.Fatalf("prepared=%+v ready=%t %v", delivery, ready, err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped',desired_rev=desired_rev+1 WHERE id=?`, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	err = s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: agent.ID, MachineID: agent.MachineID,
+		Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: []string{delivery.Notes[0].NoteID}})
+	if err != ErrStaleRev {
+		t.Fatalf("admission after stop=%v, want stale revision", err)
+	}
+	requested, err := s.TurnDispatchRequested(ctx, delivery.TurnID)
+	if err != nil || requested {
+		t.Fatalf("dispatch requested after stop=%t %v", requested, err)
+	}
+}
