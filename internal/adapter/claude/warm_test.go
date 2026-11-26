@@ -428,10 +428,30 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 func TestWarmContainerCleanupExitZeroAfterTerm(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
+	childPath := filepath.Join(root, "child")
 	ready := filepath.Join(root, "ready")
 	childHit := filepath.Join(root, "child-hit")
 	finished := filepath.Join(root, "finished")
-	script := fmt.Sprintf("#!/bin/sh\ntrap ':' TERM\ncat >/dev/null\nsh -c 'trap \"echo hit > %s\" TERM; : > %s; sleep 0.3; : > %s' &\nchild=$!\nwhile [ ! -e %s ]; do wait \"$child\" || :; sleep 0.01; done\nexit 0\n", childHit, ready, finished, finished)
+	childScript := `#!/bin/sh
+trap 'printf "hit\n" > "$1"' TERM
+printf 'ready\n' > "$2"
+sleep 1
+printf 'finished\n' > "$3"
+`
+	if err := testenv.WriteExecutable(childPath, []byte(childScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+trap ':' TERM
+cat >/dev/null
+%q %q %q %q &
+child=$!
+while [ ! -f %q ]; do
+    wait "$child" || :
+    sleep 1
+done
+exit 0
+`, childPath, childHit, ready, finished, finished)
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -445,12 +465,26 @@ func TestWarmContainerCleanupExitZeroAfterTerm(t *testing.T) {
 	// The child begins only after EOF; wait until cleanup has started before TERM.
 	result := make(chan error, 1)
 	go func() { result <- session.Close(100 * time.Millisecond) }()
-	waitReady(t, ready)
+	waitFileContents(t, ready, "ready\n")
 	if err := <-result; err != nil {
 		t.Fatalf("clean exit after TERM: %v", err)
 	}
 	if _, err := os.Stat(childHit); err == nil {
 		t.Fatal("TERM reached the launcher child")
+	}
+}
+
+func waitFileContents(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && string(data) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("launcher did not write %q to %s", want, path)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
