@@ -62,6 +62,14 @@ func TestRender(t *testing.T) {
 	}
 }
 
+func TestRenderTokenColumnExplainsCacheShare(t *testing.T) {
+	a := Attempt{Valid: true, TokIn: 106, TokOut: 3, TokFresh: 12, TokRead: 90, TokWrite: 4, HasCacheWrite: true}
+	text := Render("Eval", []Case{{Model: "m", Scenario: "s", Attempts: []Attempt{a}}}, nil)
+	if !strings.Contains(text, `<span title="Input: 106 in (12 uncached, 90 cache read, 4 cache write); output: 3">109</span>`) {
+		t.Fatalf("token column has no input breakdown:\n%s", text)
+	}
+}
+
 func TestMedianOfAnEvenCountIsTheMeanOfTheTwoMiddleValues(t *testing.T) {
 	ok := func(ms int64) Attempt { return Attempt{Valid: true, Strict: true, Correct: true, Millis: ms} }
 	got := Summarize([]Case{{Model: "m", Scenario: "a", Attempts: []Attempt{ok(1000)}}, {Model: "m", Scenario: "a", Rep: 1, Attempts: []Attempt{ok(100000)}}})

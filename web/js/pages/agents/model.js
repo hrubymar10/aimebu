@@ -140,7 +140,11 @@ export function contextOf(usage) {
   const cost = Number.isFinite(usage?.cost_so_far) && usage.cost_so_far >= 0 ? `$${usage.cost_so_far.toFixed(usage.cost_so_far > 0 && usage.cost_so_far < 0.01 ? 4 : 2)}` : '—';
   const input = [usage?.tokens_in, usage?.tokens_cache_read, usage?.tokens_cache_write].filter(Number.isFinite);
   const total = input.length ? input.reduce((sum, part) => sum + part, 0) : undefined;
-  const title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(total)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}${usage?.cost_estimated ? ' (includes estimates)' : ''}`;
+  const split = [];
+  if (Number.isFinite(usage?.tokens_in)) split.push(`${number(usage.tokens_in)} uncached`);
+  if (Number.isFinite(usage?.tokens_cache_read)) split.push(`${number(usage.tokens_cache_read)} cache read`);
+  if (Number.isFinite(usage?.tokens_cache_write)) split.push(`${number(usage.tokens_cache_write)} cache write`);
+  const title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(total)}${split.length ? ` (${split.join(', ')})` : ''} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}${usage?.cost_estimated ? ' (includes estimates)' : ''}`;
   return { known, width: known ? `${Math.min(100, used / window * 100)}%` : '0%', value: known ? `${Math.round(Math.min(100, used / window * 100))}%` : '—', title };
 }
 

@@ -123,8 +123,8 @@ func TestUsageTotalsRoutes(t *testing.T) {
 		if status != 200 || body["turns"] != float64(1) || body["tokens_in"] != float64(12) || body["cost"] != 0.004 || body["cost_coverage"] != "known" {
 			t.Fatalf("%s: %d %+v", path, status, body)
 		}
-		if byAgent, _ := body["by_agent"].([]any); len(byAgent) != 1 {
-			t.Fatalf("%s by agent: %+v", path, body["by_agent"])
+		if byRole, _ := body["by_role"].([]any); len(byRole) != 1 || byRole[0].(map[string]any)["agents"] != float64(1) {
+			t.Fatalf("%s by role: %+v", path, body["by_role"])
 		}
 		if byModel, _ := body["by_model"].([]any); len(byModel) != 1 || byModel[0].(map[string]any)["key"] != "claude-haiku-4-5" {
 			t.Fatalf("%s by model: %+v", path, body["by_model"])

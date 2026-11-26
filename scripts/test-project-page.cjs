@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
 });
 
 const limit = { rev: 3, cost_mode: 'inherit', turn_mode: 'custom', daily_turn_cap: 50, daily_cost_cap: null, inherited_cost_cap: 5, inherited_turn_cap: null, day_start: '2026-02-03T00:00:00Z', tz: 'UTC', daily_turns: 2, daily_cost: 0.5, cost_coverage: 'known', effective_state: 'active' };
-const usage = { turns: 4, by_agent: [{ key: 'a1', label: 'leader', turns: 4 }], by_model: [] };
+const usage = { turns: 4, by_role: [{ key: 'leader', label: 'leader', agents: 1, turns: 4 }], by_model: [] };
 const roles = [{ role_key: 'worker', inherited: true, global_agents: [{}, {}], default_agents: [], pick_mode: 'in_turn' }, { role_key: 'leader', inherited: false, global_agents: [], default_agents: [{ launcher_id: 'l1', model: 'm1' }], pick_mode: 'in_turn' }];
 const rolePrompts = [
   { role_id: 'role_worker_default', role_key: 'worker', label: 'Worker', emoji: '', builtin: true, resolved_body: 'worker instructions', flow_override: false, global_body_extension: 'global rules', project_extension: { body: 'project rules', rev: 2, updated_at: '2026-11-24T10:00:00Z' }, delivered_body: 'worker instructions\n\nglobal rules\n\nproject rules' },

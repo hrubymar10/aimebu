@@ -108,7 +108,7 @@ async function main() {
       // Switching asks first, then writes: the same flow as A.
       await click(again, `${tile('codex')} .usages-b-profile[data-profile=backup] .usages-b-switch`);
       await dialog(again);
-      assert.match(await again.$eval('#app-dialog .app-dialog-message', el => el.textContent), /Affected agents: milo@mock\. Switch to backup\?/);
+      assert.match(await again.$eval('#app-dialog .app-dialog-message', el => el.textContent), /Switching will affect:.*Example room: 1 worker.*Switch to backup\?/);
       await click(again, '#app-dialog .app-dialog-ok');
       await again.waitForFunction(() => window.__calls.some(call => call[0] === 'use'));
       assert.deepEqual(await again.evaluate(() => window.__calls.find(call => call[0] === 'use')), ['use', 'codex', 'backup']);

@@ -1279,7 +1279,7 @@ async function main() {
       out.usageButton = { present: !!usageButton, title: usageButton?.title, label: usageButton?.getAttribute('aria-label'), glyph: !!usageButton?.querySelector('.icon-mask-chart-column'), text: usageButton?.textContent, withoutUsage: !chat.list.querySelector('[data-message-id="i1"] .chat-msg-usage-toggle') };
       usageButton.click(); await new Promise(resolve => setTimeout(resolve, 50));
       const usagePopover = document.querySelector('.usage-popover');
-      out.usagePopover = usagePopover && { rows: [...usagePopover.querySelectorAll('dt')].map((dt, i) => [dt.textContent, usagePopover.querySelectorAll('dd')[i].textContent]), notes: [...usagePopover.querySelectorAll('.usage-popover-note')].map(note => note.textContent).join(' '), focused: document.activeElement === usagePopover, expanded: usageButton.getAttribute('aria-expanded'), role: usagePopover.getAttribute('role'), inside: (() => { const box = usagePopover.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.width > 100; })() };
+      out.usagePopover = usagePopover && { rows: [...usagePopover.querySelectorAll('dt')].map((dt, i) => [dt.textContent, usagePopover.querySelectorAll('dd')[i].textContent]), inputTitle: usagePopover.querySelectorAll('dd')[1].title, notes: [...usagePopover.querySelectorAll('.usage-popover-note')].map(note => note.textContent).join(' '), focused: document.activeElement === usagePopover, expanded: usageButton.getAttribute('aria-expanded'), role: usagePopover.getAttribute('role'), inside: (() => { const box = usagePopover.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.width > 100; })() };
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await new Promise(resolve => setTimeout(resolve, 50));
       out.usageClosed = { gone: !document.querySelector('.usage-popover'), focusBack: document.activeElement === usageButton, expanded: usageButton.getAttribute('aria-expanded') };
       usageButton.click(); usageButton.click(); await new Promise(resolve => setTimeout(resolve, 50));
@@ -1288,8 +1288,9 @@ async function main() {
     });
     assert.match(identityHeader.quotes[0][0], /^↪ #77 \S+: quoted text$/, 'a parent outside the loaded window is quoted from the preview');
     assert.equal(identityHeader.quotes[0][1], 'Go to #77');
-    assert.deepEqual(identityHeader.usageButton, { present: true, title: 'Usage: 6,200 in (1,200 new, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', label: 'Usage: 6,200 in (1,200 new, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', glyph: true, text: '', withoutUsage: true });
-    assert.deepEqual(identityHeader.usagePopover.rows, [['Model', 'claude-haiku-4-5'], ['Input', '6,200 (81% cached)'], ['Output', '34'], ['Cache read', '5,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$0.0042']], 'the popover lists every figure, a dash for the one nobody reported');
+    assert.deepEqual(identityHeader.usageButton, { present: true, title: 'Usage: 6,200 in (1,200 uncached, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', label: 'Usage: 6,200 in (1,200 uncached, 5,000 cache read) \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', glyph: true, text: '', withoutUsage: true });
+    assert.deepEqual(identityHeader.usagePopover.rows, [['Model', 'claude-haiku-4-5'], ['Input', '6,200'], ['Output', '34'], ['Cache read', '5,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$0.0042']], 'the popover lists every figure, a dash for the one nobody reported');
+    assert.equal(identityHeader.usagePopover.inputTitle, '6,200 in (1,200 uncached, 5,000 cache read)');
     assert.deepEqual([identityHeader.usagePopover.focused, identityHeader.usagePopover.expanded, identityHeader.usagePopover.role, identityHeader.usagePopover.inside], [true, 'true', 'dialog', true]);
     assert.match(identityHeader.usagePopover.notes, /wrote 3 messages; this is 2 of 3.*floor/, 'the popover says it is 2 of 3 and partial');
     assert.deepEqual(identityHeader.usageClosed, { gone: true, focusBack: true, expanded: 'false' }, 'Escape closes the popover and gives the focus back to the icon');
@@ -2498,7 +2499,7 @@ async function main() {
           window.__usageRanges.push(match[1]);
           const all = match[1] === 'all';
           return Promise.resolve(new Response(JSON.stringify({ range: match[1], turns: all ? 5 : 3, turns_with_cost: all ? 4 : 2, cost_coverage: 'partial', tokens_in: all ? 9000 : 2200, tokens_out: 40, tokens_cache_read: 9000, cost: all ? 12.5 : 1.5, partial: !all,
-            by_agent: [{ key: 'agt_1', label: 'worker@proj', turns: 2, tokens_in: 2000, tokens_out: 30, cost: 1.4 }], by_model: [{ key: 'm1', label: 'm1', turns: 1, tokens_in: 100, tokens_out: 10, cost: 1.4 }, { key: '', label: 'unknown', turns: 2 }] }), { headers: { 'Content-Type': 'application/json' } }));
+            by_role: [{ key: 'worker', label: 'worker', agents: 2, turns: 2, tokens_in: 2000, tokens_cache_read: 8000, tokens_out: 30, cost: 1.4 }], by_model: [{ key: 'm1', label: 'm1', turns: 1, tokens_in: 15, tokens_cache_read: 80, tokens_cache_write: 5, tokens_out: 10, cost: 1.4 }, { key: '', label: 'unknown', turns: 2 }] }), { headers: { 'Content-Type': 'application/json' } }));
         };
       });
       await domClick(first, '#room-info');
@@ -2506,10 +2507,13 @@ async function main() {
       await domClick(first, '#room-info-workspace-tab');
       // The Range row's label and its hint are two lines, not one run of text ("RangeToday is the server's local day.").
       assert.equal(await first.$eval('#room-usage .settings-row', row => { const label = row.querySelector('.settings-label').getBoundingClientRect(), hint = row.querySelector('.settings-desc').getBoundingClientRect(); return hint.top >= label.bottom - 1; }), true, 'the Range label and its hint do not run together');
-      const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
+      const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), headings: [...el.querySelectorAll('.usage-summary-body h4')].map(el => el.textContent), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), inputTitle: el.querySelector('.usage-popover-rows dd:nth-of-type(2)')?.title, groupTitles: [...el.querySelectorAll('.usage-summary-group-figures')].map(el => el.title), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
       const today = await readUsage();
-      assert.deepEqual(today.rows, [['Turns', '3'], ['Input', '11,200 (80% cached)'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$1.50']]);
-      assert.deepEqual([today.range, today.title, today.groups], ['today', "This room's usage", ['worker@proj 2 turns \u00b7 2,000 in / 30 out \u00b7 $1.40', 'm1 1 turn \u00b7 100 in / 10 out \u00b7 $1.40', 'unknown 2 turns \u00b7 \u2014']]);
+      assert.deepEqual(today.rows, [['Turns', '3'], ['Input', '11,200'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$1.50']]);
+      assert.deepEqual([today.range, today.title, today.groups], ['today', "This room's usage", ['worker · 2 agents \u00b7 2 turns \u00b7 10,000 in / 30 out \u00b7 $1.40', 'm1 1 turn \u00b7 100 in / 10 out \u00b7 $1.40', 'unknown 2 turns \u00b7 \u2014']]);
+      assert.deepEqual(today.headings, ['By role', 'By model']);
+      assert.equal(today.inputTitle, '11,200 in (2,200 uncached, 9,000 cache read)');
+      assert.deepEqual(today.groupTitles, ['10,000 in (2,000 uncached, 8,000 cache read)', '100 in (15 uncached, 80 cache read, 5 cache write)', 'Input unknown']);
       assert.equal(today.notes.length, 2, 'the note on the unpriced turn and on the partial ones');
       await first.select('#room-usage select', 'all');
       await first.waitForFunction(() => [...document.querySelectorAll('#room-usage .usage-popover-rows dd')][5]?.textContent === '$12.50');

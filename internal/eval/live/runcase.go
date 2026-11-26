@@ -40,7 +40,11 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 		a, handle, usage := o.runTurn(ctx, impl, target, row, checkout, scenario, turnID, notes, turnContext, session, started)
 		a.Millis = usage.millis
 		if usage.tokensCumulative {
-			a.TokIn, a.TokOut = nonNegative(a.TokIn-usageIn(previous)), nonNegative(a.TokOut-usageOut(previous))
+			a.TokFresh = nonNegative(a.TokFresh - tokenValue(previous.TokensIn))
+			a.TokRead = nonNegative(a.TokRead - tokenValue(previous.TokensCacheRead))
+			a.TokWrite = nonNegative(a.TokWrite - tokenValue(previous.TokensCacheWrite))
+			a.TokIn = a.TokFresh + a.TokRead + a.TokWrite
+			a.TokOut = nonNegative(a.TokOut - usageOut(previous))
 		}
 		if usage.costCumulative {
 			a.CostUSD = nonNegativeF(a.CostUSD - usageCost(previous))
@@ -137,6 +141,10 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	a := eval.Attempt{Tools: tools}
 	if usage != nil {
 		a.TokIn = usageIn(*usage)
+		a.TokFresh = tokenValue(usage.TokensIn)
+		a.TokRead = tokenValue(usage.TokensCacheRead)
+		a.TokWrite = tokenValue(usage.TokensCacheWrite)
+		a.HasCacheWrite = usage.TokensCacheWrite != nil
 		if usage.TokensOut != nil {
 			a.TokOut = *usage.TokensOut
 		}
@@ -178,13 +186,14 @@ func heldDetail(detail string) string {
 }
 
 func usageIn(u adapter.Usage) int64 {
-	var total int64
-	for _, part := range []*int64{u.TokensIn, u.TokensCacheRead, u.TokensCacheWrite} {
-		if part != nil {
-			total += *part
-		}
+	return tokenValue(u.TokensIn) + tokenValue(u.TokensCacheRead) + tokenValue(u.TokensCacheWrite)
+}
+
+func tokenValue(part *int64) int64 {
+	if part == nil {
+		return 0
 	}
-	return total
+	return *part
 }
 
 func usageOut(u adapter.Usage) int64 {

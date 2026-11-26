@@ -1404,12 +1404,14 @@ field removes that cap. At the cap, dispatch pauses and an inbox decision
 lets the owner continue with a raised cap or leave the scope paused.
 Room settings and Project settings also have a Usage section (`GET /api/rooms/{room}/usage` and
 `GET /api/projects/{project}/usage`) that sums what the turns spent today, over seven days or
-for all time, by agent and by model, with counts of turns with a cost and turns
+for all time, by role and by model, with counts of turns with a cost and turns
 priced from the [model price list](pricing.md). A Claude
 turn is priced as the difference from its session's running total, so a resumed session is not
 counted again from the start.
 Input in the Usage section, each message's turn stats, and the agent card means all prompt
-tokens: uncached input plus cache reads and cache writes. The cached share is
-shown beside the total; the details list each category separately. This
-definition applies to each model and agent row. Existing stored turns are
-displayed as recorded; no past usage is recalculated.
+tokens: uncached input plus cache reads and cache writes. The Usage input,
+turn stats, and agent card tooltips list those categories, including cache write where the harness
+reports it. The By role rows group agents by their current role, since a
+turn does not store the role at its time; an agent with no matching role is
+listed as "no role." Each role row counts distinct agents and turns. Existing
+stored turns are displayed as recorded; no past usage is recalculated.

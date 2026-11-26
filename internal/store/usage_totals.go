@@ -7,11 +7,12 @@ import (
 	"time"
 )
 
-// UsageGroup is one line of a breakdown (an agent, a model): what its turns spent. A figure nobody reported is nil, never 0.
+// UsageGroup is one line of a breakdown (a role or a model): what its turns spent. A figure nobody reported is nil, never 0.
 type UsageGroup struct {
 	Key        string   `json:"key"`
 	Label      string   `json:"label"`
 	Turns      int      `json:"turns"`
+	Agents     int      `json:"agents,omitempty"`
 	TokensIn   *int64   `json:"tokens_in,omitempty"`
 	TokensOut  *int64   `json:"tokens_out,omitempty"`
 	CacheRead  *int64   `json:"tokens_cache_read,omitempty"`
@@ -39,7 +40,7 @@ type UsageTotals struct {
 	CacheWrite             *int64       `json:"tokens_cache_write,omitempty"`
 	Cost                   *float64     `json:"cost,omitempty"`
 	Partial                bool         `json:"partial,omitempty"`
-	ByAgent                []UsageGroup `json:"by_agent"`
+	ByRole                 []UsageGroup `json:"by_role"`
 	ByModel                []UsageGroup `json:"by_model"`
 }
 
@@ -103,7 +104,7 @@ func (s *Store) UsageTotalsFor(ctx context.Context, scope, scopeID, rng string) 
 	if !UsageRanges[rng] {
 		return UsageTotals{}, fmt.Errorf("unknown usage range %q", rng)
 	}
-	out := UsageTotals{Scope: scope, ScopeID: scopeID, Range: rng, Since: usageSince(rng, time.Now()), ByAgent: []UsageGroup{}, ByModel: []UsageGroup{}}
+	out := UsageTotals{Scope: scope, ScopeID: scopeID, Range: rng, Since: usageSince(rng, time.Now()), ByRole: []UsageGroup{}, ByModel: []UsageGroup{}}
 	where, args := `u.`+column+`=?`, []any{scopeID}
 	if out.Since != "" {
 		where += ` AND u.created_at>=?`
@@ -137,7 +138,7 @@ func (s *Store) UsageTotalsFor(ctx context.Context, scope, scopeID, rng string) 
 	default:
 		out.CostCoverage = "partial"
 	}
-	groups := func(sqlText string) ([]UsageGroup, error) {
+	groups := func(sqlText string, role bool) ([]UsageGroup, error) {
 		rows, err := s.db.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
@@ -148,7 +149,12 @@ func (s *Store) UsageTotalsFor(ctx context.Context, scope, scopeID, rng string) 
 			var g UsageGroup
 			var sums usageSums
 			var estimated int
-			if err := rows.Scan(&g.Key, &g.Label, &g.Turns, &sums.in, &sums.out, &sums.read, &sums.write, &sums.cost, &estimated); err != nil {
+			fields := []any{&g.Key, &g.Label, &g.Turns}
+			if role {
+				fields = append(fields, &g.Agents)
+			}
+			fields = append(fields, &sums.in, &sums.out, &sums.read, &sums.write, &sums.cost, &estimated)
+			if err := rows.Scan(fields...); err != nil {
 				return nil, err
 			}
 			sums.groupFields(&g)
@@ -158,13 +164,13 @@ func (s *Store) UsageTotalsFor(ctx context.Context, scope, scopeID, rng string) 
 		return list, rows.Err()
 	}
 	// The most expensive first; a group with no cost sorts by its tokens, then by name, so the order is stable.
-	const order = ` ORDER BY COALESCE(SUM(u.cost_est),0) DESC, COALESCE(SUM(u.tokens_in),0)+COALESCE(SUM(u.tokens_out),0) DESC, 2`
-	if out.ByAgent, err = groups(`SELECT u.agent_id,COALESCE(NULLIF(a.removed_slug,''),a.slug,u.agent_id),COUNT(DISTINCT u.turn_id),SUM(u.tokens_in),SUM(u.tokens_out),SUM(u.tokens_cache_read),SUM(u.tokens_cache_write),SUM(u.cost_est),MAX(CASE WHEN u.cost_est IS NOT NULL AND u.source='estimated' THEN 1 ELSE 0 END)
-		FROM usage_record u LEFT JOIN agent a ON a.id=u.agent_id WHERE ` + where + ` GROUP BY u.agent_id` + order); err != nil {
+	const order = ` ORDER BY COALESCE(SUM(u.cost_est),0) DESC, COALESCE(SUM(u.tokens_in),0)+COALESCE(SUM(u.tokens_cache_read),0)+COALESCE(SUM(u.tokens_cache_write),0)+COALESCE(SUM(u.tokens_out),0) DESC, 2`
+	if out.ByRole, err = groups(`SELECT COALESCE(NULLIF(r.role_key,''),'no role'),COALESCE(NULLIF(r.role_key,''),'no role'),COUNT(DISTINCT u.turn_id),COUNT(DISTINCT u.agent_id),SUM(u.tokens_in),SUM(u.tokens_out),SUM(u.tokens_cache_read),SUM(u.tokens_cache_write),SUM(u.cost_est),MAX(CASE WHEN u.cost_est IS NOT NULL AND u.source='estimated' THEN 1 ELSE 0 END)
+		FROM usage_record u LEFT JOIN agent a ON a.id=u.agent_id LEFT JOIN role r ON r.id=a.role_id WHERE `+where+` GROUP BY COALESCE(NULLIF(r.role_key,''),'no role')`+order, true); err != nil {
 		return UsageTotals{}, err
 	}
 	if out.ByModel, err = groups(`SELECT COALESCE(u.model,''),COALESCE(NULLIF(u.model,''),'unknown'),COUNT(DISTINCT u.turn_id),SUM(u.tokens_in),SUM(u.tokens_out),SUM(u.tokens_cache_read),SUM(u.tokens_cache_write),SUM(u.cost_est),MAX(CASE WHEN u.cost_est IS NOT NULL AND u.source='estimated' THEN 1 ELSE 0 END)
-		FROM usage_record u WHERE ` + where + ` GROUP BY COALESCE(u.model,'')` + order); err != nil {
+		FROM usage_record u WHERE `+where+` GROUP BY COALESCE(u.model,'')`+order, false); err != nil {
 		return UsageTotals{}, err
 	}
 	return out, nil

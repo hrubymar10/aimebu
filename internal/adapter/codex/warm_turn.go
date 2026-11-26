@@ -15,15 +15,23 @@ import (
 )
 
 type codexTokenUsage struct {
-	Input   int64 `json:"inputTokens"`
-	Output  int64 `json:"outputTokens"`
-	Cached  int64 `json:"cachedInputTokens"`
-	Written int64 `json:"cacheWriteInputTokens"`
+	Input   int64  `json:"inputTokens"`
+	Output  int64  `json:"outputTokens"`
+	Cached  int64  `json:"cachedInputTokens"`
+	Written *int64 `json:"cacheWriteInputTokens"`
 }
 
 func (u codexTokenUsage) minus(before codexTokenUsage) codexTokenUsage {
-	return codexTokenUsage{max(0, u.Input-before.Input), max(0, u.Output-before.Output),
-		max(0, u.Cached-before.Cached), max(0, u.Written-before.Written)}
+	result := codexTokenUsage{Input: max(0, u.Input-before.Input), Output: max(0, u.Output-before.Output), Cached: max(0, u.Cached-before.Cached)}
+	if u.Written != nil {
+		written := *u.Written
+		if before.Written != nil {
+			written -= *before.Written
+		}
+		written = max(0, written)
+		result.Written = &written
+	}
+	return result
 }
 
 type codexWarmTurn struct {
@@ -335,9 +343,13 @@ func (t *codexWarmTurn) reportUsage() {
 		return
 	}
 	input, output, cached, written := t.usage.Input, t.usage.Output, t.usage.Cached, t.usage.Written
-	fresh := max(0, input-cached-written)
-	usage := &adapter.Usage{TokensIn: &fresh, TokensOut: &output, TokensCacheRead: &cached, TokensCacheWrite: &written}
-	if cost := pricing.Estimate(t.model, &fresh, &output, &cached, &written); cost != nil {
+	writeCount := int64(0)
+	if written != nil {
+		writeCount = *written
+	}
+	fresh := max(0, input-cached-writeCount)
+	usage := &adapter.Usage{TokensIn: &fresh, TokensOut: &output, TokensCacheRead: &cached, TokensCacheWrite: written}
+	if cost := pricing.Estimate(t.model, &fresh, &output, &cached, written); cost != nil {
 		usage.CostEstimate, usage.CostSource = cost, "estimated"
 	}
 	t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})

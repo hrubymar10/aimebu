@@ -1,6 +1,6 @@
 // The usage popover of one message: opened from the chart icon next to the message number, closed by Escape or a click elsewhere, and
 // it hands focus back to the icon. The wording is in message-usage-format.js. Everything is written with textContent.
-import { usageRows, usageNotes } from './message-usage-format.js';
+import { usageRows, usageNotes, inputTooltip } from './message-usage-format.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 
 let open = null; // { popover, button, off }
@@ -23,7 +23,11 @@ export function toggleMessageUsage(button, usage) {
   if (same) return;
   const popover = node('div', 'usage-popover'); popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Usage of this message');
   const grid = node('dl', 'usage-popover-rows');
-  for (const [label, value] of usageRows(usage)) { grid.append(node('dt', '', label), node('dd', '', value)); }
+  for (const [label, value] of usageRows(usage)) {
+    const detail = node('dd', '', value);
+    if (label === 'Input') detail.title = inputTooltip(usage);
+    grid.append(node('dt', '', label), detail);
+  }
   popover.append(grid);
   for (const note of usageNotes(usage)) popover.append(node('p', 'usage-popover-note', note));
   document.body.append(popover);

@@ -131,6 +131,7 @@ The report's token columns add total prompt input (uncached input, cache reads
 and cache writes) and output for each attempt. A cumulative harness report is
 reduced by its previous session total before it enters those columns. Cost
 continues to use the harness's reported value or its separate price categories.
+Hovering a token total in the Markdown report shows the input split and output.
 
 **Quota and cost.** `usages_url` is a running server whose `GET /api/usages` the runner reads (the repo's own usage data, owner-only) with the cookie
 in the environment variable named by `usages_cookie_env`. The run is refused without it. The quota is read before the run, every 10 cases and

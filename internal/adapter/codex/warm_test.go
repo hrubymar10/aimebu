@@ -224,7 +224,7 @@ func TestWarmAppServerReusesThreeTurns(t *testing.T) {
 			case adapter.EventFinalAnswer:
 				answer = string(event.Answer) == `{"messages":[]}`
 			case adapter.EventUsage:
-				usage = event.Usage != nil && event.Usage.TokensIn != nil && *event.Usage.TokensIn == 90
+				usage = event.Usage != nil && event.Usage.TokensIn != nil && *event.Usage.TokensIn == 90 && event.Usage.TokensCacheWrite == nil
 			}
 		}
 		exit, err := turn.Wait()
@@ -429,6 +429,20 @@ func TestWarmResumedThreadDoesNotChargePreviousTurns(t *testing.T) {
 	}
 	if input != 90 {
 		t.Fatalf("resumed turn charged earlier history: fresh input %d", input)
+	}
+}
+
+func TestCodexTokenUsageMinusPreservesOptionalCacheWrite(t *testing.T) {
+	beforeWrite, afterWrite := int64(3), int64(8)
+	after := codexTokenUsage{Input: 100, Cached: 70, Written: &afterWrite}
+	before := codexTokenUsage{Input: 20, Cached: 10, Written: &beforeWrite}
+	spent := after.minus(before)
+	if spent.Input != 80 || spent.Cached != 60 || spent.Written == nil || *spent.Written != 5 {
+		t.Fatalf("cache write is a separate input share: %+v", spent)
+	}
+	after.Written = nil
+	if spent := after.minus(before); spent.Written != nil {
+		t.Fatalf("unreported cache write became a count: %+v", spent)
 	}
 }
 

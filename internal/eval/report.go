@@ -9,16 +9,20 @@ import (
 
 // Attempt is one turn of a live case: the first try, or a repair after the failure was sent back to the agent.
 type Attempt struct {
-	Valid   bool    `json:"valid"`
-	Strict  bool    `json:"strict"`
-	Correct bool    `json:"correct"`
-	Class   string  `json:"class,omitempty"`
-	Err     string  `json:"err,omitempty"`
+	Valid   bool   `json:"valid"`
+	Strict  bool   `json:"strict"`
+	Correct bool   `json:"correct"`
+	Class   string `json:"class,omitempty"`
+	Err     string `json:"err,omitempty"`
 	// TokIn is total prompt input, including cache reads and writes.
-	TokIn   int64   `json:"tokens_in,omitempty"`
-	TokOut  int64   `json:"tokens_out,omitempty"`
-	CostUSD float64 `json:"cost_usd,omitempty"`
-	Millis  int64   `json:"millis,omitempty"`
+	TokIn         int64   `json:"tokens_in,omitempty"`
+	TokOut        int64   `json:"tokens_out,omitempty"`
+	TokFresh      int64   `json:"tokens_uncached,omitempty"`
+	TokRead       int64   `json:"tokens_cache_read,omitempty"`
+	TokWrite      int64   `json:"tokens_cache_write,omitempty"`
+	HasCacheWrite bool    `json:"has_cache_write,omitempty"`
+	CostUSD       float64 `json:"cost_usd,omitempty"`
+	Millis        int64   `json:"millis,omitempty"`
 	// Candidate is the raw answer the harness reported and Tools the tools the model called, kept so a run can be read afterwards.
 	Candidate string   `json:"candidate,omitempty"`
 	Tools     []string `json:"tools,omitempty"`
@@ -80,11 +84,39 @@ type ModelSummary struct {
 	Errors  map[string]int
 	Harness int
 	// MedianMillis is the median first-attempt time; TokensFirst and TokensAll are the tokens of the first attempts and of every attempt.
-	MedianMillis int64
-	TokensFirst  int64
-	TokensAll    int64
-	CostFirst    float64
-	CostAll      float64
+	MedianMillis   int64
+	TokensFirst    int64
+	TokensAll      int64
+	FirstBreakdown TokenBreakdown
+	AllBreakdown   TokenBreakdown
+	CostFirst      float64
+	CostAll        float64
+}
+
+// TokenBreakdown keeps the input categories behind a report's total token column.
+type TokenBreakdown struct {
+	Fresh, Read, Write, Out int64
+	HasWrite                bool
+}
+
+func (b *TokenBreakdown) add(a Attempt) {
+	fresh := a.TokFresh
+	if fresh == 0 && a.TokRead == 0 && a.TokWrite == 0 && a.TokIn > 0 {
+		fresh = a.TokIn
+	}
+	b.Fresh += fresh
+	b.Read += a.TokRead
+	b.Write += a.TokWrite
+	b.Out += a.TokOut
+	b.HasWrite = b.HasWrite || a.HasCacheWrite
+}
+
+func (b TokenBreakdown) title() string {
+	value := fmt.Sprintf("Input: %d in (%d uncached, %d cache read", b.Fresh+b.Read+b.Write, b.Fresh, b.Read)
+	if b.HasWrite {
+		value += fmt.Sprintf(", %d cache write", b.Write)
+	}
+	return value + fmt.Sprintf("); output: %d", b.Out)
 }
 
 // Summarize groups cases by model, in the order the models first appear.
@@ -108,9 +140,11 @@ func Summarize(cases []Case) []ModelSummary {
 			f, l := c.first(), c.last()
 			for _, a := range c.Attempts {
 				s.TokensAll += a.TokIn + a.TokOut
+				s.AllBreakdown.add(a)
 				s.CostAll += a.CostUSD
 			}
 			s.TokensFirst += f.TokIn + f.TokOut
+			s.FirstBreakdown.add(f)
 			s.CostFirst += f.CostUSD
 			if f.Class == ClassHarness {
 				s.Harness++
@@ -171,7 +205,7 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	}
 	b.WriteString("\n## Time and tokens\n\n| model | median first-attempt time | tokens (first attempts) | tokens (all attempts) | cost USD (first) | cost USD (all) |\n|---|---|---|---|---|---|\n")
 	for _, s := range summaries {
-		fmt.Fprintf(&b, "| %s | %.1f s | %d | %d | %.2f | %.2f |\n", s.Model, float64(s.MedianMillis)/1000, s.TokensFirst, s.TokensAll, s.CostFirst, s.CostAll)
+		fmt.Fprintf(&b, "| %s | %.1f s | <span title=\"%s\">%d</span> | <span title=\"%s\">%d</span> | %.2f | %.2f |\n", s.Model, float64(s.MedianMillis)/1000, s.FirstBreakdown.title(), s.TokensFirst, s.AllBreakdown.title(), s.TokensAll, s.CostFirst, s.CostAll)
 	}
 	b.WriteString("\n## Correct on the first try, by scenario (passes/repetitions)\n\n| scenario |")
 	for _, s := range summaries {
