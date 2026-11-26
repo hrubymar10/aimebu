@@ -233,6 +233,15 @@ type Turn interface {
 	Wait() (ExitInfo, error)
 }
 
+// ProcessIdentified is a turn whose harness process the supervisor can journal, so a later supervisor can tell that process from a later
+// one that reuses its pid. The pid is the process the adapter started (for a containerized harness, its launcher) and the group is its
+// own: every adapter starts its process with Setpgid, so the process leads its group and the group's id is the pid. A turn with no
+// process (none yet, none at all) reports 0.
+type ProcessIdentified interface {
+	Turn
+	ProcessIdentity() (pid, pgid int)
+}
+
 type Environment struct {
 	Variant   string `json:"variant"`
 	OS        string `json:"os"`

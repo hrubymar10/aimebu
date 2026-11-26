@@ -158,7 +158,8 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		desired_rev INTEGER NOT NULL,note_ids_json TEXT NOT NULL,mode TEXT NOT NULL,
 		spec_json BLOB NOT NULL,started_at TEXT NOT NULL,exec TEXT NOT NULL DEFAULT 'running',
 		exit_code INTEGER,terminal_event INTEGER,cancel_intent INTEGER,
-		exit_acked INTEGER NOT NULL DEFAULT 0);
+		exit_acked INTEGER NOT NULL DEFAULT 0,
+		pid INTEGER,pgid INTEGER,pid_start TEXT);
 	CREATE TABLE IF NOT EXISTS journal_event(
 		source_event_id TEXT PRIMARY KEY,turn_id TEXT NOT NULL REFERENCES turn_start(turn_id),
 		kind TEXT NOT NULL,summary TEXT NOT NULL,payload_json BLOB,created_at TEXT NOT NULL);
@@ -187,6 +188,10 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		return nil, err
 	}
 	if err := ensureExitAckColumn(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureProcessColumns(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -243,6 +248,18 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 
 func ensureExitAckColumn(ctx context.Context, db *sql.DB) error {
 	return ensureColumn(ctx, db, "turn_start", "exit_acked", `ALTER TABLE turn_start ADD COLUMN exit_acked INTEGER NOT NULL DEFAULT 0`)
+}
+
+// ensureProcessColumns adds the harness process identity columns a journal written by an older supervisor lacks. They stay NULL on rows
+// recorded before the identity existed: a NULL means the turn's process is unknown and is never signalled.
+func ensureProcessColumns(ctx context.Context, db *sql.DB) error {
+	if err := ensureColumn(ctx, db, "turn_start", "pid", `ALTER TABLE turn_start ADD COLUMN pid INTEGER`); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "turn_start", "pgid", `ALTER TABLE turn_start ADD COLUMN pgid INTEGER`); err != nil {
+		return err
+	}
+	return ensureColumn(ctx, db, "turn_start", "pid_start", `ALTER TABLE turn_start ADD COLUMN pid_start TEXT`)
 }
 
 // ensureColumn adds a column a journal written by an older supervisor lacks.
@@ -495,6 +512,50 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 		}
 	}
 	return tx.Commit()
+}
+
+// TurnProcess is the harness process identity a turn's start recorded: the pid, the process group it leads, and the system's record of
+// when the process started (so a later process that reused the pid is not mistaken for it). Pid 0 means the row carries no identity: a
+// turn recorded by a supervisor that did not keep one, and its process is never signalled.
+type TurnProcess struct {
+	TurnID    string
+	Pid, Pgid int
+	Start     string
+}
+
+// RecordTurnProcess journals the harness process identity of a turn, right after its process started. A turn whose row is already gone
+// (it ended while the identity was being read) records nothing and is not an error.
+func (j *Journal) RecordTurnProcess(ctx context.Context, turnID string, pid, pgid int, start string) error {
+	result, err := j.db.ExecContext(ctx, `UPDATE turn_start SET pid=?,pgid=?,pid_start=? WHERE turn_id=? AND exec='running'`, pid, pgid, start, turnID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// RunningTurnProcesses lists the journal's running turns with the process identity their start recorded, oldest first.
+func (j *Journal) RunningTurnProcesses(ctx context.Context) ([]TurnProcess, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT turn_id,COALESCE(pid,0),COALESCE(pgid,0),COALESCE(pid_start,'') FROM turn_start WHERE exec='running' ORDER BY started_at,turn_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	turns := []TurnProcess{}
+	for rows.Next() {
+		var turn TurnProcess
+		if err := rows.Scan(&turn.TurnID, &turn.Pid, &turn.Pgid, &turn.Start); err != nil {
+			return nil, err
+		}
+		turns = append(turns, turn)
+	}
+	return turns, rows.Err()
 }
 
 func (j *Journal) AcknowledgeExit(ctx context.Context, turnID string) error {

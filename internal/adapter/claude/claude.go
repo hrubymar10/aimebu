@@ -439,6 +439,16 @@ func (t *turn) Cancel() error {
 	return adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reaped)
 }
 
+// ProcessIdentity is the process this turn runs in: a cold turn's harness, or the warm session's process a turn in a live process shares.
+// The process leads its own group (Setpgid, in the launcher's command), so the group's id is the pid.
+func (t *turn) ProcessIdentity() (pid, pgid int) {
+	if t.cmd == nil || t.cmd.Process == nil {
+		return 0, 0
+	}
+	pid = t.cmd.Process.Pid
+	return pid, pid
+}
+
 // Terminate asks the turn's process group to end (SIGTERM) and waits up to grace for it to go on its own; only then is it killed. A launcher in a
 // container traps the signal, ends the session in the container and exits 143 once it is gone, which is how a caller tells a confirmed end from a
 // kill. It records the cancel intent like Cancel. It returns whether the process ended on the terminate.

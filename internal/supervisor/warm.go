@@ -1613,9 +1613,47 @@ func (c *Client) identityOf(pid int) string {
 	return processStart(pid)
 }
 
+// processState is processStartState through the test hook, like identityOf.
+func (c *Client) processState(pid int) (ProcessStartState, string) {
+	if c.ProcessStartState != nil {
+		return c.ProcessStartState(pid)
+	}
+	return processStartState(pid)
+}
+
 // ProcessStart is processStart for the server's supervisor handover, which tells the supervisor it asked to exit from a later process
 // that reuses its pid.
 func ProcessStart(pid int) string { return processStart(pid) }
+
+// ProcessStartState is what the system said about a process's start: it ran and reports one (StartKnown, with the start string), it ran
+// and reports no such process (StartGone), or it could not tell (StartUnknown: ps missing, not runnable, out of permission, or answering
+// anything else). Only StartGone, and a StartKnown whose start differs, prove a pid's process changed; StartUnknown proves nothing and
+// must never be read as either.
+type ProcessStartState int
+
+const (
+	StartKnown ProcessStartState = iota
+	StartGone
+	StartUnknown
+)
+
+// processStartState is processStart with three outcomes: the start string when ps ran and reports one, gone when ps ran and reports no
+// such process (its exit status for an unknown pid, with no output), and unknown when ps could not tell. The old callers of processStart
+// keep reading "" for both gone and unknown, which is all they ever did.
+func processStartState(pid int) (ProcessStartState, string) {
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err == nil {
+		if start := strings.TrimSpace(string(out)); start != "" {
+			return StartKnown, start
+		}
+		return StartUnknown, ""
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && len(out) == 0 {
+		return StartGone, ""
+	}
+	return StartUnknown, ""
+}
 
 // processStart is the system's own record of when a process started, for telling a process from a later one that reuses its pid.
 func processStart(pid int) string {

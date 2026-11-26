@@ -86,7 +86,10 @@ type Client struct {
 	DrainOnly bool
 	// disconnectedDrops counts the sends that failed for want of a connection since the last one: the first is logged, the rest only
 	// counted and summed up in one line when the connection is back (logDisconnectedDrops).
-	disconnectedDrops  atomic.Int64
+	disconnectedDrops atomic.Int64
+	// unknownStarts logs a turn whose process lookup could not tell once per process run (the settlement runs once per start or drain
+	// hello); the map never grows beyond the turns it named.
+	unknownStarts      sync.Map
 	shutdownRequested  atomic.Bool
 	restartInterrupted atomic.Bool
 	OnError            func(error)
@@ -125,6 +128,9 @@ type Client struct {
 	ContainerState func(id string) (state string, err error)
 	// ProcessStart reports a process's own start time for the warm journal; nil asks the system (tests set it).
 	ProcessStart func(pid int) string
+	// ProcessStartState reports a process's own start with three outcomes (StartKnown with the start string, StartGone, StartUnknown) for
+	// the dead-turn settlement; nil asks the system (tests set it).
+	ProcessStartState func(pid int) (ProcessStartState, string)
 	// CommandLogger resolves, at each job's start, the absolute path of the program that writes a long command's log as a process of the
 	// command's own (`aimebu command-log`, see CommandLogMain): set, a native command runs in a session of its own and writes its log and
 	// exit marker without this process, so it survives this supervisor's exit and its replacement adopts it. Nil (or an error), the
@@ -259,6 +265,14 @@ var reconnectOutage = 10 * time.Minute
 func (c *Client) Run(ctx context.Context) error {
 	c.SweepLegacyKeys()
 	c.SweepWarmOrphans(ctx)
+	// The turns the previous holder of this journal left running are settled before the first hello, each one only once its recorded
+	// process identity has been checked (see settleDeadTurns): a hello never reports a dead predecessor's turn as running when the
+	// journal can vouch for its process. Rows without an identity stay for the drain path, which settles them as it always has.
+	if n, err := c.settleDeadTurns(ctx, false); err != nil {
+		return fmt.Errorf("settle the turns the previous supervisor left running: %w", err)
+	} else if n > 0 {
+		log.Printf("supervisor startup: settled %d turn(s) whose supervisor died", n)
+	}
 	telemetry.Go(ctx, func() { c.sweepAgentLogs(ctx) })
 	telemetry.Go(ctx, func() { c.warmGuard(ctx) })
 	telemetry.Go(ctx, func() { c.pruneJournal(ctx) })
@@ -511,9 +525,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	if c.DrainOnly {
-		// The holder that ran these turns is dead and a drain instance starts no process: a turn its journal still lists as running has no
-		// process, and the server has just lost it (or settled it from the hello). Ending it here is what lets the journal become empty.
-		if n, err := c.Journal.EndDeadTurns(ctx, adapter.ExitInfo{ExitCode: -1, ErrorEvent: "supervisor_lost", ErrorSummary: "the supervisor that ran this turn died"}); err != nil {
+		// The holder that ran these turns is dead and a drain instance starts no process: a turn its journal still lists as running is
+		// settled here, each one with its recorded process identity checked first (an orphan is terminated, a row without an identity is
+		// ended as the drain always did). Ending them is what lets the journal become empty.
+		if n, err := c.settleDeadTurns(ctx, true); err != nil {
 			c.replayReadFailed(ctx, err)
 			return err
 		} else if n > 0 {
@@ -1387,6 +1402,10 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		}
 		return c.reportStartFailure(ctx, conn, delivery, err)
 	}
+	// The harness process's identity goes into the journal while the turn runs, so a later supervisor can tell that process from a later
+	// one that reused its pid before it settles the turn. A write that cannot happen now (the connection died, the turn already ended)
+	// costs the row its identity, never the turn its course.
+	c.recordTurnProcess(context.WithoutCancel(ctx), delivery.TurnID, turn)
 	c.mu.Lock()
 	c.running[delivery.AgentID] = turn
 	stopNow := c.stopping || c.desired[delivery.AgentID].Desired == "stopped"
@@ -1661,6 +1680,8 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 			exit, _ = turn.Wait()
 			break
 		}
+		// The attempt that runs now is a new process: its own identity is what the journal must carry.
+		c.recordTurnProcess(journalCtx, delivery.TurnID, turn)
 		watch = newTurnWatch(limits, time.Now())
 		rearm()
 	}

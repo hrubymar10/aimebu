@@ -45,6 +45,7 @@ type Fake struct {
 	readonlyVerified bool
 	echoDefault      bool
 	echoGate         <-chan struct{}
+	processIdentity  func(TurnSpec) (pid, pgid int)
 }
 
 func NewFake() *Fake { return &Fake{scripts: make(map[string][]Step), started: make(map[string]bool)} }
@@ -56,6 +57,14 @@ func (f *Fake) SetEchoGate(gate <-chan struct{}) { f.mu.Lock(); f.echoGate = gat
 func (f *Fake) SetReadonlyVerified(value bool) {
 	f.mu.Lock()
 	f.readonlyVerified = value
+	f.mu.Unlock()
+}
+
+// SetProcessIdentity gives future turns a process identity to report (adapter.ProcessIdentified): the test names the pid and group the
+// turn's process would have, usually a helper process the test started and kills itself.
+func (f *Fake) SetProcessIdentity(identity func(TurnSpec) (pid, pgid int)) {
+	f.mu.Lock()
+	f.processIdentity = identity
 	f.mu.Unlock()
 }
 func (f *Fake) Capabilities(_ string, _ Environment) Capabilities {
@@ -150,6 +159,12 @@ func (f *Fake) Start(parent context.Context, spec TurnSpec) (Turn, error) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	t := &fakeTurn{events: make(chan Event, len(steps)+1), done: make(chan struct{}), cancel: cancel}
+	f.mu.Lock()
+	identity := f.processIdentity
+	f.mu.Unlock()
+	if identity != nil {
+		t.pid, t.pgid = identity(spec)
+	}
 	go t.run(ctx, steps, exitID)
 	return t, nil
 }
@@ -163,7 +178,11 @@ type fakeTurn struct {
 	finished     bool
 	exit         ExitInfo
 	err          error
+	pid, pgid    int
 }
+
+// ProcessIdentity reports the identity the test gave the turn, if any.
+func (t *fakeTurn) ProcessIdentity() (pid, pgid int) { return t.pid, t.pgid }
 
 func (t *fakeTurn) Events() <-chan Event { return t.events }
 func (t *fakeTurn) Cancel() error {

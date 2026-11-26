@@ -49,6 +49,13 @@ type codexWarmTurn struct {
 	conv                *adapter.Conversation // the turn's conversation log, nil when it has none
 }
 
+// ProcessIdentity is the warm session's process, which this turn runs in. The process leads its own group (Setpgid, in the warm launch), so
+// the group's id is the pid.
+func (t *codexWarmTurn) ProcessIdentity() (pid, pgid int) {
+	pid = t.warm.Pid()
+	return pid, pid
+}
+
 func (w *codexWarmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 	if spec.TurnID == "" {
 		return nil, fmt.Errorf("turn ID required")

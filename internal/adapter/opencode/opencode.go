@@ -512,6 +512,16 @@ func (t *turn) ToolProcessSince(since time.Time) bool {
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 
+// ProcessIdentity is the process this turn created: the harness itself, or the launcher that runs it in a container. The process leads its
+// own group (Setpgid, where the command is built), so the group's id is the pid.
+func (t *turn) ProcessIdentity() (pid, pgid int) {
+	if t.cmd == nil || t.cmd.Process == nil {
+		return 0, 0
+	}
+	pid = t.cmd.Process.Pid
+	return pid, pid
+}
+
 func (t *turn) Cancel() error {
 	t.activity.Stop() // a probe in flight answers nothing a cancelled turn needs
 	select {

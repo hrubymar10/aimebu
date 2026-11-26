@@ -436,6 +436,16 @@ func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load())
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
 
+// ProcessIdentity is the harness process this turn runs in. The process leads its own group (Setpgid, where the command is built), so the
+// group's id is the pid.
+func (t *turn) ProcessIdentity() (pid, pgid int) {
+	if t.cmd == nil || t.cmd.Process == nil {
+		return 0, 0
+	}
+	pid = t.cmd.Process.Pid
+	return pid, pid
+}
+
 func (t *turn) Cancel() error {
 	select {
 	case <-t.done:

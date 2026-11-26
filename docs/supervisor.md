@@ -33,7 +33,11 @@ process to end before sending that agent's next turn to the new instance.
 There is no replacement grace or automatic interruption of a turn during a
 normal swap. Restart now remains an explicit interruption. A bounded handover
 is reserved for a disconnected or empty instance that does not exit. An
-instance that crashes with open work is recovered from its own journal.
+instance that crashes with open work is recovered from its own journal: every
+turn its journal still lists as running is settled only after the harness
+process identity the turn's start recorded is checked (below), so a harness
+that outlived the crash is never mistaken for a finished one, and an orphan
+whose output nobody will deliver is not left running for days.
 See "Side by side" below for how the instances are started and finished.
 If the executable on disk is newer than the running server, restart the
 server to use that build; repeated supervisor replacements do not help.
@@ -180,6 +184,30 @@ different in-memory process-liveness map. When testing a second standalone
 supervisor on the same host, set `AIMEBU_EMBEDDED_SUPERVISOR=0` on the server
 and stop any existing local supervisor first with
 `aimebu server stop --with-supervisor`.
+
+When a turn's process starts, the journal records its identity with the
+turn: the pid, the process group it leads (every harness runs in a group of
+its own, a containerized harness's launcher included), and the system's
+record of when that process started, so a later process that reused the pid
+is never mistaken for the turn's. Rows written before the journal kept an
+identity have none, and their process is never signalled. When a supervisor
+opens a journal whose turns a dead predecessor left running — at its start,
+before the first hello, and again when a drain instance finishes the
+journal — it settles each of those turns by that identity: a process that is
+gone (no such pid, or the pid now carries a process that started at another
+time) proves the turn dead, and it is ended as `supervisor_lost` the way a
+drain has always ended it; a process still running with the same pid and
+start time is an orphan whose output nobody will deliver, so its process
+group is asked to end (SIGTERM, five seconds, SIGKILL) before the turn is
+ended the same way; and a row without an identity is left to the drain path,
+which ends it as it always did, assuming nothing about a process it cannot
+name. Only a process whose pid and start time both match the journal's
+record is ever signalled, and only the process group of that one turn: the
+turns and warm processes of a side-by-side instance live in that instance's
+own journal and are never touched. A lookup that cannot tell — `ps` missing,
+not runnable, out of permission, or answering nothing usable — proves
+nothing: the turn is left running until the next check, is never signalled
+on its word, and is logged once per turn per process run.
 
 The owner pairs a remote machine from the browser's **Add machine** action.
 It issues a one-use token valid for ten minutes and shows a command to paste

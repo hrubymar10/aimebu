@@ -1506,7 +1506,18 @@ compare-and-set on (state, rev) — an answer to an open item matches
 Records (all keyed by turn_id + generation):
 - `turn_start{turn_id, generation, desired_rev, note_ids, mode, started_at}`
   — written and fsynced **before** the tool process is started; the
-  `accepted` ack is sent only after it.
+  `accepted` ack is sent only after it. Once the process runs, the record
+  also carries its identity (`pid`, `pgid`, `pid_start`: the pid, the
+  process group it leads, and the system's record of when that process
+  started; NULL on rows from before the identity was kept, whose process is
+  never signalled). A supervisor that finds turns a dead predecessor left
+  running — at its start, before the first hello, and in a drain — settles
+  each only by that identity: a process that is gone (no such pid, or the
+  pid now carries a process that started at another time) proves the turn
+  dead and it is ended `supervisor_lost`; an orphan still running with the
+  same pid and start time is terminated (its process group: SIGTERM, 5 s,
+  SIGKILL) and then ended the same way; and a row without an identity keeps
+  the drain's old behaviour.
 - `activity{source_event_id, kind, summary, ts}` — appended as parsed.
 - `process_exit{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?, ts,
   acked}` — replayed until the server acknowledges its durable process
@@ -1543,7 +1554,8 @@ Records (all keyed by turn_id + generation):
   for (it is not this process's child) and never killed.
 The journal stores a random `journal_id` created once at initialization and
 preserved on reopen. A replacement journal gets a different ID.
-Write ordering per turn: turn_start → (spawn) → activity* → process_exit /
+Write ordering per turn: turn_start → (the process identity, once the
+process runs) → (spawn) → activity* → process_exit /
 answer → receipt. On reconnect the supervisor reports running turns (even
 after a terminal answer receipt), unreceipted starts, and unacknowledged exits
 in `hello`; a turn with no `turn_start`
