@@ -127,6 +127,15 @@ type TargetRefresher struct {
 	accounts map[string]*targetAccount // tool/token-hash -> in-memory attempt state
 	alerted  map[string]bool
 	state    *refreshStateStore
+	// skipReason is the last reason refreshProfile logged for a profile, so a skip that stays the same is logged once and a changed
+	// one is logged again. reactiveTried holds the access-token hashes a reactive refresh already spent on: one attempt each.
+	skipReason    map[string]string
+	reactiveTried map[string]bool
+	reactiveLast  map[string]time.Time // tool/profile -> when a reactive spend last ran
+	// reactiveRotated is the hash of the access token a reactive rotation produced, by tool/profile; seeing that very token rejected
+	// again means the account rejects freshly refreshed tokens, which puts the profile in reactiveStopped (the rejected token's hash).
+	reactiveRotated map[string]string
+	reactiveStopped map[string]string
 
 	// Overridable (tests and wiring).
 	executors     map[string]refreshExecutor
@@ -562,6 +571,14 @@ func (r *TargetRefresher) RefreshIncoming(ctx context.Context, tool, profile str
 // caller already holds the account lock (RefreshIncoming); otherwise the lock is
 // taken here and a busy account is skipped.
 func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, holdsLock bool) error {
+	return r.refreshProfileOpts(ctx, p, holdsLock, false, nil)
+}
+
+// refreshProfileOpts is refreshProfile with forced: the account rejected this very token (a reactive refresh), so the due check, the
+// minimum gap after the last rotation and the switch-away grace do not apply. Every other guard does, and a forced run is still
+// bounded by the once-per-token cap its caller keeps. attempted (nil for none) is called once every guard has passed and the run is
+// about to act on the token (settle a leftover, report a parked account, or spend): only then has the attempt been used. Each silent skip names its reason in the log, once per profile and state.
+func (r *TargetRefresher) refreshProfileOpts(ctx context.Context, p StoredProfile, holdsLock, forced bool, attempted func()) error {
 	tool := p.Tool
 	if (tool != "claude" && tool != "codex") || !p.HasCredentials || p.CredPath == "" {
 		return nil
@@ -570,12 +587,14 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 		return nil // this tool is still on the link model, or no per-tool gate was set
 	}
 	if p.Active && r.pendingLogin != nil && r.pendingLogin(tool) {
+		r.noteSkip(p, "a login is pending in the live file, which owns the refresh token")
 		return nil // /login or an interrupted un-migration owns the live refresh token
 	}
 	// A linked stored file is the live file itself (an install that has not been
 	// migrated): spending its token would revoke the family under the sessions
 	// running on it.
 	if credentialPathIsLink(p.CredPath) {
+		r.noteSkip(p, "the stored file is a link to the live file (not migrated)")
 		return nil
 	}
 	now := r.now()
@@ -583,7 +602,8 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 	// The incoming profile (holdsLock) is about to become active and must be
 	// refreshed if due, however recently it was last active: a quick A -> B -> A
 	// would otherwise hand a due profile to Switch.
-	if !holdsLock && p.SwitchedAwayAt != nil && now.Sub(*p.SwitchedAwayAt) < targetSwitchAwayGrace {
+	if !forced && !holdsLock && p.SwitchedAwayAt != nil && now.Sub(*p.SwitchedAwayAt) < targetSwitchAwayGrace {
+		r.noteSkip(p, "switched away less than "+targetSwitchAwayGrace.String()+" ago")
 		return nil
 	}
 	// The due pass leaves Codex alone right after migration (see codexMigrationQuiet).
@@ -591,17 +611,37 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 	// blocked by it, and the refresh it asks for is the one the caller needs.
 	if tool == "codex" && !holdsLock {
 		if at, ok := r.migrationTime(tool); ok && now.Sub(at) < codexMigrationQuiet {
+			r.noteSkip(p, "migrated less than "+codexMigrationQuiet.String()+" ago")
 			return nil
 		}
 	}
 	expiry, err := profileExpiry(tool, p.CredPath)
-	if err != nil {
-		return nil
+	if err != nil || expiry == nil {
+		// An unreadable expiry reads as "never due". For the active profile that is a silent failure, so it is announced; the
+		// stored copies only log it.
+		detail := "the credential's expiry cannot be read, so it is never due"
+		if err != nil {
+			detail = "the credential cannot be read (" + cleanDetail(err.Error()) + "), so it is never due"
+		}
+		r.noteSkip(p, detail)
+		if p.Active && !forced {
+			r.emit("expiry_unreadable", tool+"/"+p.Name, detail)
+		}
+		if !forced {
+			return nil
+		}
+	} else if !forced {
+		lead, tooSoon := r.effectiveLead(tool, p.Name, storedTokenHash(tool, p.CredPath), now)
+		if tooSoon {
+			r.noteSkip(p, "refreshed less than "+refreshMinGap.String()+" ago")
+			return nil
+		}
+		if !targetProfileDue(expiry, now, lead) {
+			r.noteSkip(p, "not due until "+expiry.Add(-lead).UTC().Format(time.RFC3339))
+			return nil
+		}
 	}
-	lead, tooSoon := r.effectiveLead(tool, p.Name, storedTokenHash(tool, p.CredPath), now)
-	if tooSoon || !targetProfileDue(expiry, now, lead) {
-		return nil
-	}
+	r.clearSkip(p)
 	start, err := os.ReadFile(p.CredPath)
 	if err != nil {
 		return nil
@@ -613,6 +653,9 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 	hash := tokenHash(tool, token)
 	store := r.stateStore()
 	if entry, ok := store.account(tool, hash); ok {
+		if attempted != nil {
+			attempted()
+		}
 		r.emit(entry.State, tool+"/"+p.Name, entry.Detail)
 		return fmt.Errorf("%w (%s)", ErrAccountNeedsLogin, entry.State)
 	}
@@ -643,6 +686,9 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 	// rescue file whose commit failed. Settle that (retry the commit from the
 	// rescue, or mark the account) instead of ever spending the token again.
 	if e, ok := r.journalFor(tool, p.Name, hash); ok {
+		if attempted != nil {
+			attempted()
+		}
 		return r.settleLeftover(ctx, e, acct)
 	}
 	if r.available != nil && !r.available() {
@@ -663,11 +709,38 @@ func (r *TargetRefresher) refreshProfile(ctx context.Context, p StoredProfile, h
 	if again, err := refreshToken(start, tool); err != nil || tokenHash(tool, again) != hash {
 		return nil
 	}
-	return r.spend(ctx, p, start, expiry, hash, acct)
+	if attempted != nil {
+		attempted()
+	}
+	return r.spend(ctx, p, start, expiry, hash, acct, forced)
+}
+
+// noteSkip logs why refreshProfile did nothing for p, once per profile and reason: the same reason on the next tick stays quiet, a
+// different one is logged. The text never carries a credential.
+func (r *TargetRefresher) noteSkip(p StoredProfile, reason string) {
+	key := p.Tool + "/" + p.Name
+	r.mu.Lock()
+	if r.skipReason == nil {
+		r.skipReason = map[string]string{}
+	}
+	if r.skipReason[key] == reason {
+		r.mu.Unlock()
+		return
+	}
+	r.skipReason[key] = reason
+	r.mu.Unlock()
+	log.Printf("usages: token refresh %s skipped: %s", key, reason)
+}
+
+// clearSkip forgets p's last skip reason, so the next skip is logged again.
+func (r *TargetRefresher) clearSkip(p StoredProfile) {
+	r.mu.Lock()
+	delete(r.skipReason, p.Tool+"/"+p.Name)
+	r.mu.Unlock()
 }
 
 // spend runs the CLI against a throwaway copy and acts on the classified result.
-func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []byte, oldExpiry *time.Time, hash string, acct *targetAccount) error {
+func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []byte, oldExpiry *time.Time, hash string, acct *targetAccount, forced bool) error {
 	if !r.beginSpend(ctx) {
 		return fmt.Errorf("%w: token refresh is shutting down, nothing was sent", context.Canceled)
 	}
@@ -745,10 +818,16 @@ func (r *TargetRefresher) spend(ctx context.Context, p StoredProfile, start []by
 		}
 		return r.noteFailure(acct, tool, p.Name, attempt.Detail, false)
 	case OutcomeInvalidGrant:
+		if forced {
+			attempt.Detail = "the session was revoked: the account rejected the login and refused its refresh token (" + attempt.Detail + ")"
+		}
 		r.settle(store, refreshAccountEntry{Tool: tool, Name: p.Name, State: AccountReauthRequired, Detail: attempt.Detail, SpentHash: hash, Since: r.now().UTC()}, tool, p.Name)
 		r.emit(AccountReauthRequired, key, attempt.Detail)
 		return fmt.Errorf("%w: %s", ErrAccountNeedsLogin, attempt.Detail)
 	default:
+		if forced {
+			attempt.Detail = "the refresh failed: the outcome is unknown (" + attempt.Detail + ")"
+		}
 		r.settle(store, refreshAccountEntry{Tool: tool, Name: p.Name, State: AccountNeedsReloginSoon, Detail: attempt.Detail, SpentHash: hash, Since: r.now().UTC()}, tool, p.Name)
 		r.emit(AccountNeedsReloginSoon, key, attempt.Detail)
 		return fmt.Errorf("%w: %s", ErrAccountNeedsLogin, attempt.Detail)

@@ -88,8 +88,13 @@ type Server struct {
 	// codexWatch is the Codex overwrite check of the last Codex switch (see codex_overwrite.go); nil when none is running.
 	codexWatch atomic.Pointer[codexWatch]
 	refresher  *usages.TargetRefresher
-	claimsDone chan struct{} // closed once the live-file claims are released after shutdown
-	liveClaims *switcher.LiveClaims
+	// reactiveBusy marks the profiles whose reactive refresh is running (single-flight).
+	reactiveMu   sync.Mutex
+	reactiveBusy map[string]bool
+	reactiveRuns int           // reactive refreshes in flight, under reactiveMu; WaitUsageRefreshes joins them
+	reactiveIdle *sync.Cond    // signalled under reactiveMu when reactiveRuns reaches zero
+	claimsDone   chan struct{} // closed once the live-file claims are released after shutdown
+	liveClaims   *switcher.LiveClaims
 	// refresherBlocked is why this process may not refresh a tool's live login: another refresher's claim, or another
 	// root's token-copy marker for the same live file. "" means it may.
 	refresherBlocked func(tool string) string

@@ -156,6 +156,7 @@ func (s *Server) noteProviderLimit(ctx context.Context, agentID string) {
 // accountSwitched is what follows a switch that changed the host's login of tool: the usage snapshot is refreshed, and the provider limits the
 // host's agents of the tool met on the old login are lifted, so they go on with the new one instead of waiting for the old one's reset.
 func (s *Server) accountSwitched(ctx context.Context, tool string) {
+	s.clearReactiveStop(tool) // a switch is a new situation for the reactive refresh's stop
 	s.refreshSwitchedUsage(tool)
 	// A switch never waits for agents: the warm processes of the tool are ended in the background, and a Codex login that a running session writes
 	// back is put right again.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
@@ -52,6 +53,7 @@ func (s *Server) StartUsageAlerts(ctx context.Context, root string) error {
 					telemetry.ReportCause(context.Background(), "usages", "usage alerts")
 				} else {
 					s.recordRejectedLogins(tracker)
+					s.refreshRejectedLogins(ctx, tracker.ActiveRejectedLogins())
 					if changed {
 						s.usageAlertRevision.Add(1)
 						s.nudgeUsageWatchers()
@@ -147,5 +149,66 @@ func (s *Server) nudgeUsageWatchers() {
 		case ch <- struct{}{}:
 		default:
 		}
+	}
+}
+
+// refreshRejectedLogins starts the reactive refresh for each active profile the usage poll read as rejected. The refresher owns the
+// limits (the tools it manages, the active profile, one attempt per access token), so listing the same rejection on every poll is
+// cheap; what runs here is only the single-flight per profile, because a spend can take minutes and must not block the poll loop. When
+// the login rotated, the usage poll is re-read, so the rejected state clears and spawns and resumes work again without a person.
+func (s *Server) refreshRejectedLogins(ctx context.Context, logins []usages.RejectedLogin) {
+	tr := s.currentRefresher()
+	if tr == nil {
+		return
+	}
+	for _, login := range logins {
+		key := login.Tool + "/" + login.Profile
+		s.reactiveMu.Lock()
+		if s.reactiveBusy == nil {
+			s.reactiveBusy = map[string]bool{}
+		}
+		// A cancelled context starts nothing: once the server (or a test) has cancelled it and joined the runs, none can slip in.
+		if ctx.Err() != nil || s.reactiveBusy[key] {
+			s.reactiveMu.Unlock()
+			continue
+		}
+		s.reactiveBusy[key] = true
+		s.reactiveRuns++
+		s.reactiveMu.Unlock()
+		tool, profile := login.Tool, login.Profile
+		telemetry.Go(ctx, func() {
+			defer func() {
+				s.reactiveMu.Lock()
+				delete(s.reactiveBusy, key)
+				s.reactiveRuns--
+				if s.reactiveRuns == 0 && s.reactiveIdle != nil {
+					s.reactiveIdle.Broadcast()
+				}
+				s.reactiveMu.Unlock()
+			}()
+			if res := tr.RefreshRejected(ctx, tool, profile); res.Outcome == usages.ReactiveRotated {
+				s.refreshSwitchedUsage(tool)
+			}
+		})
+	}
+}
+
+// waitReactiveRefreshes blocks until no reactive refresh is in flight. Callers cancel the context first, so none starts meanwhile.
+func (s *Server) waitReactiveRefreshes() {
+	s.reactiveMu.Lock()
+	defer s.reactiveMu.Unlock()
+	if s.reactiveIdle == nil {
+		s.reactiveIdle = sync.NewCond(&s.reactiveMu)
+	}
+	for s.reactiveRuns > 0 {
+		s.reactiveIdle.Wait()
+	}
+}
+
+// clearReactiveStop ends the reactive refresh's stop for tool (see TargetRefresher.ClearReactiveStop): called when a login is imported
+// through the switcher or the active profile is switched.
+func (s *Server) clearReactiveStop(tool string) {
+	if tr := s.currentRefresher(); tr != nil {
+		tr.ClearReactiveStop(tool)
 	}
 }

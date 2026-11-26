@@ -120,6 +120,7 @@ func (s *Server) switcherImport(w http.ResponseWriter, r *http.Request) {
 		switcherError(w, err)
 		return
 	}
+	s.clearReactiveStop(r.PathValue("tool")) // an imported login is a new situation for the reactive refresh's stop
 	s.refreshSwitchedUsage(r.PathValue("tool"))
 	writeJSON(w, 201, map[string]string{"active": req.Name})
 }
@@ -221,6 +222,7 @@ func (s *Server) refreshSwitchedUsage(tool string) {
 // cache into the usages directory, so whoever is about to remove or replace that directory (a test's cleanup) waits first; a refresh that was
 // not waited for can recreate the directory, or land a file in it while it is being removed ("directory not empty").
 func (s *Server) WaitUsageRefreshes() {
+	s.waitReactiveRefreshes()   // a reactive refresh re-reads the usage poll when it rotates, so it is joined before that wait
 	s.switchBackgroundContext() // so cancelling below always has a context to cancel
 	s.switchBgMu.Lock()
 	cancel := s.switchBgCancel

@@ -152,6 +152,9 @@ type AlertTracker struct {
 	// pendingRejected collects the episodes Observe started; the server
 	// drains them to record the owner's bell events.
 	pendingRejected []RejectedLogin
+	// activeRejected is the active profiles the last Observe read as rejected (an episode open now, not only one that just
+	// started). The server hands them to the reactive refresh, which spends once per token however often they are listed.
+	activeRejected []RejectedLogin
 	// authNames maps each tracked auth base to the provider and profile
 	// name it was last observed under, so RejectionTimes can answer per
 	// profile. It is rebuilt on every Observe and not persisted: the next
@@ -225,6 +228,7 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 	}
 	changed, visibleChanged := false, false
 	pendingFrom := len(t.pendingRejected)
+	t.activeRejected = nil
 	liveBases := map[string]string{}
 	liveAccounts := map[string]string{}
 	paceOn, resetOn, expiryOn := snapshot.Settings.AlertPaceEnabled, snapshot.Settings.AlertResetNoticeEnabled, snapshot.Settings.AlertExpiryEnabled
@@ -336,6 +340,11 @@ func (t *AlertTracker) Observe(snapshot Response) (bool, error) {
 						episode.TokenTail = profile.TokenTail
 						changed = true
 					}
+				}
+				if profile.Active {
+					t.activeRejected = append(t.activeRejected, RejectedLogin{
+						Provider: provider.ProviderName, Tool: authTool(provider.ProviderName), Profile: profile.ProfileName,
+						Hint: hint, FirstSeen: episode.FirstSeen, TokenTail: episode.TokenTail})
 				}
 				if profile.Active && !episode.Inbox {
 					episode.Inbox = true
@@ -708,6 +717,13 @@ func (t *AlertTracker) addRejectedAlert(base string, episode int, provider, prof
 	id := "usage_alert_" + alertHash(base + "\x00" + fmt.Sprint(episode) + "\x00" + loginRejectedTier)[:24]
 	t.state.Alerts[id] = UsageAlert{ID: id, Provider: provider, Profile: profile, Tier: loginRejectedTier,
 		Hint: hint, FirstSeen: &firstSeen, TokenTail: tokenTail, CreatedAt: t.clock().UTC(), Open: true, BaseKey: base}
+}
+
+// ActiveRejectedLogins lists the active profiles the last Observe read as rejected, whether their episode started then or earlier.
+func (t *AlertTracker) ActiveRejectedLogins() []RejectedLogin {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]RejectedLogin(nil), t.activeRejected...)
 }
 
 // RejectionTimes says when each profile's current or last rejection episode

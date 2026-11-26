@@ -379,6 +379,38 @@ warmup if its short CLI request rotates a grant.
 A profile switched away from within two minutes, a Codex profile within 10 minutes
 of its migration, and a profile whose store file is still a link are left alone.
 
+**Reactive refresh.** The due check reads only the token's own expiry, and a
+provider can end a login long before it (a token with ten days left that answers
+401). So when the usage poll reads the **active** profile of a migrated tool as
+rejected (`auth_missing`, the state that makes spawn skip a launcher), the server
+treats that profile as due once and refreshes it through the same spend path,
+then fans it out as a scheduled refresh does (`TargetRefresher.RefreshRejected`,
+started from the usage-alert pass; Codex and Claude alike). Limits: **one attempt
+per access-token hash** per server run, so a token that stays rejected never
+spends again, and a token is marked tried only once the run got past every guard
+(a busy account lock, a pending login, a backoff or the migration quiet period
+leave it eligible for the next poll); **a stop**: when a reactive rotation
+succeeds and the token it produced is rejected as well, there is no further
+reactive spend for that profile and **one** alert says `<tool>/<profile>: the
+account rejects freshly refreshed tokens; log in again`. The stop ends when a
+different credential is in the profile (a login the reconciler imported), when a
+login is imported through the switcher API, or when a profile of that tool is
+switched (`accountSwitched`); it is held in memory, so a restart forgets it, and
+**one reactive spend per profile in 30 minutes** is the backstop that bounds a
+restarted or otherwise unstopped loop; only the active profile of a tool the refresher owns; the account
+lock, the pending-login and migration-quiet guards still apply. A rotated login
+re-reads the usage poll, which clears the rejected state, so spawns and resumes
+work again without a person. A refused refresh token keeps the state and raises
+**one** `credential_alert` saying `the session was revoked`; any other failure
+raises one saying `the refresh failed: <class>`. A failed refresh never wipes or
+rewrites the stored credential.
+
+Every skip is logged with its reason once per profile and state change
+(`token refresh <tool>/<profile> skipped: ...`: pending login, link, switched away,
+migration quiet, not due until a time, refreshed too recently). An **active**
+profile whose expiry cannot be read (it reads as "never due") raises an
+`expiry_unreadable` alert, which a quiet skip used to hide.
+
 `GET /api/credentials/targets` (owner only) returns `{enabled, targets, alerts}`:
 one row per stored profile and live file of a migrated tool with `expires_at`,
 `seconds_left`, `level` (`ok`, `expiring` under 15 minutes, `expired`,
