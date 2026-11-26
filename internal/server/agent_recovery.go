@@ -53,13 +53,19 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "restart" && req.Choice != "continue" || len(req.Note) > 2000 {
+	if req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "abandon_stop" && req.Choice != "restart" && req.Choice != "continue" || len(req.Note) > 2000 {
 		apiError(w, 400, "invalid_request", "choice or note invalid")
 		return
 	}
 	itemID := r.PathValue("item")
 	if !strings.HasPrefix(itemID, "inb_") {
 		apiError(w, 400, "invalid_request", "invalid item id")
+		return
+	}
+	// Abandon and stop stops the agent, which takes the permission stop_agent takes (a role that can only spawn may abandon, not stop); the
+	// store runs the rest of stop_agent's check, and a refusal there leaves the item open.
+	if req.Choice == "abandon_stop" && !caller.IsLead && !caller.CanManage {
+		apiError(w, 403, "forbidden", "stopping an agent needs the permission stop_agent needs: an active lead, or the flow's coordinator")
 		return
 	}
 	rev, err := s.Store.RecoveryItemRevision(r.Context(), itemID)
@@ -96,13 +102,17 @@ func (s *Server) agentToolResolveRecovery(w http.ResponseWriter, r *http.Request
 			// An expected refusal, not a server fault: restart exists only for a broken session.
 			apiError(w, 409, "invalid_transition", "this recovery can't take that choice; for a failed start or an unconfirmed warm process, abandon it, or retry once the quarantine ends")
 		default:
-			fail(w, err)
+			spawnError(w, err)
 		}
 		return
 	}
 	status := 201
 	if reused {
 		status = 200
+	}
+	// Abandon and stop stopped the agent: its machine is told as a stop_agent tells it.
+	if decision.StoppedAgent != nil && !reused {
+		s.sendRoomControls(r.Context(), []store.AgentCard{*decision.StoppedAgent})
 	}
 	writeJSON(w, status, decision)
 }

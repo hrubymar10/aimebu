@@ -1567,11 +1567,18 @@ compare-and-set on (state, rev) — an answer to an open item matches
   `done` only when that turn settles. Retry delivers the notes raw (and the
   UI warns it repeats the task); Resume delivers notes + evidence + report
   with "continue, do not repeat"; **Abandon** = notes aborted,
-  recovery_block cleared; `desired` is untouched (recovery never changes
-  the admin state, so a manual stop or room/project pause survives). A
+  recovery_block cleared; `desired` is untouched (so a manual stop or
+  room/project pause survives). **Abandon and stop** (choice `abandon_stop`)
+  is Abandon plus `desired=stopped` for the agent, committed in the same
+  transaction as the Abandon: if either part fails, neither is applied. It is
+  offered next to Abandon on every recovery item that offers Abandon, for a
+  person and for the lead through `resolve_recovery`. It is the only recovery
+  choice that changes the admin state, and it changes it like any stop (the
+  agent's machine is told). Through `resolve_recovery`, `abandon_stop`
+  requires the same permission as `stop_agent`. A
   decision is rejected (`stale_rev`) if newer
   evidence or a newer turn exists.
-  Abandoning a recovery withdraws every note that was queued for the agent when the decision is made, not only the notes of the failed turn; the agent stays active and is woken again only by notes created after it. A stop is different: a note addressed to an already stopped agent stays queued for its restart, except that abandoning a recovery withdraws them as well.
+  Abandoning a recovery withdraws every note that was queued for the agent when the decision is made, not only the notes of the failed turn; the agent stays active and is woken again only by notes created after it. A stop is different: a note addressed to an already stopped agent stays queued for its restart, except that abandoning a recovery withdraws them as well. The Inbox item carries `withdraw_notes` and `withdraw_rooms`: the number of notes the Abandon would withdraw and in how many rooms, counted by the server when the item is read (the agent's queued notes in every room, or, for a loop-budget pause, only the room's notes older than the item; none for a held answer or a broken session that was not a context overflow). The numbers are a snapshot; the Abandon withdraws what is queued when it commits. The web confirmation for Abandon and for Abandon and stop states both numbers, and for Abandon and stop that the agent will be stopped.
 
 ## 3b. Supervisor journal (per machine, durable local SQLite)
 

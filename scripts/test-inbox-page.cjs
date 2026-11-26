@@ -31,7 +31,7 @@ const items = () => [
   { ...base, id: 'q1', kind: 'question', question: 'Which option should the team use?', options: ['Option A', 'Option B'], free_text: true },
   { ...base, id: 'ap1', kind: 'approval', question: 'Approve the proposed change?', proposed_answers: ['Approve', 'Revise'] },
   { ...base, id: 'ro1', kind: 'question', question: 'Only the owner answers this', options: ['Yes'], can_decide: false },
-  { ...base, id: 'rec1', kind: 'recovery', turn_id: 't1', question: 'Agent needs recovery', evidence: 'Work may have partially completed.', diagnostic_report: { status: 'clean', details: { checked: true, files: 3 } } },
+  { ...base, id: 'rec1', kind: 'recovery', turn_id: 't1', question: 'Agent needs recovery', evidence: 'Work may have partially completed.', withdraw_notes: 3, withdraw_rooms: 2, diagnostic_report: { status: 'clean', details: { checked: true, files: 3 } } },
   { ...base, id: 'rec2', kind: 'recovery', recovery_phase: 'quiescence_wait', question: 'Waiting for the old process to be confirmed gone', evidence: 'Still running.' },
   { ...base, id: 'rec4', kind: 'recovery', recovery_phase: 'broken_session', turn_id: 't4', question: 'The agent answered twice in a row with an empty answer' },
   { ...base, id: 'del2', kind: 'delivery_failed', recovery_phase: 'answer_held', held_reason: 'correction_unavailable', question: 'An agent reply could not be delivered.' },
@@ -141,7 +141,7 @@ async function main() {
         evidence: [...node.querySelectorAll('.inbox-evidence')].map(p => p.textContent), summary: node.querySelector('details.inbox-details summary')?.textContent, raw: node.querySelector('details.inbox-details pre')?.textContent,
         label: node.querySelector('details.inbox-details small')?.textContent, open: node.querySelector('details.inbox-details')?.open, warning: node.querySelector('.inbox-retry-warning')?.textContent }));
       assert.match(card.question, /^Same failure again — fix the cause first/);
-      assert.deepEqual(card.buttons, ['Retry', 'Abandon']);
+      assert.deepEqual(card.buttons, ['Retry', 'Abandon', 'Abandon and stop']);
       assert.deepEqual(card.evidence, [sentence], 'the card reads the harness sentence, not the raw JSON');
       assert.deepEqual([card.summary, card.label, card.open], ['Details', 'Raw output', false], 'the raw output is folded away under Details');
       assert.equal(card.raw, raw);
@@ -164,7 +164,7 @@ async function main() {
           order: [summary, decisions, details].map(el => Math.round(el.getBoundingClientRect().top)), cardHeight: Math.round(card.height), decisionsBottom: Math.round(decisions.getBoundingClientRect().bottom - card.top) };
       });
       assert.equal(shown.summary, "The agent's process exited with code 1: Failed to authenticate: OAuth session expired and could not be refreshed");
-      assert.deepEqual([shown.buttons, shown.open, shown.label], [['Resume', 'Retry', 'Abandon'], false, 'Output'], 'the decision is shown and the output is folded');
+      assert.deepEqual([shown.buttons, shown.open, shown.label], [['Resume', 'Retry', 'Abandon', 'Abandon and stop'], false, 'Output'], 'the decision is shown and the output is folded');
       assert.equal(shown.text, wall, 'and all of the output is behind Details');
       assert.deepEqual([...shown.order].sort((a, b) => a - b), shown.order, 'summary, then the decision, then Details');
       assert.ok(shown.decisionsBottom < 420 && shown.cardHeight < 520, `the decision is near the top of the card: its bottom edge is at ${shown.decisionsBottom}px of a card ${shown.cardHeight}px tall`);
@@ -202,10 +202,10 @@ async function main() {
       assert.deepEqual([by('q1').kind, by('q1').buttons, by('q1').extra[5]], ['Question', ['View in room', 'Option A', 'Option B', 'Send answer', 'Dismiss'], true]);
       assert.deepEqual([by('ap1').kind, by('ap1').buttons, by('ap1').extra[6]], ['Approval', ['View in room', 'Approve', 'Revise', 'Dismiss'], true]);
       assert.deepEqual([by('ro1').buttons, by('ro1').extra[4]], [['View in room'], true]);
-      assert.deepEqual([by('rec1').kind, by('rec1').buttons, by('rec1').evidence, by('rec1').extra.slice(0, 3)], ['Recovery', ['View in room', 'Resume', 'Retry', 'Abandon'], ['Work may have partially completed.'],
+      assert.deepEqual([by('rec1').kind, by('rec1').buttons, by('rec1').evidence, by('rec1').extra.slice(0, 3)], ['Recovery', ['View in room', 'Resume', 'Retry', 'Abandon', 'Abandon and stop'], ['Work may have partially completed.'],
         ['Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.', 'Details', 'status: clean\nchecked: Yes\nfiles: 3']]); // the diagnostic report is the first labelled text under Details
-      assert.deepEqual([by('rec2').buttons, by('rec2').extra[0]], [['View in room', 'Override', 'Abandon'], 'The old process may still be running. Override can overlap it and repeat an action.']);
-      assert.deepEqual([by('rec4').buttons, by('del2').buttons], [['View in room', 'Restart', 'Abandon'], ['View in room', 'Retry', 'Abandon']], 'a broken session offers a fresh session, a held answer offers a retry');
+      assert.deepEqual([by('rec2').buttons, by('rec2').extra[0]], [['View in room', 'Override', 'Abandon', 'Abandon and stop'], 'The old process may still be running. Override can overlap it and repeat an action.']);
+      assert.deepEqual([by('rec4').buttons, by('del2').buttons], [['View in room', 'Restart', 'Abandon', 'Abandon and stop'], ['View in room', 'Retry', 'Abandon', 'Abandon and stop']], 'a broken session offers a fresh session, a held answer offers a retry');
       assert.deepEqual([by('rec3').buttons, by('rec3').evidence], [['View in room'], ['No diagnostic report is available yet.', 'A project owner or operator must decide this recovery item.']]);
       assert.deepEqual([by('del1').kind, by('del1').kindClass, by('del1').buttons, by('del1').evidence, by('del1').extra[3]], ['Delivery failed', 'inbox-kind-error', ['View in room', 'Dismiss'], ['The room was archived before this reply could be posted.', 'Hello there'], 'In archived room']);
       assert.deepEqual([by('bnd1').buttons, by('bnd1').evidence], [['Approve', 'Deny'], ['Requested by lead · Machine Remote · Folder /work']]);
@@ -340,6 +340,37 @@ async function main() {
       assert.deepEqual(await typed.evaluate(() => window.__calls.filter(call => call[0] === 'answer')[1].slice(1, 3)), ['ap1', 'Approve']);
       await typed.close();
     }
+    // Abandon and Abandon and stop ask first and say how many queued notes they withdraw and in how many rooms (the server's counts on the item);
+    // cancelling decides nothing, and Abandon and stop sends its own choice and says the agent will be stopped.
+    {
+      const page = await mount();
+      await waitList(page);
+      const decisions = () => page.evaluate(() => window.__calls.filter(call => call[0] === 'decision').map(call => call.slice(1, 3)));
+      await page.$eval('[data-inbox-id=rec1] [data-choice=abandon_stop]', el => el.click());
+      await page.waitForSelector('#app-dialog[open] .app-dialog-ok');
+      assert.equal(await page.$eval('#app-dialog .app-dialog-ok', node => node.textContent), 'Abandon and stop');
+      const stopText = await page.$eval('#app-dialog', node => node.textContent);
+      assert.match(stopText, /withdraws 3 queued notes in 2 rooms/);
+      assert.match(stopText, /The agent will be stopped/);
+      await page.click('#app-dialog .app-dialog-cancel');
+      assert.deepEqual(await decisions(), [], 'cancelling decides nothing');
+      await page.$eval('[data-inbox-id=rec1] [data-choice=abandon]', el => el.click());
+      await page.waitForSelector('#app-dialog[open] .app-dialog-ok');
+      const abandonText = await page.$eval('#app-dialog', node => node.textContent);
+      assert.match(abandonText, /withdraws 3 queued notes in 2 rooms/);
+      assert.ok(!/will be stopped/.test(abandonText), 'plain Abandon does not say the agent is stopped');
+      await page.click('#app-dialog .app-dialog-cancel');
+      await page.$eval('[data-inbox-id=rec1] [data-choice=resume]', el => el.click());
+      await page.waitForFunction(() => window.__calls.some(call => call[0] === 'decision'));
+      assert.deepEqual(await decisions(), [['rec1', 'resume']], 'Resume asks nothing');
+      await page.evaluate(() => { window.__items = window.__items.map(item => (item.id === 'rec2' ? { ...item, withdraw_notes: 1, withdraw_rooms: 1 } : item)); return window.__inbox.refresh(); });
+      await page.$eval('[data-inbox-id=rec2] [data-choice=abandon_stop]', el => el.click());
+      await page.waitForSelector('#app-dialog[open] .app-dialog-ok');
+      await page.click('#app-dialog .app-dialog-ok');
+      await page.waitForFunction(() => window.__calls.filter(call => call[0] === 'decision').length === 2);
+      assert.deepEqual(await decisions(), [['rec1', 'resume'], ['rec2', 'abandon_stop']]);
+      await page.close();
+    }
     // Deciding: the choice goes with the item's revision; a stale item says so and is read again; other refusals show their message.
     {
       const page = await mount();
@@ -351,8 +382,10 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'decision').slice(1, 3).concat([window.__calls.find(call => call[0] === 'decision')[4]])), ['rec1', 'resume', 1]);
       await page.evaluate(() => { window.__fail.decision = 'Not allowed'; window.__fail.code = ''; });
       await page.$eval('[data-inbox-id=rec2] .btn-danger', el => el.click());
+      await page.waitForSelector('#app-dialog[open] .app-dialog-ok');
+      await page.click('#app-dialog .app-dialog-ok'); // Abandon asks first
       await page.waitForFunction(() => document.querySelector('#inbox-error').textContent === 'Not allowed');
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-inbox-id=rec2] .inbox-decisions button')].map(b => b.disabled)), [false, false]);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-inbox-id=rec2] .inbox-decisions button')].map(b => b.disabled)), [false, false, false]);
       await page.evaluate(() => { window.__fail.decision = ''; });
       await page.$eval('[data-inbox-id=bnd1] .btn', el => el.click());
       await page.waitForFunction(() => !document.querySelector('[data-inbox-id=bnd1]'));

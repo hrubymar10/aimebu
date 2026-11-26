@@ -63,6 +63,13 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 	var stoppedAgent *AgentCard
 	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "recovery_decision",
 		Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *Tx) (string, error) {
+		// Abandon and stop is Abandon plus a stop of the agent in this same transaction: it runs as "abandon" below and stops at the end, so a
+		// failure of either rolls back both. The stored choice (decision, resolution event, lead note) keeps the name it was asked with.
+		recorded, stopAfter := choice, choice == "abandon_stop"
+		choice := choice
+		if stopAfter {
+			choice = "abandon"
+		}
 		var projectID, roomID, agentID, kind, state, createdAt, options string
 		var source, role sql.NullString
 		var currentRev int
@@ -126,7 +133,7 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 				return "", err
 			}
 		}
-		decision := RecoveryDecision{ItemID: itemID, Choice: choice, Rev: rev + 1}
+		decision := RecoveryDecision{ItemID: itemID, Choice: recorded, Rev: rev + 1}
 		waitForQuiescence := false
 		if ask.Phase == answerHeldReason || ask.Phase == brokenSessionReason {
 			if err := tx.decideAnswerRecovery(ask.Phase, source.String, projectID, roomID, agentID, choice); err != nil {
@@ -247,11 +254,34 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 			return "", err
 		}
 		if _, err := tx.AppendEvent(Event{Kind: "inbox_item_resolved", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
-			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "choice": choice, "actor": actorID, "actor_kind": actorKind})}); err != nil {
+			PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": itemID, "choice": recorded, "actor": actorID, "actor_kind": actorKind})}); err != nil {
 			return "", err
 		}
+		if stopAfter && !archivedProject {
+			// After the item is resolved, so the stop's own settling of the agent's open items does not resolve this one as a system action.
+			// A lead stops through the same check as stop_agent (StopAgentAsTool); a person through the trusted stop an archive uses, being
+			// an owner or operator already. An agent that is stopped already has nothing to stop.
+			var desired string
+			var desiredRev int64
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT desired,desired_rev FROM agent WHERE id=?`, agentID).Scan(&desired, &desiredRev); err != nil {
+				return "", err
+			}
+			if desired != "stopped" {
+				var card AgentCard
+				var err error
+				if actorKind == "agent" {
+					card, err = tx.StopAgentAsTool(agentID, actorID, desiredRev)
+				} else {
+					card, err = tx.setAgentDesiredTrusted(agentID, actorID, "stopped", desiredRev)
+				}
+				if err != nil {
+					return "", err
+				}
+				decision.StoppedAgent = &card
+			}
+		}
 		if actorKind == "agent" {
-			body := "Recovery resolved by the lead: " + choice
+			body := "Recovery resolved by the lead: " + recorded
 			if note != "" {
 				body += ". " + note
 			}
@@ -481,4 +511,36 @@ func (tx *Tx) contextOverflowHandoff(agentID, workTree string) (string, error) {
 		body += "No commands are open."
 	}
 	return body, nil
+}
+
+// recoveryWithdrawCounts says how many queued notes, in how many rooms, an Abandon of this recovery item would withdraw now: the numbers the
+// Inbox card and its confirmation show. They follow what each kind's Abandon really does in decideRecoveryActor. A turn recovery and a wait
+// stage withdraw every queued note of the agent in any room (withdrawQueuedNotes); a loop-budget pause (no turn) only its room's notes older than
+// the item; a held answer, and a broken session that was not a context overflow, withdraw nothing (the Abandon only resolves the item).
+func (s *Store) recoveryWithdrawCounts(ctx context.Context, item InboxEntry) (int, int, error) {
+	var query string
+	var args []any
+	switch {
+	case item.RecoveryPhase == answerHeldReason:
+		return 0, 0, nil
+	case item.RecoveryPhase == brokenSessionReason:
+		var flag sql.NullString
+		err := s.readDB.QueryRowContext(ctx, `SELECT json_extract(payload_json,'$.context_overflow') FROM event
+			WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, item.TurnID).Scan(&flag)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, err
+		}
+		if flag.String != "1" {
+			return 0, 0, nil
+		}
+		fallthrough
+	case item.TurnID != "":
+		query, args = `SELECT COUNT(*),COUNT(DISTINCT room_id) FROM note WHERE agent_id=? AND state='queued'`, []any{item.AgentID}
+	default:
+		query, args = `SELECT COUNT(*),COUNT(DISTINCT room_id) FROM note WHERE agent_id=? AND room_id=? AND state='queued' AND created_at<=?`,
+			[]any{item.AgentID, item.RoomID, item.CreatedAt}
+	}
+	var notes, rooms int
+	err := s.readDB.QueryRowContext(ctx, query, args...).Scan(&notes, &rooms)
+	return notes, rooms, err
 }

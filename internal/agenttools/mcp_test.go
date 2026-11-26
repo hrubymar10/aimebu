@@ -401,6 +401,27 @@ func TestMCPResolveRecoveryAcceptsRestart(t *testing.T) {
 	}
 }
 
+// A lead may pick abandon_stop (Abandon plus stopping the agent) through resolve_recovery; the tool lists it and its description says what it does.
+func TestMCPResolveRecoveryAcceptsAbandonStop(t *testing.T) {
+	var gotPath, gotBody, gotKey string
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotPath, gotBody, gotKey = r.URL.Path, string(data), r.Header.Get("Idempotency-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer httpServer.Close()
+	server := Server{URL: httpServer.URL, Key: "aak_test"}
+	response, _ := server.Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"resolve_recovery","arguments":{"item_id":"inb_x","choice":"abandon_stop"}}}`))
+	if gotPath != "/api/agent/recoveries/inb_x/decision" || !strings.Contains(gotBody, `"abandon_stop"`) || !strings.Contains(gotKey, "abandon_stop") || bytes.Contains(response, []byte(`"isError":true`)) {
+		t.Fatalf("path=%q body=%q key=%q response=%s", gotPath, gotBody, gotKey, response)
+	}
+	tools := listTools(t, server)
+	if !bytes.Contains(tools, []byte(`"abandon_stop"`)) || !bytes.Contains(tools, []byte("stop_agent needs")) {
+		t.Fatal("abandon_stop is not in the resolve_recovery enum or its description")
+	}
+}
+
 func listTools(t *testing.T, server Server) []byte {
 	t.Helper()
 	response, _ := server.Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))

@@ -142,7 +142,26 @@ export function poolGroups(agents) {
 
 export const POOL_CHOICES = [['Respawn on the pool model', 'respawn', 'refresh', 'btn btn-primary'], ['Keep the current model', 'keep', 'check', 'btn']];
 
+// A recovery item's Abandon comes with Abandon and stop (the same, then the agent is stopped, in one step).
 export function decisionOptions(item) {
+  const options = baseDecisionOptions(item);
+  if (item.kind === 'usage_limit') return options;
+  return options.flatMap(option => (option[1] === 'abandon' ? [option, ['Abandon and stop', 'abandon_stop']] : [option]));
+}
+
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+// The confirmation an Abandon or an Abandon and stop asks for: how many queued notes it withdraws and in how many rooms (counted by the server
+// when the item was read), and that the agent will be stopped. Null for any other choice: nothing is asked.
+export function abandonConfirm(item, choice) {
+  if (item.kind === 'usage_limit' || choice !== 'abandon' && choice !== 'abandon_stop') return null;
+  const notes = item.withdraw_notes || 0, rooms = item.withdraw_rooms || 0;
+  const withdraws = notes ? `This withdraws ${plural(notes, 'queued note')} in ${plural(rooms, 'room')}.` : 'No queued notes are withdrawn.';
+  if (choice === 'abandon') return { title: 'Abandon', confirm: 'Abandon', message: `Abandon this recovery? ${withdraws}` };
+  return { title: 'Abandon and stop', confirm: 'Abandon and stop', message: `Abandon this recovery and stop the agent? ${withdraws} The agent will be stopped.` };
+}
+
+function baseDecisionOptions(item) {
   if (item.kind === 'usage_limit') return (item.options || []).map(label => [label, label.startsWith('Continue:') ? 'continue' : 'abandon']);
   if (item.recovery_phase === 'quiescence_wait') return [['Override', 'override'], ['Abandon', 'abandon']];
   if (item.recovery_phase === 'broken_session') return [['Restart', 'restart'], ['Abandon', 'abandon']];

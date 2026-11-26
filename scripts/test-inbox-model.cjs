@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'inbox', 'model.js'), 'utf8');
 const context = vm.createContext({ JSON, Array, Object, Map, String, Number });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, questionParts, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult, evidenceSummary, recoveryView };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { humanize, questionParts, readablePreview, readableReport, deliveryEvidence, resolvedItems, bulkLabel, countView, groupItems, groupTitle, cardKey, decisionOptions, retryWarning, evidenceText, boundaryText, recoveryResult, evidenceSummary, recoveryView, abandonConfirm };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -58,15 +58,24 @@ const names = { projects: new Map([['p', { name: 'Alpha' }]]), rooms: new Map([[
 assert.deepEqual([m.groupTitle(item(), names.projects, names.rooms), m.groupTitle(item({ project_id: 'x', room_id: 'y' }), names.projects, names.rooms), m.groupTitle(item({ kind: 'usage_alert' }), names.projects, names.rooms)], ['Alpha / Login', 'Project / Room', 'Usages']);
 assert.deepEqual([m.cardKey(item()), m.cardKey(item({ kind: 'recovery', rev: 2, room_lifecycle: 'closed' })), m.cardKey(item({ kind: 'usage_alert', question: 'Q' }))], ['i', 'i|2|closed', 'i|Q']);
 assert.deepEqual([plain(m.decisionOptions(item({ kind: 'recovery', turn_id: 't' }))).map(o => o[0]), plain(m.decisionOptions(item({ kind: 'recovery' }))).map(o => o[0]), plain(m.decisionOptions(item({ kind: 'recovery', recovery_phase: 'quiescence_wait', turn_id: 't' }))).map(o => o[0]), plain(m.decisionOptions(item({ kind: 'usage_limit', options: ['Continue: now', 'Stop'] })))],
-  [['Resume', 'Retry', 'Abandon'], ['Continue', 'Abandon'], ['Override', 'Abandon'], [['Continue: now', 'continue'], ['Stop', 'abandon']]]);
-assert.deepEqual([plain(m.decisionOptions(item({ kind: 'recovery', recovery_phase: 'broken_session', turn_id: 't' }))).map(o => o[1]), plain(m.decisionOptions(item({ kind: 'delivery_failed', recovery_phase: 'answer_held' }))).map(o => o[1])], [['restart', 'abandon'], ['retry', 'abandon']]);
+  [['Resume', 'Retry', 'Abandon', 'Abandon and stop'], ['Continue', 'Abandon', 'Abandon and stop'], ['Override', 'Abandon', 'Abandon and stop'], [['Continue: now', 'continue'], ['Stop', 'abandon']]]);
+assert.deepEqual([plain(m.decisionOptions(item({ kind: 'recovery', recovery_phase: 'broken_session', turn_id: 't' }))).map(o => o[1]), plain(m.decisionOptions(item({ kind: 'delivery_failed', recovery_phase: 'answer_held' }))).map(o => o[1])], [['restart', 'abandon', 'abandon_stop'], ['retry', 'abandon', 'abandon_stop']]);
 // A turn that failed before it did anything is offered Retry alone, with the sentence the harness gave and the raw output kept apart.
 const failed = item({ kind: 'recovery', turn_id: 't', definite_failure: true, result_text: 'Failed to authenticate: OAuth session expired · Please run /login', evidence: 'Process exited with code 1.\nClaude Code error result: {"type":"result","is_error":true}' });
-assert.deepEqual(plain(m.decisionOptions(failed)).map(o => o[0]), ['Retry', 'Abandon']);
-assert.deepEqual(plain(m.decisionOptions(item({ kind: 'recovery', turn_id: 't', definite_failure: false }))).map(o => o[0]), ['Resume', 'Retry', 'Abandon']);
+assert.deepEqual(plain(m.decisionOptions(failed)).map(o => o[0]), ['Retry', 'Abandon', 'Abandon and stop']);
+assert.deepEqual(plain(m.decisionOptions(item({ kind: 'recovery', turn_id: 't', definite_failure: false }))).map(o => o[0]), ['Resume', 'Retry', 'Abandon', 'Abandon and stop']);
 assert.match(m.retryWarning(failed), /^Retry is safe: the turn failed before it did anything/);
 const startFailed = item({ ...failed, start_failure: true, result_text: 'normal turn requires agent tools access' });
-assert.deepEqual(plain(m.decisionOptions(startFailed)).map(o => o[0]), ['Retry', 'Abandon']);
+assert.deepEqual(plain(m.decisionOptions(startFailed)).map(o => o[0]), ['Retry', 'Abandon', 'Abandon and stop']);
+// The confirmation says how many queued notes the Abandon withdraws and in how many rooms (the server's counts), and that Abandon and stop stops the agent.
+const withdrawing = item({ kind: 'recovery', turn_id: 't', withdraw_notes: 3, withdraw_rooms: 2 });
+assert.equal(m.abandonConfirm(withdrawing, 'resume'), null);
+assert.equal(m.abandonConfirm(item({ kind: 'usage_limit' }), 'abandon'), null);
+assert.match(m.abandonConfirm(withdrawing, 'abandon').message, /withdraws 3 queued notes in 2 rooms/);
+assert.ok(!/stopped/.test(m.abandonConfirm(withdrawing, 'abandon').message));
+assert.match(m.abandonConfirm(withdrawing, 'abandon_stop').message, /withdraws 3 queued notes in 2 rooms\. The agent will be stopped/);
+assert.match(m.abandonConfirm(item({ kind: 'recovery', turn_id: 't', withdraw_notes: 1, withdraw_rooms: 1 }), 'abandon').message, /1 queued note in 1 room\./);
+assert.match(m.abandonConfirm(item({ kind: 'recovery', turn_id: 't' }), 'abandon_stop').message, /No queued notes are withdrawn\. The agent will be stopped/);
 assert.equal(m.retryWarning(startFailed), 'The harness did not run. Retry is safe once the start problem is fixed.');
 assert.equal(m.evidenceText(failed), 'Failed to authenticate: OAuth session expired · Please run /login');
 assert.deepEqual(plain(m.recoveryResult(failed)), { text: 'Failed to authenticate: OAuth session expired · Please run /login', raw: failed.evidence });

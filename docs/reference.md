@@ -1075,7 +1075,7 @@ actions use the decision endpoint: uncertain turns offer Resume,
 Retry, and Abandon; a turn that failed before it did anything (an error result such as
 an expired sign-in, with no tool run) shows the harness's sentence with its raw output folded
 away and offers Retry and Abandon only, and a retry that fails the same way says so;
-loop budget items offer Continue and Abandon. Settings →
+loop budget items offer Continue and Abandon. Every recovery card also offers Abandon and stop (Abandon, then the agent is stopped, in one step). Abandon and Abandon and stop ask for confirmation first, saying how many queued notes the Abandon withdraws and in how many rooms (a count taken when the card was loaded), and for Abandon and stop that the agent will be stopped. Settings →
 Project has an off-by-default auto-resume toggle for clean diagnostic reports,
 with the risk of repeated actions explained beside it. Open
 `/?mock_inbox=1` to exercise questions without agent messages, or

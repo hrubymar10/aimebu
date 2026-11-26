@@ -5,7 +5,8 @@ import { AnswerControls } from '../../components/answer-controls.js';
 import { renderMarkdown } from '../../markdown.js';
 import { WindowRow } from '../usages/usages-view.js';
 import { staleAge } from '../../usage-alerts.js';
-import { KIND_LABELS, POOL_CHOICES, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, poolGroups, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
+import { confirmDialog } from '../../dialogs.js';
+import { KIND_LABELS, POOL_CHOICES, abandonConfirm, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, poolGroups, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
 // The answer controls are the chat's component too; the wrapper takes no space of its own, and every control is off while the item is being answered.
 function AnswerIsland({ item, store, pending }) {
@@ -45,6 +46,12 @@ function UsageChart({ item, store }) {
 
 function Card({ item, store, rooms, onJump, openUsages }) {
   const pending = store.pending.value.has(item.id), kind = item.kind, closed = ['closed', 'closing'].includes(item.room_lifecycle), question = questionParts(item.question);
+  // Abandon and Abandon and stop withdraw queued notes, so they ask first and say how many (the counts the server put on the item).
+  const decide = async choice => {
+    const ask = abandonConfirm(item, choice);
+    if (ask && !await confirmDialog(ask.message, { title: ask.title, confirm: ask.confirm, danger: true })) return;
+    store.decide(item, choice);
+  };
   const button = (label, onClick, classes = 'btn', extra = {}) => html`<button type="button" class=${classes} disabled=${pending} onClick=${onClick} ...${extra}>${label}</button>`;
   const head = html`${kind === 'delivery_failed' ? html`<small class="inbox-kind-error">${KIND_LABELS[kind]}</small>` : html`<small>${KIND_LABELS[kind] || kind}</small>`}
     ${(kind === 'recovery' || kind === 'delivery_failed') && closed && html`<small class="inbox-archived">${item.room_lifecycle === 'closing' ? 'Room is being archived' : 'In archived room'}</small>`}
@@ -69,7 +76,7 @@ function Card({ item, store, rooms, onJump, openUsages }) {
     const details = view.details.length > 0 && html`<details class="inbox-details"><summary>Details</summary>${view.details.map(detail => html`<div class="inbox-detail inbox-diagnostic" key=${detail.label}><small>${detail.label}</small><pre>${detail.text}</pre></div>`)}</details>`;
     const summary = html`<p class="inbox-evidence inbox-summary">${view.summary}</p>`;
     if (item.can_decide === false) return wrap(html`${jump}${summary}<p class="inbox-evidence">A project owner or operator must decide this recovery item.</p>${details}`);
-    return wrap(html`${jump}${summary}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}${details}`);
+    return wrap(html`${jump}${summary}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => decide(choice), choice.startsWith('abandon') ? 'btn btn-danger' : 'btn', { 'data-choice': choice }))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}${details}`);
   }
   if (kind === 'pool_change') {
     const groups = poolGroups(item.pool_agents);
@@ -78,10 +85,10 @@ function Card({ item, store, rooms, onJump, openUsages }) {
   }
   if (kind === 'usage_limit') {
     const warning = retryWarning(item);
-    return wrap(html`${jump}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}`);
+    return wrap(html`${jump}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => decide(choice), choice.startsWith('abandon') ? 'btn btn-danger' : 'btn', { 'data-choice': choice }))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}`);
   }
   if (kind === 'usage_info') return wrap(html`${jump}${(item.options || []).includes('Retry now') && button('Retry now', () => store.decide(item, 'retry'), 'btn btn-primary')}`);
-  if (kind === 'delivery_failed' && item.recovery_phase === 'answer_held' && item.can_decide) return wrap(html`${jump}${evidence}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>`);
+  if (kind === 'delivery_failed' && item.recovery_phase === 'answer_held' && item.can_decide) return wrap(html`${jump}${evidence}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => decide(choice), choice.startsWith('abandon') ? 'btn btn-danger' : 'btn', { 'data-choice': choice }))}</div>`);
   if (kind === 'delivery_failed') return wrap(html`${jump}${evidence}${item.can_decide && html`<${IconButton} name="close" label="Dismiss" disabled=${pending} onClick=${() => store.dismiss(item)} />`}`);
   if (item.can_decide === false) return wrap(html`${jump}Read only`);
   if (item.proposed_answers?.length || item.open_questions?.length) return wrap(html`${jump}<${AnswerIsland} item=${item} store=${store} pending=${pending} />${button('Dismiss', () => store.dismiss(item), 'btn inbox-dismiss')}`);

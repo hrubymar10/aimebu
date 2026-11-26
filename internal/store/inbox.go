@@ -56,6 +56,10 @@ type InboxEntry struct {
 	// PoolAgents is a pool_change item's live list: the agents a respawn on the pool would switch, with the room each is in. It shrinks as
 	// agents stop or are switched, and is empty for every other item.
 	PoolAgents []PoolAgent `json:"pool_agents,omitempty"`
+	// WithdrawNotes and WithdrawRooms are, on a recovery item that offers Abandon, how many queued notes an Abandon would withdraw and in how
+	// many rooms (see recoveryWithdrawCounts). They are counted when the item is read; the Abandon withdraws what is queued when it commits.
+	WithdrawNotes int `json:"withdraw_notes,omitempty"`
+	WithdrawRooms int `json:"withdraw_rooms,omitempty"`
 }
 
 type inboxAsk struct {
@@ -221,6 +225,15 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 				list[j].RespawnError = failures[i][list[j].AgentID]
 			}
 			entries[i].PoolAgents = list
+		}
+	}
+	for i := range entries {
+		if (entries[i].Kind == "recovery" || entries[i].Kind == "delivery_failed" && entries[i].RecoveryPhase == answerHeldReason) && entries[i].AgentID != "" {
+			notes, rooms, err := s.recoveryWithdrawCounts(ctx, entries[i])
+			if err != nil {
+				return nil, err
+			}
+			entries[i].WithdrawNotes, entries[i].WithdrawRooms = notes, rooms
 		}
 	}
 	// The stored question keeps the ids-are-truth tokens its writer left in it; the human view translates the agent
