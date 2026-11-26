@@ -195,6 +195,9 @@ func (s *Store) decideRecoveryActor(ctx context.Context, itemID, actorKind, acto
 				if _, err := tx.Exec(`UPDATE note SET state='aborted' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state='unknown'`, source.String); err != nil {
 					return "", err
 				}
+				if err := tx.withdrawQueuedNotes(agentID); err != nil {
+					return "", err
+				}
 				if _, err := tx.Exec(`UPDATE agent SET recovery_block=0,observed=CASE WHEN desired='stopped' THEN 'stopped' ELSE 'idle' END WHERE id=?`, agentID); err != nil {
 					return "", err
 				}
@@ -409,9 +412,21 @@ func (tx *Tx) decideAnswerRecovery(phase, turnID, projectID, roomID, agentID, ch
 		if _, err := tx.Exec(`UPDATE note SET state='aborted' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state='unknown'`, turnID); err != nil {
 			return err
 		}
+		if err := tx.withdrawQueuedNotes(agentID); err != nil {
+			return err
+		}
 		return tx.releaseOverflowTurn(turnID, agentID)
 	}
 	return ErrInvalidTransition
+}
+
+// withdrawQueuedNotes is the rest of an Abandon: the decision is about the agent's work, not only the failed turn's notes, so every note
+// still queued for the agent in any room (a mention that arrived while the killed turn ran or the agent was blocked, a finished command)
+// is aborted. Left queued, the next dispatch pass would hand it to the released agent as new work nobody asked for. Notes created after the
+// decision are not touched, so the agent is woken again by what is said to it afterwards. A stop does not do this: its queued notes run on restart.
+func (tx *Tx) withdrawQueuedNotes(agentID string) error {
+	_, err := tx.Exec(`UPDATE note SET state='aborted' WHERE agent_id=? AND state='queued'`, agentID)
+	return err
 }
 
 // releaseOverflowTurn ends the block a context-overflow exit raised: the turn is settled and the agent is idle again, as an Abandon of any
