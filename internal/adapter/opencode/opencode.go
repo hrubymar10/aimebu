@@ -164,6 +164,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		if err != nil {
 			return nil, err
 		}
+		if adapter.SupportsAnswerTool("opencode", spec.HarnessVersion) {
+			endpoint = adapter.AnswerToolEndpoint(endpoint)
+		}
 		servers := map[string]any{}
 		// The person's own servers (see user_mcp.go); a container gets the remote ones only, since a command on the host is not in it.
 		entries, envVars := userMCPEntries(userConfigDir(), "aimebu")
@@ -686,7 +689,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			// A tool part is reported once, already finished.
 			transcribeTool(t.conv, scanner.Bytes())
 			if event.Part.Tool == "aimebu_submit_answer" || event.Part.Tool == "mcp__aimebu__submit_answer" {
-				if event.Part.State.Status == "completed" && len(event.Part.State.Input) > 0 {
+				if event.Part.State.Status == "completed" && len(event.Part.State.Input) > 0 && validAnswer(event.Part.State.Input) {
 					submitted = append([]byte(nil), event.Part.State.Input...)
 				}
 			}
@@ -781,4 +784,10 @@ func (t *turn) emit(event adapter.Event) {
 	}
 	t.mu.Unlock()
 	t.events <- event
+}
+
+// validAnswer is the toolbox's own check: a call it rejected still reads as completed to the harness, so only an input that parses is adopted.
+func validAnswer(input []byte) bool {
+	_, err := answer.Parse(input, false)
+	return err == nil
 }

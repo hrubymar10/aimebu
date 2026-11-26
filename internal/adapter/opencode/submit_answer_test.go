@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestSubmitAnswerWinsOverTrailingText(t *testing.T) {
@@ -16,10 +18,12 @@ func TestSubmitAnswerWinsOverTrailingText(t *testing.T) {
 		name  string
 		calls int
 		want  string
+		bad   bool
 	}{
-		{"tool only", 1, `{"messages":[{"room":"room_1","body":"second"}]}`},
-		{"tool and trailing text", 2, `{"messages":[{"room":"room_1","body":"second"}]}`},
-		{"free text fallback", 0, `{"messages":[{"room":"room_1","body":"fallback"}]}`},
+		{"tool only", 1, `{"messages":[{"room":"room_1","body":"second"}]}`, false},
+		{"tool and trailing text", 2, `{"messages":[{"room":"room_1","body":"second"}]}`, false},
+		{"free text fallback", 0, `{"messages":[{"room":"room_1","body":"fallback"}]}`, false},
+		{"invalid tool input falls back to text", 1, `{"messages":[{"room":"room_1","body":"fallback"}]}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -37,10 +41,14 @@ func TestSubmitAnswerWinsOverTrailingText(t *testing.T) {
 				if i == tc.calls-1 {
 					body = "second"
 				}
-				add(map[string]any{"type": "tool_use", "sessionID": testSession, "part": map[string]any{"tool": "aimebu_submit_answer", "callID": body, "state": map[string]any{"status": "completed", "input": map[string]any{"messages": []any{map[string]any{"room": "room_1", "body": body}}}}}})
+				var input any = map[string]any{"messages": []any{map[string]any{"room": "room_1", "body": body}}}
+				if tc.bad {
+					input = map[string]any{"messages": "not a list"}
+				}
+				add(map[string]any{"type": "tool_use", "sessionID": testSession, "part": map[string]any{"tool": "aimebu_submit_answer", "callID": body, "state": map[string]any{"status": "completed", "input": input}}})
 			}
 			add(map[string]any{"type": "step_start", "sessionID": testSession})
-			if tc.calls == 0 {
+			if tc.calls == 0 || tc.bad {
 				add(map[string]any{"type": "text", "sessionID": testSession, "part": map[string]any{"text": tc.want}})
 			} else if tc.calls == 2 {
 				add(map[string]any{"type": "text", "sessionID": testSession, "part": map[string]any{"text": "trailing narration"}})
@@ -72,5 +80,30 @@ func TestSubmitAnswerWinsOverTrailingText(t *testing.T) {
 				t.Fatalf("answer=%q want=%q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAnswerToolOfferedOnlyAtSupportedVersion(t *testing.T) {
+	for version, want := range map[string]bool{"": false, "1.19.5": false, "1.19.6": true} {
+		root := t.TempDir()
+		capture := filepath.Join(root, "config.json")
+		path := filepath.Join(root, "opencode")
+		body := "#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > " + capture + "\ncat >/dev/null\ncat " + fixture(t, "ok.jsonl") + "\n"
+		if err := testenv.WriteExecutable(path, []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+		turnSpec := spec(t, root)
+		turnSpec.HarnessVersion = version
+		turn, err := (&Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), turnSpec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exit, err := drain(t, turn); err != nil || !exit.TerminalEvent {
+			t.Fatalf("exit=%+v err=%v", exit, err)
+		}
+		data, _ := os.ReadFile(capture)
+		if got := strings.Contains(string(data), "answer_tool=1"); got != want {
+			t.Fatalf("version %q: answer_tool offered=%t want %t\n%s", version, got, want, data)
+		}
 	}
 }

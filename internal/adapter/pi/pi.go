@@ -225,6 +225,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
 			tools = append(tools, "codemode")
 		}
+		if adapter.SupportsAnswerTool("pi", spec.HarnessVersion) {
+			endpoint = adapter.AnswerToolEndpoint(endpoint)
+		}
 		servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}, "exposure": "direct"}
 		config, err := json.Marshal(map[string]any{"mcpServers": servers})
 		if err != nil {
@@ -555,7 +558,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			t.emit(adapter.Event{Kind: adapter.EventActivity, Summary: event.Type, Tools: []adapter.ToolEvent{{ID: event.ToolCallID}}})
 		case "tool_execution_end":
 			if args, ok := toolArgs[event.ToolCallID]; ok {
-				if !event.IsError && len(args) > 0 {
+				if !event.IsError && len(args) > 0 && validAnswer(args) {
 					submitted = append([]byte(nil), args...)
 				}
 				delete(toolArgs, event.ToolCallID)
@@ -696,4 +699,10 @@ func (t *turn) emit(event adapter.Event) {
 	}
 	t.mu.Unlock()
 	t.events <- event
+}
+
+// validAnswer is the toolbox's own check: only an input that parses is adopted, so a rejected call falls back to the text candidate.
+func validAnswer(input []byte) bool {
+	_, err := answer.Parse(input, false)
+	return err == nil
 }

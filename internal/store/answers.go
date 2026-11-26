@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
 
 type AnswerInput struct {
@@ -582,15 +584,40 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 	// validation texts go in as they are and a quoting one is described instead.
 	detail = heldDetail(detail)
 	body := heldReplyNotePrefix + detail + ". Your previous answer is in your session; send your final answer again as exactly one JSON object with a messages array."
-	var tool string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT tool FROM agent WHERE id=?`, turn.agentID).Scan(&tool); err != nil {
+	var tool, variant, launcherID, machineID, harnesses string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.tool,a.variant,COALESCE(a.launcher_id,''),COALESCE(a.machine_id,''),COALESCE(m.harnesses_json,'[]')
+		FROM agent a LEFT JOIN machine m ON m.id=a.machine_id WHERE a.id=?`, turn.agentID).Scan(&tool, &variant, &launcherID, &machineID, &harnesses); err != nil {
 		return false, err
 	}
 	if tool == "opencode" || tool == "pi" {
-		body += " End the turn by calling submit_answer. If the tool is unavailable, use this exact answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>."
+		if tx.answerToolSupported(tool, variant, launcherID, harnesses) {
+			body += " End the turn by calling submit_answer. If the tool is unavailable, use this exact answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>."
+		} else {
+			// The turn had no submit_answer tool (an older or unprobed CLI), so naming it would send the agent after a tool it cannot call.
+			body += " Use this exact answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>."
+		}
 	}
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: body, OnlyTargets: []string{turn.agentID}})
 	return err == nil, err
+}
+
+// answerToolSupported reports whether the agent's turns had the submit_answer tool: the version the machine last probed for its harness is at
+// or above the supported release. The server keeps no probed version for a launcher's harness, so a launcher agent counts as unsupported and keeps
+// the plain-text repair note, which is correct for every version.
+func (tx *Tx) answerToolSupported(tool, variant, launcherID, harnesses string) bool {
+	if launcherID != "" {
+		return false
+	}
+	var rows []protocol.HarnessRow
+	if json.Unmarshal([]byte(harnesses), &rows) != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Tool == tool && row.Variant == variant {
+			return adapter.SupportsAnswerTool(tool, row.Version)
+		}
+	}
+	return false
 }
 
 // machineSeenWindow is how fresh a machine's last_seen must be for the repair note's wake to plausibly reach a running turn: supervisors

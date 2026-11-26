@@ -23,3 +23,9 @@ func TestAnswerToolSupport(t *testing.T) {
 		}
 	}
 }
+
+func TestAnswerToolEndpoint(t *testing.T) {
+	if got := AnswerToolEndpoint("http://127.0.0.1:9897/api/agent/mcp"); got != "http://127.0.0.1:9897/api/agent/mcp?answer_tool=1" {
+		t.Fatalf("got %q", got)
+	}
+}

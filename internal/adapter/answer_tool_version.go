@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -77,4 +78,17 @@ func AnswerToolSupport(tool, version string) (bool, string) {
 		return true, ""
 	}
 	return false, fmt.Sprintf("update %s to %s or newer for submit_answer", tool, minimum)
+}
+
+// AnswerToolEndpoint marks an MCP endpoint as belonging to a turn that reads submit_answer, so the toolbox lists the tool for it and for no other harness.
+// Callers use it only when SupportsAnswerTool holds for the turn.
+func AnswerToolEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	q := u.Query()
+	q.Set("answer_tool", "1")
+	u.RawQuery = q.Encode()
+	return u.String()
 }

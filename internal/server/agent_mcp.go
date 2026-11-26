@@ -23,7 +23,7 @@ func (s *Server) agentToolMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	toolbox := agenttools.Server{URL: "http://aimebu.local", Key: key,
+	toolbox := agenttools.Server{URL: "http://aimebu.local", Key: key, AnswerTool: r.URL.Query().Get(agenttools.AnswerToolQuery) == "1",
 		Client: &http.Client{Transport: localAgentTransport{handler: s.localHandler(), remoteAddr: r.RemoteAddr}}}
 	response, notification := toolbox.Process(r.Context(), raw)
 	if notification {

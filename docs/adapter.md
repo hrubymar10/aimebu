@@ -44,17 +44,24 @@ prompt normal turns to call that tool; a successful call supplies the final answ
 with the last call winning over later text. When no call is made, their existing
 free-text answer path remains available. Their fallback prompt and held-reply
 repair note include the exact schema JSON. An invalid tool argument returns a
-field-specific, content-free error so the agent can correct it in the turn.
+field-specific, content-free error so the agent can correct it in the turn;
+the adapter adopts a call's input only when `answer.Parse` accepts it (the harness
+reports a rejected call as finished too), otherwise the text candidate stands, and
+a later valid call still wins.
 The tool instruction is gated by the probed CLI version: OpenCode 1.19.6 and
 Pi 1.6.1 or newer receive it; older or unknown versions keep the original
-free-text prompt. `aimebu doctor` and `aimebu doctor --machine` name an upgrade for a detected
+free-text prompt. The tool is also listed only to those turns: the MCP catalog
+leaves `submit_answer` out unless the endpoint carries `?answer_tool=1`, which the
+OpenCode and Pi adapters add at a supported version. Claude, Codex and Vibe never
+see it (no adapter of theirs reads the call, so it would be acknowledged and its
+answer lost); a call to it on such a connection fails as an unknown tool. `aimebu doctor` and `aimebu doctor --machine` name an upgrade for a detected
 older version. Pi receives the tool through its existing aimebu MCP entry and
 `mcp__*` allowlist (also `aimebu_*` in Docker); no separate installation is
 needed. The native provider extension loaded with `--extension` is unrelated
 to this toolbox.
 When a final answer is invalid and the
 harness cannot be asked for a correction (no `no_action_mode`, as for Claude), the reply is held
-and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (a known parser field is named; answer content is never echoed). For OpenCode and Pi the note includes the exact schema and asks for `submit_answer`; it is a nonempty repair prompt. A turn woken by such a note and held again gets no further note.
+and the agent gets a system note that wakes it: "Your previous reply was held: <error>" (a known parser field is named; answer content is never echoed). For OpenCode and Pi the note includes the exact schema, and asks for `submit_answer` only when the machine's probed version of that harness supports the tool (a launcher agent, whose version the server does not keep, and an older or unprobed version get the schema without the tool line); it is a nonempty repair prompt. A turn woken by such a note and held again gets no further note.
 A message refused only for its target (a room in another project, a closed room, a room the agent is not in) never holds the whole reply: the other messages are delivered and the agent gets a note "Part of your previous reply was held: ..." with the held text and, for another project's room, the hint to use `dm_agent`.
 `Turn.Wait()` returns exit code,
 terminal-event evidence, and cancel intent separately. Exit code zero alone

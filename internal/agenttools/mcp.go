@@ -31,7 +31,10 @@ type Server struct {
 	// Workdir is the agent's workspace as the agent sees it. Only the stdio bridge, which runs next to the agent's files, sets it; there
 	// attachment_get saves a file it cannot return inline under <Workdir>/.aimebu/attachments. The server's HTTP endpoint leaves it empty and
 	// asks the agent's supervisor to save the file instead.
-	Workdir     string
+	Workdir string
+	// AnswerTool offers submit_answer. Only the harnesses whose adapter reads the call (OpenCode and Pi at a supported version) opt in, through the
+	// endpoint's answer_tool=1 query; for any other harness the call would be accepted and its answer lost, so the tool is neither listed nor callable.
+	AnswerTool  bool
 	retryWindow time.Duration // tests shorten the default minute
 }
 
@@ -161,6 +164,22 @@ var catalog = []tool{
 	}, "required": []string{"message_id", "emoji"}}},
 }
 
+// AnswerToolQuery is the endpoint query that offers submit_answer to one connection.
+const AnswerToolQuery = "answer_tool"
+
+func (s Server) tools() []tool {
+	if s.AnswerTool {
+		return catalog
+	}
+	out := make([]tool, 0, len(catalog))
+	for _, t := range catalog {
+		if t.Name != "submit_answer" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // Serve uses newline-delimited JSON-RPC, the stdio transport used by MCP.
 func (s Server) Serve(ctx context.Context, input io.Reader, output io.Writer) error {
 	scanner := bufio.NewScanner(input)
@@ -198,7 +217,7 @@ func (s Server) Process(ctx context.Context, raw []byte) ([]byte, bool) {
 	case "ping":
 		result = map[string]any{}
 	case "tools/list":
-		result = map[string]any{"tools": catalog}
+		result = map[string]any{"tools": s.tools()}
 	case "tools/call":
 		var params struct {
 			Name      string          `json:"name"`
@@ -264,6 +283,9 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	getBool := func(field string) bool { var value bool; _ = json.Unmarshal(args[field], &value); return value }
 	switch name {
 	case "submit_answer":
+		if !s.AnswerTool {
+			return toolResult("unknown tool", true)
+		}
 		if _, err := answer.Parse(raw, false); err != nil {
 			return toolResult(answer.SafeError(err), true)
 		}
