@@ -15,6 +15,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 // startHelper starts a real short-lived helper process of the test's own, in its own process group, for the alive and dead identity cases.
@@ -376,7 +377,7 @@ func TestDeliveryRecordsTheHarnessProcessIdentity(t *testing.T) {
 
 func TestProcessStartStateDoesNotTrustFailedPsForLivePID(t *testing.T) {
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "ps"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+	if err := testenv.WriteExecutable(filepath.Join(bin, "ps"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

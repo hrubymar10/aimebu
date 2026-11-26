@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestWarmSessionEndProbeRequiresFeatureAndPositiveAnswer(t *testing.T) {
@@ -30,7 +31,7 @@ func TestWarmSessionEndProbeRequiresFeatureAndPositiveAnswer(t *testing.T) {
 			path := filepath.Join(root, "launcher")
 			asked := filepath.Join(root, "asked")
 			body := fmt.Sprintf("#!/bin/sh\nprintf called >> %q\nif [ %q = fail ]; then exit 1; fi\nprintf '%%s\\n' %q\n", asked, tc.answer, tc.answer)
-			if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+			if err := testenv.WriteExecutable(path, []byte(body), 0700); err != nil {
 				t.Fatal(err)
 			}
 			session := &warmFakeSession{exited: make(chan struct{}), container: containerOne,
