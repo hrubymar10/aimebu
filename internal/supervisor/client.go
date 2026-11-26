@@ -104,10 +104,10 @@ type Client struct {
 	telemetryEnv       map[string]string         // the reporting variables the agent-tools bridge is started with (SetTelemetryEnv)
 	currentConn        *websocket.Conn
 	stopping           bool
-	// staleSettled holds the exits a stale_generation refusal already settled, so the one log line per turn stays one across repeated
+	// refusedSettled holds the exits a terminal refusal (stale_generation, already_terminal) already settled, so the one log line per turn stays one across repeated
 	// refusals of the same turn's frames.
-	staleSettled map[string]bool
-	turns        sync.WaitGroup
+	refusedSettled map[string]bool
+	turns          sync.WaitGroup
 	// unreported counts the turns that left admission (c.active) but whose process frame was not sent yet: a supervisor retiring at idle
 	// waits for them too, or it would close the socket between a turn's release and its exit (see runTurnRestartable).
 	unreported atomic.Int64
@@ -921,7 +921,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			}
 		case protocol.Error:
 			c.handleServerError(frame)
-			c.settleStaleExit(ctx, frame)
+			c.settleRefusedExit(ctx, frame)
 		default:
 			return fmt.Errorf("unexpected machine frame %q", frame.Type)
 		}
@@ -1933,13 +1933,13 @@ func (c *Client) handleControl(frame protocol.Frame) bool {
 	return deferAck
 }
 
-// handleServerError is what an error frame from the server gets. The refusals the server classifies (a stale generation, a conflict, a forbidden or invalid
-// transition) are the protocol working: logged only. Any other code is a failure on the server's side of the frame, reported to Sentry by its code (the frame's
-// message is the server's own text and stays in the local log).
+// handleServerError is what an error frame from the server gets. The refusals the server classifies (a stale generation, a turn already terminal in
+// another state, a conflict, a forbidden or invalid transition) are the protocol working: logged only. Any other code is a failure on the server's side of
+// the frame, reported to Sentry by its code (the frame's message is the server's own text and stays in the local log).
 func (c *Client) handleServerError(frame protocol.Frame) {
 	c.reportLocal(fmt.Errorf("server %s: %s", frame.Code, frame.Message))
 	switch frame.Code {
-	case "stale_generation", "stale_rev", "conflict", "forbidden", "invalid_transition":
+	case "stale_generation", "stale_rev", "conflict", "forbidden", "invalid_transition", "already_terminal":
 		return
 	}
 	if frame.Code == "unauthorized" && c.agentStopped(frame.AgentID) {
@@ -1948,20 +1948,27 @@ func (c *Client) handleServerError(frame protocol.Frame) {
 	telemetry.ReportCause(context.Background(), "supervisor", "server error frame: "+frame.Code)
 }
 
-// settleStaleExit is what a stale_generation refusal of a journaled exit gets: the server has already decided that turn on a newer generation
-// of the agent (it lost the turn, or settled it from a newer instance's hello), so the late exit report has nowhere to go and resending it
-// would keep the journal open forever (the endless drain loop of A13-13). The exit is marked settled in the journal and never sent again.
-// The Error frame does not say which frame it answers, so the settle is the journal's to bound: only an exited, unacknowledged row of that
+// settleRefusedExit is what a refusal that says the turn is over gets: for stale_generation the server has already decided that turn on a newer
+// generation of the agent (it lost the turn, or settled it from a newer instance's hello); for already_terminal the server's turn is already terminal in the
+// other state (the journal says exited where the server holds killed, or the reverse). Either way the late exit report has nowhere to go and
+// resending it would keep the journal open forever (the endless drain loop of A13-13). The exit is marked settled in the journal and never sent
+// again. The Error frame does not say which frame it answers, so the settle is the journal's to bound: only an exited, unacknowledged row of that
 // agent and turn matches, and a turn with none (a live turn whose activity frame was refused) is left alone, with no error for the read loop.
-// Only the code is matched, never the message text: the server's two refusal paths send different texts. Everything else keeps the exit
-// journaled, as today.
-func (c *Client) settleStaleExit(ctx context.Context, frame protocol.Frame) {
-	if frame.Code != "stale_generation" || frame.AgentID == "" || frame.TurnID == "" {
+// Only the code is matched, never the message text: the server's refusal paths send different texts. Everything else keeps the exit journaled,
+// as today; in particular a plain invalid_transition (an out-of-order frame the server refuses while the turn may still be running) settles
+// nothing, so an older server that answers the terminal mismatch with invalid_transition alone leaves the exit journaled.
+func (c *Client) settleRefusedExit(ctx context.Context, frame protocol.Frame) {
+	if frame.AgentID == "" || frame.TurnID == "" {
 		return
 	}
-	generation, settled, err := c.Journal.SettleStaleExit(ctx, frame.AgentID, frame.TurnID)
+	switch frame.Code {
+	case "stale_generation", "already_terminal":
+	default:
+		return
+	}
+	generation, settled, err := c.Journal.SettleRefusedExit(ctx, frame.AgentID, frame.TurnID)
 	if err != nil {
-		c.report("a stale exit could not be settled", fmt.Errorf("agent %s turn %s: %w", frame.AgentID, frame.TurnID, err))
+		c.report("a refused exit could not be settled", fmt.Errorf("agent %s turn %s: %w", frame.AgentID, frame.TurnID, err))
 		return
 	}
 	if !settled {
@@ -1969,16 +1976,16 @@ func (c *Client) settleStaleExit(ctx context.Context, frame protocol.Frame) {
 	}
 	key := frame.AgentID + "/" + frame.TurnID
 	c.mu.Lock()
-	once := !c.staleSettled[key]
+	once := !c.refusedSettled[key]
 	if once {
-		if c.staleSettled == nil {
-			c.staleSettled = make(map[string]bool)
+		if c.refusedSettled == nil {
+			c.refusedSettled = make(map[string]bool)
 		}
-		c.staleSettled[key] = true
+		c.refusedSettled[key] = true
 	}
 	c.mu.Unlock()
 	if once {
-		log.Printf("supervisor: agent %s turn %s generation %d: the server has superseded this generation; dropping the late exit", frame.AgentID, frame.TurnID, generation)
+		log.Printf("supervisor: agent %s turn %s generation %d: the server refused the late exit with %s; dropping it", frame.AgentID, frame.TurnID, generation, frame.Code)
 	}
 }
 

@@ -749,6 +749,10 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 				// change arriving while the supervisor acks what it had. The newer control is already on its way, so
 				// the machine converges; nothing is reported.
 				code = "stale_rev"
+			} else if errors.Is(err, store.ErrAlreadyTerminal) {
+				// A process exit for a turn that is already terminal in the other state (exited vs killed): the turn cannot change any
+				// more, so the supervisor's journal settles the refused exit instead of resending it forever.
+				code = "already_terminal"
 			} else if errors.Is(err, store.ErrInvalidTransition) {
 				code = "invalid_transition"
 			} else {

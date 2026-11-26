@@ -13,6 +13,11 @@ import (
 )
 
 var ErrStaleGeneration = errors.New("stale_generation")
+
+// ErrAlreadyTerminal is a process exit the server refuses because the turn is already terminal in the OTHER state (the journal says
+// `exited`, the server says `killed`, or the reverse): the turn cannot change any more, so the supervisor's journal may settle the exit
+// instead of resending it forever. Every other out-of-order transition stays ErrInvalidTransition, which does not say the turn is over.
+var ErrAlreadyTerminal = errors.New("already_terminal")
 var ErrStaleRev = errors.New("stale_rev")
 var ErrAgentNotActive = errors.New("agent_not_active")
 var ErrNotMember = errors.New("not_member")
@@ -466,8 +471,11 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 			}
 			exec = "running"
 		}
+		// Past the pending handling above, exec is running or lost and the edge to exited or killed is allowed, so the only refusal this
+		// call can produce leaves the turn already terminal in the other state: the server's answer is its own code, so a supervisor's
+		// journal settles the refused exit instead of resending it forever (the invalid_transition variant of the A14-4 drain bug).
 		if err := TurnExecTransitions.Transition(exec, target); err != nil {
-			return err
+			return fmt.Errorf("%w: turn.exec %q -> %q", ErrAlreadyTerminal, exec, target)
 		}
 		if _, err := tx.Exec(`UPDATE turn SET exec=?,terminal_event=?,cancel_intent=?,ended_at=? WHERE id=?`, target, terminal, cancel, timestamp(), turnID); err != nil {
 			return err

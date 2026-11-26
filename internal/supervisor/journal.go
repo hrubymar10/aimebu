@@ -501,13 +501,16 @@ func (j *Journal) AcknowledgeExit(ctx context.Context, turnID string) error {
 	return nil
 }
 
-// SettleStaleExit marks the unacknowledged exit of one turn as settled when the server has refused that turn's frames with stale_generation:
-// the server answers every frame of a superseded generation that way (the exit report, the turn's activity frames and its acks alike, and the
-// Error does not say which frame it answers), so the settle applies only to a row that is exited and not yet acknowledged, of that agent and
-// turn. A turn that is still running keeps its normal course, and a turn with no such row settles nothing: the caller is told so with a nil
-// error, never with sql.ErrNoRows, because a refused activity frame of a running turn is the protocol working and must not fail the read loop.
-// The returned generation is the settled row's, for the one log line.
-func (j *Journal) SettleStaleExit(ctx context.Context, agentID, turnID string) (generation int, settled bool, err error) {
+// SettleRefusedExit marks the unacknowledged exit of one turn as settled when the server refuses that turn's frames with a code that
+// says the turn is over for good. Two codes do: stale_generation (the server answers every frame of a superseded generation that way —
+// the exit report, the turn's activity frames and its acks alike, and the Error does not say which frame it answers) and
+// already_terminal (the server's turn is already terminal in the other state: the journal says exited where the server holds killed, or
+// the reverse). Either way the exit report has nowhere to go and resending it would keep the journal open forever (the endless drain
+// loop of A13-13), so the settle applies only to a row that is exited and not yet acknowledged, of that agent and turn. A turn that is
+// still running keeps its normal course, and a turn with no such row settles nothing: the caller is told so with a nil error, never with
+// sql.ErrNoRows, because a refused activity frame of a running turn is the protocol working and must not fail the read loop. The
+// returned generation is the settled row's, for the one log line.
+func (j *Journal) SettleRefusedExit(ctx context.Context, agentID, turnID string) (generation int, settled bool, err error) {
 	err = j.db.QueryRowContext(ctx, `UPDATE turn_start SET exit_acked=1 WHERE turn_id=? AND agent_id=? AND exec='exited' AND exit_acked=0 RETURNING generation`, turnID, agentID).Scan(&generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil

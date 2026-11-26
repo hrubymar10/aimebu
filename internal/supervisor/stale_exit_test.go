@@ -95,7 +95,7 @@ func TestDrainSettlesAStaleGenerationExitAndEmptiesTheJournal(t *testing.T) {
 	if journal.Owes(context.Background()) {
 		t.Fatal("the journal still owes something; the drain could not empty it")
 	}
-	if n := strings.Count(logged(), "the server has superseded this generation"); n != 1 {
+	if n := strings.Count(logged(), "the server refused the late exit with stale_generation"); n != 1 {
 		t.Fatalf("the settle was logged %d times, want once: %s", n, logged())
 	}
 	removed, err := c.FinishRetire()
@@ -104,7 +104,7 @@ func TestDrainSettlesAStaleGenerationExitAndEmptiesTheJournal(t *testing.T) {
 	}
 }
 
-// Any other error code keeps the exit journaled: only stale_generation says the generation is over, and a journal whose debt the server has
+// Any other error code keeps the exit journaled: only stale_generation and already_terminal say the turn is over, and a journal whose debt the server has
 // not resolved must be finished the usual way (retried, adopted, or lost with recovery).
 func TestOtherErrorCodesKeepTheExitJournaled(t *testing.T) {
 	peer := newMachinePeer(t, func(protocol.Frame) protocol.Frame {
@@ -128,7 +128,7 @@ func TestOtherErrorCodesKeepTheExitJournaled(t *testing.T) {
 	if len(exits) != 1 {
 		t.Fatalf("a conflict refusal settled the exit: %+v", exits)
 	}
-	if strings.Contains(logged(), "the server has superseded this generation") {
+	if strings.Contains(logged(), "the server refused the late exit") {
 		t.Fatalf("the settle was logged for a code that is not stale_generation: %s", logged())
 	}
 }

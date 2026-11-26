@@ -95,6 +95,17 @@ to the one that matches its build and environment (see above). The local manager
   other error code keeps the exit journaled. This is what lets a drain empty
   the journal of an older build whose last exit the server refuses: the
   journal empties on the first refusal and is removed, with no manual step.
+- **A terminal-mismatch exit is settled, not resent.** The server answers a
+  process exit for a turn it has already ended in the other state (the journal
+  says `exited`, the server holds `killed`, or the reverse) with
+  `already_terminal` — its own code, not the general `invalid_transition` a
+  turn that may still be running gets for an out-of-order frame. The
+  supervisor settles such a refused exit the same way it settles a
+  `stale_generation` one: an exited, unacknowledged row of that agent and turn
+  is marked settled, logged once, and never sent again; a live turn's refused
+  activity frame changes nothing. An older server answers the mismatch with
+  `invalid_transition` alone; that code settles nothing, so an exit an older
+  server refuses this way stays journaled for the usual paths.
 - **Liveness is the only bound.** A retiring instance that holds its lock
   without a server connection for about 10 minutes, or one the server sees as
   empty for about a minute that does not exit, gets the bounded handover: an

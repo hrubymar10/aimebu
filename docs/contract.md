@@ -2582,7 +2582,7 @@ verification).
 `stale_generation`, `stale_rev`, `snapshot_required`, `spawn_limit`,
 `invalid_answer`, `conflict`, `unauthorized`,
 `forbidden`, `depth_exceeded`, `already_resolved`, `already_withdrawn`,
-`agent_not_active`, `invalid_transition`, `invalid_request`, `not_found`,
+`agent_not_active`, `invalid_transition`, `already_terminal`, `invalid_request`, `not_found`,
 `invalid_csrf`, `invalid_credentials`, `rate_limited`, `project_archived`,
 `docker_only`, `scope_mismatch`, `checkout_scope_mismatch`. docs/api.md lists
 the codes of each route. Each documented as retryable or not.
