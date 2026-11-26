@@ -58,7 +58,10 @@ func TestApplyLauncherFillsTheSpecFromTheRow(t *testing.T) {
 }
 
 func TestApplyLauncherRefuses(t *testing.T) {
-	root, _ := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	row := protocol.LauncherRow{LauncherDefinition: protocol.LauncherDefinition{VisibleRoots: []string{filepath.Join(root, "other")}}, Available: true}
 	if _, err := ApplyLauncher(&adapter.TurnSpec{}, row, root); err == nil {
 		t.Fatal("a checkout outside the launcher's visible roots is refused")
