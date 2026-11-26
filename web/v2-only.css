@@ -181,6 +181,7 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 .room-item .branch, .room-item .branch-spacer { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; min-height: 18px; padding: 0; margin-right: 0; }
 .room-item .branch { border: 0; background: transparent; }
 .room-item .room-collapse svg { display: block; }
+.room-item:has(> .room-collapse) > .room-item-icon-group { align-self: center; }
 .sidebar details > summary { display: flex; align-items: center; gap: 6px; list-style: none; }
 .sidebar details > summary::-webkit-details-marker { display: none; }
 .sidebar details > summary svg { flex: 0 0 13px; }

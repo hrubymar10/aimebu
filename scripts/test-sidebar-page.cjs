@@ -113,6 +113,39 @@ async function main() {
   };
   const count = (page, method, requestPath) => page.evaluate((method, requestPath) => window.__requests.filter(request => request.method === method && request.path.startsWith(requestPath)).length, method, requestPath);
   const calls = page => page.evaluate(() => window.__calls.splice(0));
+  // The house and fold chevron share the row's vertical centre, including when
+  // a status line or a message preview makes the project row taller.
+  for (const [device, touch] of [['desktop', null], ['touch', [390, 844]]]) {
+    for (const [caseName, withStatus, withPreview] of [
+      ['plain', false, false], ['status', true, false], ['status-preview', true, true],
+    ]) {
+      const list = rooms().prj_a.map(item => item.id === 'rm_api'
+        ? { ...item, purpose: 'task', attention_count: 0, working: withStatus }
+        : item);
+      const page = await mount({
+        auto: answerAll({ 'GET /api/projects/prj_a/rooms': list }),
+        touch,
+        setup: withPreview ? "localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1')" : '',
+      });
+      const geometry = await page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+        const centre = selector => {
+          const box = row.querySelector(selector).getBoundingClientRect();
+          return (box.top + box.bottom) / 2;
+        };
+        return {
+          icon: centre('.room-item-icon .icon-mask-house'),
+          chevron: centre('.room-collapse'),
+          status: !!row.querySelector('.project-status'),
+          preview: !!row.querySelector('.room-item-preview'),
+        };
+      });
+      assert.equal(geometry.status, withStatus, `${device} ${caseName}: expected status visibility`);
+      assert.equal(geometry.preview, withPreview, `${device} ${caseName}: expected preview visibility`);
+      assert.ok(Math.abs(geometry.icon - geometry.chevron) <= 1,
+        `${device} ${caseName}: house and chevron centres differ by ${(geometry.icon - geometry.chevron).toFixed(2)} px`);
+      await page.close();
+    }
+  }
   // The rules that answered the first load stop answering: the next read of these paths is held.
   const hold = (page, ...keys) => page.evaluate(keys => { for (const key of keys) delete window.__auto[key]; }, keys);
   // The rows as the list shows them, in order: [id, text, unread badge, nested].
