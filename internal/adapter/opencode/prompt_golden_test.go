@@ -27,7 +27,7 @@ func TestAnswerToolPromptVersionGate(t *testing.T) {
 		version string
 		want    bool
 	}{{"1.19.5", false}, {adapter.MinOpenCodeAnswerTool, true}, {"1.19.7", true}} {
-		got := promptFor(adapter.TurnSpec{HarnessVersion: tc.version})
+		got := promptFor(adapter.TurnSpec{Mode: adapter.ModeNormal, HarnessVersion: tc.version})
 		if strings.Contains(got, "calling the aimebu submit_answer tool") != tc.want {
 			t.Fatalf("version %s prompt gate=%t", tc.version, tc.want)
 		}
