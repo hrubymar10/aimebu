@@ -116,6 +116,53 @@ func TestAnswerToolFactIsStoredOnTheTurn(t *testing.T) {
 	}
 }
 
+// A correction turn's answer writes its own fact on its own row and leaves the parent's untouched. A held correction raises the
+// delivery failure and writes no held-reply note (that note is only for a normal turn nobody asks to correct, which reads its own row).
+func TestCorrectionTurnStoresItsOwnAnswerToolAndLeavesTheParents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, f := answerFixture(t, true)
+	parentTool, correctionTool := true, false
+	if receipt := applyToolCandidate(t, s, f, `{"messages":[`, &parentTool); receipt.Result != "correction_requested" {
+		t.Fatalf("first=%+v", receipt)
+	}
+	if err := s.RecordProcess(ctx, f.turn.ID, f.agent.ID, 0, 0, true, false); err != nil {
+		t.Fatal(err)
+	}
+	correction, err := s.CorrectionTurn(ctx, f.turn.ID)
+	if err != nil || correction.Mode != "correction" {
+		t.Fatalf("correction turn=%+v %v", correction, err)
+	}
+	parsed, parseErr := answer.Parse([]byte(`{"messages":[`), false)
+	sum := sha256.Sum256([]byte(`{"messages":[`))
+	input := AnswerInput{TurnID: correction.ID, AgentID: f.agent.ID, Generation: correction.Generation, AnswerRev: 1,
+		Digest: hex.EncodeToString(sum[:]), Candidate: []byte(`{"messages":[`), AnswerTool: &correctionTool}
+	if parseErr == nil {
+		input.Parsed = &parsed
+	} else {
+		input.ParseError = parseErr.Error()
+	}
+	if receipt, err := s.ApplyAnswer(ctx, input); err != nil || receipt.Result != "held" {
+		t.Fatalf("correction answer=%+v %v", receipt, err)
+	}
+	var own, parent sql.NullInt64
+	if err := s.db.QueryRow(`SELECT answer_tool FROM turn WHERE id=?`, correction.ID).Scan(&own); err != nil || !own.Valid || own.Int64 != 0 {
+		t.Fatalf("correction turn answer_tool=%+v err=%v", own, err)
+	}
+	if err := s.db.QueryRow(`SELECT answer_tool FROM turn WHERE id=?`, f.turn.ID).Scan(&parent); err != nil || !parent.Valid || parent.Int64 != 1 {
+		t.Fatalf("parent answer_tool=%+v err=%v", parent, err)
+	}
+	messages, err := s.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range messages {
+		if strings.HasPrefix(m.Body, heldReplyNotePrefix) {
+			t.Fatalf("a held correction wrote a held-reply note: %q", m.Body)
+		}
+	}
+}
+
 // Migration 145 gives every turn row an unknown answer tool (NULL), on a fresh database and on one upgraded with turns in it, and
 // the column takes only 0, 1 and NULL. Replaying from 144 also replays the migrations after it, so the version rows from 144 on
 // are deleted and the final version is whatever the binary ships.
