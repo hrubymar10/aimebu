@@ -356,6 +356,33 @@ func agentNamesByIDs(ctx context.Context, q rowQuerier, ids []string) (map[strin
 	return names, rows.Err()
 }
 
+// userLoginsByIDs reads the login of every person id in ids (lower-case
+// `usr_` tokens), keyed by the lower-cased id.
+func userLoginsByIDs(ctx context.Context, q rowQuerier, ids map[string]bool) (map[string]agentName, error) {
+	out := map[string]agentName{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(ids))
+	for id := range ids {
+		args = append(args, strings.ToLower(id))
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	rows, err := q.QueryContext(ctx, `SELECT lower(id),id,login FROM user WHERE lower(id) IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var lower, id, login string
+		if err := rows.Scan(&lower, &id, &login); err != nil {
+			return nil, err
+		}
+		out[lower] = agentName{ID: id, Name: login}
+	}
+	return out, rows.Err()
+}
+
 // roomDisplayNames gives the display name of every agent of one room: the
 // agent's slug, with a `-2`, `-3`, ... suffix on every later agent that shares
 // the slug with an earlier one among the room's current (not removed, still
@@ -409,6 +436,7 @@ func displayMentions(ctx context.Context, q rowQuerier, messages []Message) erro
 	}
 	rooms := map[string]bool{}
 	ids := map[string]bool{}
+	userIDs := map[string]bool{}
 	type preparedMessage struct {
 		spans []MentionSpan
 	}
@@ -422,12 +450,18 @@ func displayMentions(ctx context.Context, q rowQuerier, messages []Message) erro
 			if strings.HasPrefix(span.Token, "agt_") {
 				ids[span.Token] = true
 				rooms[message.RoomID] = true
+			} else if strings.HasPrefix(span.Token, "usr_") {
+				userIDs[span.Token] = true
 			}
 		}
 		prepared[i].spans = spans
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && len(userIDs) == 0 {
 		return nil
+	}
+	logins, err := userLoginsByIDs(ctx, q, userIDs)
+	if err != nil {
+		return err
 	}
 	idList := make([]string, 0, len(ids))
 	for id := range ids {
@@ -461,6 +495,20 @@ func displayMentions(ctx context.Context, q rowQuerier, messages []Message) erro
 		decided := make([]shown, len(spans))
 		seen := map[string]bool{}
 		for j, span := range spans {
+			if strings.HasPrefix(span.Token, "usr_") {
+				// A person shows as their login; an unknown id keeps the stored text.
+				login, ok := logins[span.Token]
+				if !ok {
+					if !seen[span.Token] {
+						seen[span.Token] = true
+						decided[j].ref = MentionRef{ID: span.Token, Name: "", Resolved: false}
+					}
+					continue
+				}
+				decided[j].replacement, decided[j].ok = "@"+login.Name, true
+				decided[j].ref = MentionRef{ID: login.ID, Name: login.Name, Resolved: true}
+				continue
+			}
 			if !strings.HasPrefix(span.Token, "agt_") {
 				continue
 			}

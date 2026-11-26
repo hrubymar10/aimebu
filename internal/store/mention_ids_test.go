@@ -690,3 +690,31 @@ func TestDeliveryNoteCarriesEntities(t *testing.T) {
 		t.Fatalf("note entities = %v, want %q", ids, want)
 	}
 }
+
+// A person's @usr_<id> reads as @login like an agent's @agt_<id> reads as its
+// name; an unknown id and any id inside code stay as written.
+func TestPersonMentionIDRendersAsLogin(t *testing.T) {
+	s, _ := testStore(t, Options{})
+	mentionSeed(t, s)
+	room := mentionRoom(t, s, "task", "people")
+	body := "@usr_pia look, @usr_nobody too, `@usr_pia` and\n```\n@usr_pia\n```"
+	message := mentionPersonMessage(t, s, room.ID, body)
+	messages, err := s.ListMessagesAfter(context.Background(), room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range messages {
+		if m.ID != message.ID {
+			continue
+		}
+		want := "@pia look, @usr_nobody too, `@usr_pia` and\n```\n@usr_pia\n```"
+		if m.Body != want {
+			t.Fatalf("a reader sees %q, want %q", m.Body, want)
+		}
+		if len(m.Mentions) != 2 || m.Mentions[0].Name != "pia" || !m.Mentions[0].Resolved || m.Mentions[1].Resolved {
+			t.Fatalf("mentions = %+v", m.Mentions)
+		}
+		return
+	}
+	t.Fatal("the message is missing from the room history")
+}
