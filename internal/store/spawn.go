@@ -1078,6 +1078,10 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT observed FROM agent WHERE id=?`, id).Scan(&observed); err != nil {
 			return AgentCard{}, err
 		}
+		// The stopped agent can no longer be switched by the pool: if it was the last one the project's pool card listed, the card is withdrawn.
+		if err := tx.syncPoolChange(projectID); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	if _, err := tx.AppendEvent(Event{Kind: "agent_control_requested", ProjectID: projectID, AgentID: id,
 		PayloadJSON: payloadJSON(map[string]string{"desired": desired, "actor_kind": actorKind, "actor_id": actorID})}); err != nil {

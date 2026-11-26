@@ -496,6 +496,16 @@ func (tx *Tx) revokeAgent(id string, extra map[string]string) error {
 	if count == 0 {
 		return sql.ErrNoRows
 	}
+	// A revoked agent can no longer be switched by the pool: if it was the last one the project's pool card listed, the card is withdrawn.
+	var projectID string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, id).Scan(&projectID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if projectID != "" {
+		if err := tx.syncPoolChange(projectID); err != nil {
+			return err
+		}
+	}
 	payload := map[string]string{"agent_id": id}
 	for key, value := range extra {
 		payload[key] = value

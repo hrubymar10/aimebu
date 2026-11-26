@@ -506,3 +506,59 @@ func TestPoolChangeIgnoresAnEmptyPool(t *testing.T) {
 		t.Fatalf("withdrawal events: %d (%v)", resolved, err)
 	}
 }
+
+func TestPoolChangeWithdrawsWhenTheLastAffectedAgentLeaves(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	raise := func(f poolFixture) string {
+		t.Helper()
+		f.setPool(t, "worker", f.b) // only the worker is affected: the lead's pool still lists its choice
+		return f.openItems(t, "usr_owner")[0].ID
+	}
+	withdrawn := func(f poolFixture, itemID string) {
+		t.Helper()
+		if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+			t.Fatalf("the item stayed with nobody left to switch: %+v", items)
+		}
+		var resolved int
+		if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='inbox_item_resolved' AND json_extract(payload_json,'$.inbox_item_id')=?
+			AND json_extract(payload_json,'$.resolution')='withdrawn'`, itemID).Scan(&resolved); err != nil || resolved != 1 {
+			t.Fatalf("withdrawal events: %d (%v)", resolved, err)
+		}
+	}
+	// A stop.
+	f := newPoolFixture(t)
+	itemID := raise(f)
+	card, err := f.s.AgentCardByID(ctx, f.worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SetAgentDesired(f.worker.ID, "usr_owner", "stopped", card.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn(f, itemID)
+	// A revoke.
+	f = newPoolFixture(t)
+	itemID = raise(f)
+	if err := f.s.RevokeAgent(ctx, f.worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn(f, itemID)
+	// An explicit switch (to a model the pool does not list).
+	f = newPoolFixture(t)
+	itemID = raise(f)
+	card, err = f.s.AgentCardByID(ctx, f.worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginAgentSwitch(f.worker.ID, "usr_owner", f.room.ID, "claude", "native", "haiku", "anthropic", card.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn(f, itemID)
+}
