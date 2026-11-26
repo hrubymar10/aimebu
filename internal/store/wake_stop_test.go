@@ -222,3 +222,26 @@ func TestStoppedAgentKeepsAPlainDMNoteAndRunsItOnRestart(t *testing.T) {
 		t.Fatalf("no turn after restart: ready=%t %v", ready, err)
 	}
 }
+
+// A chat between two agents is a dm room too, but a person's plain message there is not addressed to either agent: a stopped agent
+// gets no note from it (only a person's own DM with an agent is the exception).
+func TestStoppedAgentGetsNoNoteFromAPlainMessageInAnAgentChat(t *testing.T) {
+	t.Parallel()
+	f := newDMFixture(t)
+	ctx := context.Background()
+	room := f.open(t, f.worker1, f.worker2)
+	f.join(t, room.ID, f.owner)
+	if _, err := f.s.db.Exec(`UPDATE agent SET desired='stopped',observed='stopped' WHERE id=?`, f.worker2.ID); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := f.s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: f.owner, Body: "anyone there"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := noQueuedNote(t, f.s, f.worker2.ID, msg.ID, "agent chat, plain person message, stopped agent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := notWokenEvent(t, f.s, room.ID, f.worker2.ID, msg.ID, "agent_stopped"); err != nil {
+		t.Fatal(err)
+	}
+}

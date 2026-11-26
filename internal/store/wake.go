@@ -711,7 +711,7 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 			// anybody, addressed or not (a re-opened room's history is read on the next turn instead).
 			skip = "room_" + lifecycle
 		}
-		if skip == "" && member.desired == "stopped" && !(reason == "human_message" && roomKind == "dm") && (reason == "human_message" || reason == "broadcast" || reason == "group") {
+		if skip == "" && member.desired == "stopped" && !(reason == "human_message" && roomKind == "dm" && projectID != AgentDMProjectID) && (reason == "human_message" || reason == "broadcast" || reason == "group") {
 			// A stopped agent gets no turn from room chatter: an unaddressed note is not created for it. A note addressed
 			// to it (a mention, a reply, a handoff, or a person's plain message in their DM with it) stays queued in an open room for when it is started again.
 			skip = "agent_stopped"
