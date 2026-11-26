@@ -210,10 +210,11 @@ func SupervisorDirOf(journalPath string) string {
 	return dir
 }
 
-// EndDeadTurns records an exit for every turn the journal still lists as running: the process that ran it is gone with its holder. Each exit is then
-// reported and acknowledged like any other, which is how a drain instance empties the journal of a dead one. It returns how many turns it ended.
+// EndDeadTurns records an exit for legacy running turns without a complete process identity. Identified turns must first have their
+// process checked by settleDeadTurns; an uncertain lookup or unverified termination leaves them running for a later drain.
 func (j *Journal) EndDeadTurns(ctx context.Context, exit adapter.ExitInfo) (int, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT turn_id FROM turn_start WHERE exec='running' ORDER BY started_at,turn_id`)
+	rows, err := j.db.QueryContext(ctx, `SELECT turn_id FROM turn_start WHERE exec='running' AND
+		(COALESCE(pid,0)<=0 OR COALESCE(pgid,0)<=0 OR COALESCE(pid_start,'')='') ORDER BY started_at,turn_id`)
 	if err != nil {
 		return 0, err
 	}

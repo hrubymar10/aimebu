@@ -797,6 +797,20 @@ type warmTurn struct {
 	entry *warmEntry
 }
 
+// ProcessIdentity is the harness process in which this warm turn runs.
+func (t *warmTurn) ProcessIdentity() (pid, pgid int) {
+	if identified, ok := t.Turn.(adapter.ProcessIdentified); ok {
+		if pid, pgid = identified.ProcessIdentity(); pid > 0 && pgid > 0 {
+			return pid, pgid
+		}
+	}
+	if t.entry != nil && t.entry.session != nil {
+		pid = t.entry.session.Pid()
+		return pid, pid
+	}
+	return 0, 0
+}
+
 func (t *warmTurn) LastOutput() time.Time {
 	if lo, ok := t.Turn.(interface{ LastOutput() time.Time }); ok {
 		return lo.LastOutput()
@@ -1637,9 +1651,8 @@ const (
 	StartUnknown
 )
 
-// processStartState is processStart with three outcomes: the start string when ps ran and reports one, gone when ps ran and reports no
-// such process (its exit status for an unknown pid, with no output), and unknown when ps could not tell. The old callers of processStart
-// keep reading "" for both gone and unknown, which is all they ever did.
+// processStartState is processStart with three outcomes: the start string when ps reports one, gone only when the system confirms the
+// pid is absent, and unknown when neither can be established. The old callers of processStart keep reading "" for both gone and unknown.
 func processStartState(pid int) (ProcessStartState, string) {
 	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
 	if err == nil {
@@ -1648,8 +1661,7 @@ func processStartState(pid int) (ProcessStartState, string) {
 		}
 		return StartUnknown, ""
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && len(out) == 0 {
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
 		return StartGone, ""
 	}
 	return StartUnknown, ""

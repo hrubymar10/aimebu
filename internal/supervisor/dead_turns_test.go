@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -318,6 +319,27 @@ func TestDrainChecksIdentityBeforeEndingTurns(t *testing.T) {
 	}
 }
 
+func TestDrainLeavesUnknownIdentifiedTurnOwed(t *testing.T) {
+	journal := openTestJournal(t)
+	pid, start := startHelper(t)
+	recordRunningTurn(t, journal, "turn-unknown-drain", pid, pid, start)
+	c := NewClient("machine", "key", "http://unused.invalid", journal, adapter.NewFake())
+	c.ProcessStartState = func(int) (ProcessStartState, string) { return StartUnknown, "" }
+	for attempt := 1; attempt <= 2; attempt++ {
+		n, err := c.settleDeadTurns(context.Background(), true)
+		if err != nil || n != 0 {
+			t.Fatalf("drain attempt %d: settled %d, err %v", attempt, n, err)
+		}
+		debt, err := journal.Debt(context.Background())
+		if err != nil || debt.OpenTurns != 1 || debt.PendingExits != 0 {
+			t.Fatalf("drain attempt %d debt: %+v, err %v", attempt, debt, err)
+		}
+	}
+	if !helperStarted(pid, start) {
+		t.Fatal("the uncertain drain signalled the live process")
+	}
+}
+
 // A delivery journals the harness process identity of the turn it started, so a later supervisor can settle the turn by that identity.
 func TestDeliveryRecordsTheHarnessProcessIdentity(t *testing.T) {
 	journal := openTestJournal(t)
@@ -350,6 +372,18 @@ func TestDeliveryRecordsTheHarnessProcessIdentity(t *testing.T) {
 		}
 	}
 	close(gate)
+}
+
+func TestProcessStartStateDoesNotTrustFailedPsForLivePID(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "ps"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	state, _ := processStartState(os.Getpid())
+	if state != StartUnknown {
+		t.Fatalf("failed ps for live pid gave %v, want unknown", state)
+	}
 }
 
 // A lookup that cannot tell (ps missing, not runnable, out of permission, anything else) proves nothing: the row stays running, no signal

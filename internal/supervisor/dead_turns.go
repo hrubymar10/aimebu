@@ -23,6 +23,10 @@ const orphanTermGrace = 5 * time.Second
 // orphanTermPoll is how often the wait for a signalled group checks whether it is gone.
 const orphanTermPoll = 50 * time.Millisecond
 
+// The SIGKILL may take a moment to become visible to the process lookup.
+var orphanKillGrace = 2 * time.Second
+var orphanKillPoll = 50 * time.Millisecond
+
 // settleDeadTurns settles the turns a dead predecessor left running in this journal. A row whose start recorded its harness process
 // identity is settled only once that identity has been checked, and the check has three outcomes (see ProcessStartState): a process the
 // system reports gone proves the turn dead; a process running with the same pid and start time is an orphan whose output nobody will
@@ -79,7 +83,7 @@ func (c *Client) settleDeadTurns(ctx context.Context, includeLegacy bool) (int, 
 				return settled, err
 			}
 		case StartGone:
-			// ps ran and reports no such process: the turn's process is gone.
+			// The system confirms the pid is absent: the turn's process is gone.
 			if err := settle(turn.TurnID); err != nil {
 				return settled, err
 			}
@@ -139,7 +143,16 @@ func (c *Client) terminateOrphanGroup(pid, pgid int, start string) bool {
 		return false
 	}
 	_ = adapter.SignalGroup(pgid, syscall.SIGKILL, gone)
-	return gone()
+	deadline = time.Now().Add(orphanKillGrace)
+	for {
+		if gone() {
+			return true
+		}
+		if unclear() || !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(orphanKillPoll)
+	}
 }
 
 // logUnknownStart says once per turn per process run that the turn's process could not be checked, so a silent unchecked row is visible

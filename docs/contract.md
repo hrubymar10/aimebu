@@ -1564,8 +1564,11 @@ Records (all keyed by turn_id + generation):
   pid now carries a process that started at another time) proves the turn
   dead and it is ended `supervisor_lost`; an orphan still running with the
   same pid and start time is terminated (its process group: SIGTERM, 5 s,
-  SIGKILL) and then ended the same way; and a row without an identity keeps
-  the drain's old behaviour.
+  SIGKILL) and ended the same way only after its termination is verified.
+  An identified row whose process lookup or termination cannot be verified
+  stays `running` and is owed to a later drain; the same-debt back-off reports
+  it once instead of starting drains in a loop. A row without an identity
+  keeps the drain's old behaviour.
 - `activity{source_event_id, kind, summary, ts}` — appended as parsed.
 - `process_exit{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?, ts,
   acked}` — replayed until the server acknowledges its durable process
@@ -1661,9 +1664,11 @@ and `restart` inspect or replace it; `aimebu server stop --with-supervisor`
 stops it explicitly. Restart interrupts active turns and waits up to 40 seconds for
 their journal writes. A SIGTERM drains a supervisor the same way whether it is
 local or remote. When the drain's wait runs out, the supervisor ends what is
-still running and records a `supervisor_lost` exit for every turn its journal
-still lists as running before it exits, so it never leaves a running row
-behind. A turn whose exit info cannot be written is retried with a bounded
+still running and checks each remaining turn's process identity. It records
+`supervisor_lost` after the process is proved gone or its termination is
+verified. An identified row whose process cannot be checked or whose end
+cannot be verified stays `running` and is owed to a later drain; a row without
+an identity keeps the earlier drain rule. A turn whose exit info cannot be written is retried with a bounded
 backoff; when the write keeps failing, the supervisor reports it, keeps the
 exit in memory and retries the write while it runs, and counts the unwritten
 exit as work a retiring instance still owes. The supervisor's hello includes

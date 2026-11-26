@@ -52,9 +52,13 @@ stops accepting new work, interrupts its running turns, and waits up to 40
 seconds for their journal writes (an owner restart of the local supervisor is
 the same drain, asked with SIGUSR1). When the wait runs out, the supervisor
 ends what is still running (a kill of the turn's process) and, after a short
-grace, records a `supervisor_lost` exit for every turn the journal still lists
-as running, so it never exits with a turn whose exit it never journaled; the
-exits are replayed to the server by the next connection or drain instance.
+grace, checks the process identity of each turn still listed as running. It
+records a `supervisor_lost` exit only after the process is proved gone or its
+termination is verified. An identified turn whose process cannot be checked
+or whose termination cannot be verified remains running in the journal for a
+later drain. A legacy turn without a process identity keeps the earlier drain
+behaviour and is ended as `supervisor_lost`. Journaled exits are replayed to
+the server by the next connection or drain instance.
 A turn whose exit info cannot be written at all is retried with a short
 bounded backoff; when the write still fails, the supervisor reports it and
 keeps the exit in memory, tries the write again while it runs, and counts the

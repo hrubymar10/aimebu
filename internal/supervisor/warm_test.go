@@ -436,6 +436,7 @@ func (h *warmHarness) run(agent string, mutate func(*adapter.TurnSpec)) adapter.
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	h.c.recordTurnProcess(ctx, id, turn) // the production delivery records identity between startTurn and runTurn
 	h.c.mu.Lock()
 	h.c.running[agent] = turn
 	h.c.mu.Unlock()
@@ -487,6 +488,24 @@ func TestWarmSecondTurnGoesIntoTheLiveProcess(t *testing.T) {
 	defer h.c.mu.Unlock()
 	if h.c.active["agt_a"] != "" || h.c.running["agt_a"] != nil {
 		t.Fatal("an idle warm process must not count as an active turn")
+	}
+}
+
+func TestWarmDeliveryRecordsHarnessProcessIdentity(t *testing.T) {
+	h := newWarmHarness(t)
+	h.c.ProcessStartState = func(pid int) (ProcessStartState, string) {
+		return StartKnown, "started-" + strconv.Itoa(pid)
+	}
+	h.spawn("agt_a")
+	h.run("agt_a", nil)
+	pid := h.f.sessions[0].Pid()
+	var recordedPID, recordedPGID int
+	var recordedStart string
+	if err := h.c.Journal.db.QueryRow(`SELECT COALESCE(pid,0),COALESCE(pgid,0),COALESCE(pid_start,'') FROM turn_start WHERE turn_id='turn_b'`).Scan(&recordedPID, &recordedPGID, &recordedStart); err != nil {
+		t.Fatal(err)
+	}
+	if recordedPID != pid || recordedPGID != pid || recordedStart != "started-"+strconv.Itoa(pid) {
+		t.Fatalf("warm delivery identity = (%d,%d,%q), want pid and start of %d", recordedPID, recordedPGID, recordedStart, pid)
 	}
 }
 

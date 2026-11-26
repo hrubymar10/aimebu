@@ -50,3 +50,49 @@ func TestStopAcceptingAndDrainTimeoutSettlesRunningTurns(t *testing.T) {
 	close(turn.done)
 	client.turns.Wait()
 }
+
+func TestDrainTimeoutPreservesUnverifiedIdentifiedTurns(t *testing.T) {
+	oldGrace := drainSettleGrace
+	drainSettleGrace = 0
+	t.Cleanup(func() { drainSettleGrace = oldGrace })
+	for _, tc := range []struct {
+		name  string
+		pid   int
+		state ProcessStartState
+		start string
+		want  bool
+	}{
+		{"alive", 4242, StartKnown, "recorded", false},
+		{"unknown", 4242, StartUnknown, "", false},
+		{"gone", 4242, StartGone, "", true},
+		{"legacy", 0, StartUnknown, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			journal := openTestJournal(t)
+			recordRunningTurn(t, journal, "turn-timeout", tc.pid, tc.pid, "recorded")
+			c := NewClient("machine", "key", "http://unused.invalid", journal, adapter.NewFake())
+			c.active["agent_x"] = "turn-timeout"
+			c.ProcessStartState = func(int) (ProcessStartState, string) { return tc.state, tc.start }
+			c.settleDrainTimeout()
+			turns, err := journal.RunningTurnProcesses(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(turns) == 0) != tc.want {
+				t.Fatalf("settled=%v, want %v; running=%+v", len(turns) == 0, tc.want, turns)
+			}
+		})
+	}
+}
+
+func TestDrainTimeoutWithNoTurnsSkipsGrace(t *testing.T) {
+	oldGrace := drainSettleGrace
+	drainSettleGrace = 300 * time.Millisecond
+	t.Cleanup(func() { drainSettleGrace = oldGrace })
+	c := NewClient("machine", "key", "http://unused.invalid", openTestJournal(t), adapter.NewFake())
+	start := time.Now()
+	c.settleDrainTimeout()
+	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+		t.Fatalf("empty drain waited for grace: %s", elapsed)
+	}
+}

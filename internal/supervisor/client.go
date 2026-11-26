@@ -1909,10 +1909,9 @@ func supervisorLostExit() adapter.ExitInfo {
 	return adapter.ExitInfo{ExitCode: -1, ErrorEvent: "supervisor_lost", ErrorSummary: "the supervisor that ran this turn died"}
 }
 
-// settleDrainTimeout ends the turns a drain could not wait for. It kills what is still running, gives the turn goroutines a short grace to
-// journal their own exits, and then writes a supervisor_lost exit for every turn that is still running, so the supervisor never exits with a
-// turn whose exit it never journaled. The rows are settled with the ordinary exit write, so whichever write lands first (the goroutine's real
-// exit or the lost exit here) wins, and the loser's write finds no running row and changes nothing.
+// settleDrainTimeout ends turns a drain could not wait for. After the kill and a short grace for each turn goroutine's own exit,
+// it settles only legacy rows and identified rows whose process is proved gone. An unverified identified row stays running so the
+// successor can check its process identity and end the orphan. Whichever exit write lands first wins.
 func (c *Client) settleDrainTimeout() {
 	c.mu.Lock()
 	turns := make([]adapter.Turn, 0, len(c.running))
@@ -1924,6 +1923,9 @@ func (c *Client) settleDrainTimeout() {
 		ids = append(ids, turnID)
 	}
 	c.mu.Unlock()
+	if len(turns) == 0 && len(ids) == 0 {
+		return
+	}
 	for _, turn := range turns {
 		if killer, ok := turn.(interface{ Kill() error }); ok {
 			_ = killer.Kill()
@@ -1934,7 +1936,26 @@ func (c *Client) settleDrainTimeout() {
 	time.Sleep(drainSettleGrace)
 	settleCtx, cancel := context.WithTimeout(context.Background(), drainSettleWriteTimeout)
 	defer cancel()
+	processes, err := c.Journal.RunningTurnProcesses(settleCtx)
+	if err != nil {
+		c.report("running turns at the end of the drain could not be checked", err)
+		return
+	}
+	byID := make(map[string]TurnProcess, len(processes))
+	for _, process := range processes {
+		byID[process.TurnID] = process
+	}
 	for _, turnID := range ids {
+		process, exists := byID[turnID]
+		if !exists {
+			continue // the turn goroutine journaled its exit during the grace
+		}
+		if process.Pid > 0 && process.Pgid > 0 && process.Start != "" {
+			state, start := c.processState(process.Pid)
+			if state != StartGone && !(state == StartKnown && start != process.Start) {
+				continue // its process may still be alive; leave it to the successor
+			}
+		}
 		if err := c.exitWrite()(settleCtx, turnID, supervisorLostExit()); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			c.report("a turn running at the end of the drain could not be settled", err)
 		}
