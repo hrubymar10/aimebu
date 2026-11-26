@@ -32,7 +32,7 @@ type Adapter struct {
 	// StandIn marks an adapter the eval runner starts instead of the supervisor: it has no agent session to warn about, so the transcript check
 	// stays silent (resumeOrFresh).
 	StandIn       bool
-	warned        sync.Map // session handle -> struct{}: the sessions whose transcript check was already logged
+	warned        sync.Map // session handle + reason -> struct{}: the skips already logged
 	version       string
 	stderrCapture io.Writer
 }

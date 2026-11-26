@@ -107,7 +107,7 @@ func (a *Adapter) resumeOrFresh(spec adapter.TurnSpec, env []string, cwd string)
 	}
 	dir, why := hostConfigDir(spec, a.variant() == "docker", env)
 	if why != "" {
-		if _, seen := a.warned.LoadOrStore(handle, struct{}{}); !seen && !a.StandIn {
+		if _, seen := a.warned.LoadOrStore(handle+"\x00"+why, struct{}{}); !seen && !a.StandIn {
 			log.Printf("claude: not checking the transcript of session %s: %s; keeping started=%t", handle, why, started)
 		}
 		return started

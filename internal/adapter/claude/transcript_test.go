@@ -199,3 +199,30 @@ func TestNoPathMapWarningOncePerSessionAndNeverOnTheStandIn(t *testing.T) {
 		t.Fatalf("stand-in: %d warnings, want 0", got)
 	}
 }
+
+// The warning is deduped by (session, reason): another reason in the same session logs once more, a repeat of a reason logs nothing.
+func TestSkipWarningIsOncePerSessionAndReason(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	a := &Adapter{Variant: "docker"}
+	turn := func(variant string) {
+		a.Variant = variant
+		spec := transcriptSpec(t, true)
+		spec.LauncherContainerized = true // a native launch in a launcher that does not share the host's Claude home
+		a.resumeOrFresh(spec, nil, "/x")
+	}
+	for _, v := range []string{"docker", "native", "docker", "native"} {
+		turn(v)
+	}
+	out := buf.String()
+	if n := strings.Count(out, "no path map to the container's config dir"); n != 1 {
+		t.Fatalf("path map reason logged %d times, want 1:\n%s", n, out)
+	}
+	if n := strings.Count(out, "does not share the host's Claude home"); n != 1 {
+		t.Fatalf("second reason logged %d times, want 1:\n%s", n, out)
+	}
+	if n := strings.Count(out, "not checking the transcript"); n != 2 {
+		t.Fatalf("%d lines, want 2:\n%s", n, out)
+	}
+}

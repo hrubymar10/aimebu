@@ -119,7 +119,7 @@ reports for the others), never an agent's session. Its repair turn, when there i
 `<scratch_dir>/aimebu-eval-<run id>-<target>`, a fresh git repository, and Claude names the folder of a session's transcript after the working
 directory, so every transcript of a run sits in a folder whose name contains `aimebu-eval-<run id>`. The `claude-docker` launcher shares the host's
 Claude home (`claude_home_shared`), so those folders are in `<Claude home>/projects/`: delete the ones matching `*aimebu-eval-*` when you are done with
-a run. The runner does not delete them, because it never touches that home itself. The Claude adapter the runner starts is marked `StandIn`, so it does not log the Docker variant's "no path map to the container's config dir" (it has no agent session to check a transcript for); in a real session the supervisor logs that line once per session, not on every turn.
+a run. The runner does not delete them, because it never touches that home itself. The Claude adapter the runner starts is marked `StandIn`, so it does not log the Docker variant's "no path map to the container's config dir" (it has no agent session to check a transcript for); in a real session the supervisor logs that line once per session and reason, not on every turn.
 
 **Repairs.** A reply the answer parser rejects is sent back: the next turn resumes the session with the system note a held reply gets ("Your
 previous reply was held: ..."). That is what the server does for Claude; for the other harnesses the server runs a correction-mode turn
