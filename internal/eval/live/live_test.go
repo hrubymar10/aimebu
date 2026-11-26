@@ -492,3 +492,39 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 		}
 	})
 }
+
+// usagesServer serves the given /api/usages body.
+func usagesServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+	t.Cleanup(server.Close)
+	return server
+}
+
+const guardUsages = `{"providers":[
+{"provider_name":"claude","profiles":[{"profile_name":"main","active":true,"windows":[{"key":"weekly","percent_used":10}]},{"profile_name":"spare","windows":[{"key":"weekly","percent_used":100}]}]},
+{"provider_name":"codex","profiles":[{"profile_name":"main","active":true,"windows":[{"key":"weekly","percent_used":100}]}]}]}`
+
+func TestQuotaGuardChecksOnlyTheTargetsToolsAndActiveProfiles(t *testing.T) {
+	st := &stub{reply: func(adapter.TurnSpec, int) []adapter.Event { return []adapter.Event{answerEvent(`{"messages":[]}`)} }}
+	// codex is at 100% and the claude spare profile too, but the run is claude-only on its active profile (10%).
+	o := newOptions(t, st, "s18-fyi-silence")
+	o.Quota = &QuotaSource{URL: usagesServer(t, guardUsages).URL}
+	if _, err := o.Run(context.Background()); err != nil {
+		t.Fatalf("a claude-only run is not blocked by codex or by an inactive profile: %v", err)
+	}
+	// A codex target at 100% is blocked.
+	o = newOptions(t, st, "s18-fyi-silence")
+	o.Targets = []Target{{Name: "codex-x", Tool: "codex", LauncherID: "lch_1", Model: "m"}}
+	o.Quota = &QuotaSource{URL: usagesServer(t, guardUsages).URL}
+	if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "codex/main/weekly") {
+		t.Fatalf("a codex target at 100%% must stop the run: %v", err)
+	}
+	// The active profile of a claude target at 100% is blocked; its inactive one alone is not.
+	hot := strings.Replace(guardUsages, `"percent_used":10`, `"percent_used":97`, 1)
+	o = newOptions(t, st, "s18-fyi-silence")
+	o.Quota = &QuotaSource{URL: usagesServer(t, hot).URL}
+	if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "claude/main/weekly") {
+		t.Fatalf("the active profile above the limit stops the run: %v", err)
+	}
+}

@@ -24,32 +24,46 @@ type QuotaSource struct {
 	Client    *http.Client
 }
 
+// Reading is one read of /api/usages: the usage and, per provider, the profile that is active ("provider" -> profile name). A provider with no
+// profile flagged active has no entry.
+type Reading struct {
+	Usage  Usage
+	Active map[string]string
+}
+
 // Fetch reads the current usage.
 func (q QuotaSource) Fetch(ctx context.Context) (Usage, error) {
+	r, err := q.Read(ctx)
+	return r.Usage, err
+}
+
+// Read reads the current usage and which profile of each provider is active.
+func (q QuotaSource) Read(ctx context.Context) (Reading, error) {
 	client := q.Client
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(q.URL, "/")+"/api/usages", nil)
 	if err != nil {
-		return nil, err
+		return Reading{}, err
 	}
 	if q.CookieEnv != "" {
 		req.Header.Set("Cookie", os.Getenv(q.CookieEnv))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return Reading{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET /api/usages answered %d", resp.StatusCode)
+		return Reading{}, fmt.Errorf("GET /api/usages answered %d", resp.StatusCode)
 	}
 	var body struct {
 		Providers []struct {
 			Name     string `json:"provider_name"`
 			Profiles []struct {
 				Name    string `json:"profile_name"`
+				Active  bool   `json:"active"`
 				Windows []struct {
 					Key  string  `json:"key"`
 					Used float64 `json:"percent_used"`
@@ -58,17 +72,21 @@ func (q QuotaSource) Fetch(ctx context.Context) (Usage, error) {
 		} `json:"providers"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, err
+		return Reading{}, err
 	}
 	out := Usage{}
+	active := map[string]string{}
 	for _, p := range body.Providers {
 		for _, profile := range p.Profiles {
+			if profile.Active {
+				active[p.Name] = profile.Name
+			}
 			for _, w := range profile.Windows {
 				out[p.Name+"/"+profile.Name+"/"+w.Key] = w.Used
 			}
 		}
 	}
-	return out, nil
+	return Reading{Usage: out, Active: active}, nil
 }
 
 // isWeekly says a window key names a weekly window (Claude's seven_day family, "weekly" and the scoped weekly ones).
@@ -91,6 +109,29 @@ func (u Usage) Hottest() (string, float64) {
 func (u Usage) OverLimit(limit float64) string {
 	if name, used := u.Hottest(); used > limit {
 		return fmt.Sprintf("%s is at %.0f%% (stop above %.0f%%)", name, used, limit)
+	}
+	return ""
+}
+
+// OverLimitFor is OverLimit restricted to what a run can spend: only the weekly windows of the providers in tools, and of each only its
+// active profile (a provider with no profile flagged active keeps all its profiles, as there is nothing to tell them apart by). A provider no
+// target uses is ignored entirely.
+func (u Usage) OverLimitFor(limit float64, tools map[string]bool, active map[string]string) string {
+	name, high := "", -1.0
+	for key, used := range u {
+		parts := strings.SplitN(key, "/", 3)
+		if len(parts) != 3 || !tools[parts[0]] || !isWeekly(parts[2]) {
+			continue
+		}
+		if want, ok := active[parts[0]]; ok && parts[1] != want {
+			continue
+		}
+		if used > high {
+			name, high = key, used
+		}
+	}
+	if high > limit {
+		return fmt.Sprintf("%s is at %.0f%% (stop above %.0f%%)", name, high, limit)
 	}
 	return ""
 }

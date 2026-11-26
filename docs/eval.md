@@ -119,7 +119,7 @@ reports for the others), never an agent's session. Its repair turn, when there i
 `<scratch_dir>/aimebu-eval-<run id>-<target>`, a fresh git repository, and Claude names the folder of a session's transcript after the working
 directory, so every transcript of a run sits in a folder whose name contains `aimebu-eval-<run id>`. The `claude-docker` launcher shares the host's
 Claude home (`claude_home_shared`), so those folders are in `<Claude home>/projects/`: delete the ones matching `*aimebu-eval-*` when you are done with
-a run. The runner does not delete them, because it never touches that home itself.
+a run. The runner does not delete them, because it never touches that home itself. The Claude adapter the runner starts is marked `StandIn`, so it does not log the Docker variant's "no path map to the container's config dir" (it has no agent session to check a transcript for); in a real session the supervisor logs that line once per session, not on every turn.
 
 **Repairs.** A reply the answer parser rejects is sent back: the next turn resumes the session with the system note a held reply gets ("Your
 previous reply was held: ..."). That is what the server does for Claude; for the other harnesses the server runs a correction-mode turn
@@ -136,7 +136,7 @@ Hovering a token total in the Markdown report shows the input split and output.
 **Quota and cost.** `usages_url` is a running server whose `GET /api/usages` the runner reads (the repo's own usage data, owner-only) with the cookie
 in the environment variable named by `usages_cookie_env`. The run is refused without it. The quota is read before the run, every 10 cases and
 once more on every way out of the run (the end, the budget cap, the guard, an unreadable quota, a cancel), with a short context of its own; when
-that last reading fails, the last successful one stays in the after column; a weekly window (`weekly*`, `seven_day*`) above `--stop-above` (default 90) percent stops the run, and the report carries the
+that last reading fails, the last successful one stays in the after column; a weekly window (`weekly*`, `seven_day*`) above `--stop-above` (default 90) percent stops the run, but only a window of a tool one of the run's targets uses, and of that tool only its **active** profile (a tool with no profile flagged active in `/api/usages` keeps all its profiles); a tool no target uses, and an inactive profile, never stop it (a Claude-only smoke ignores `codex` at 100%). The report carries the
 before and after share of every window. `--max-usd` (default 30) stops the run when the cost the harnesses report passes it; for a subscription
 that is an equivalent, not a charge. The report keeps the cases finished when a run stops early.
 

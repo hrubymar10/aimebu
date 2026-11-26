@@ -102,12 +102,13 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 		rows[row.ID] = row
 	}
 	if o.Quota != nil {
-		usage, err := o.Quota.Fetch(ctx)
+		reading, err := o.Quota.Read(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("reading the quota before the run: %w", err)
 		}
+		usage := reading.Usage
 		o.QuotaBefore, o.QuotaAfter = usage, usage
-		if over := usage.OverLimit(o.StopAbovePct); over != "" {
+		if over := usage.OverLimitFor(o.StopAbovePct, o.targetTools(), reading.Active); over != "" {
 			return nil, fmt.Errorf("%w before it started: %s", ErrStopped, over)
 		}
 	}
@@ -144,12 +145,13 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 					return cases, fmt.Errorf("%w: the reported cost passed the cap of $%.2f", ErrStopped, o.MaxUSD)
 				}
 				if o.Quota != nil && count > 0 && count%o.QuotaEvery == 0 {
-					usage, err := o.Quota.Fetch(ctx)
+					reading, err := o.Quota.Read(ctx)
 					if err != nil {
 						return cases, fmt.Errorf("%w: the quota cannot be read: %v", ErrStopped, err)
 					}
+					usage := reading.Usage
 					o.QuotaAfter = usage
-					if over := usage.OverLimit(o.StopAbovePct); over != "" {
+					if over := usage.OverLimitFor(o.StopAbovePct, o.targetTools(), reading.Active); over != "" {
 						return cases, fmt.Errorf("%w: %s", ErrStopped, over)
 					}
 				}
@@ -161,6 +163,15 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 		}
 	}
 	return cases, nil
+}
+
+// targetTools are the tools of the run's targets: the only providers whose quota windows the guard looks at.
+func (o *Options) targetTools() map[string]bool {
+	tools := map[string]bool{}
+	for _, t := range o.Targets {
+		tools[t.Tool] = true
+	}
+	return tools
 }
 
 // Spent is the cost the harnesses reported so far, in dollars.

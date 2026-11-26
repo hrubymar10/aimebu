@@ -25,10 +25,14 @@ import (
 )
 
 type Adapter struct {
-	Command       string
-	AllowNative   bool
-	MaxBudgetUSD  string
-	Variant       string
+	Command      string
+	AllowNative  bool
+	MaxBudgetUSD string
+	Variant      string
+	// StandIn marks an adapter the eval runner starts instead of the supervisor: it has no agent session to warn about, so the transcript check
+	// stays silent (resumeOrFresh).
+	StandIn       bool
+	warned        sync.Map // session handle -> struct{}: the sessions whose transcript check was already logged
 	version       string
 	stderrCapture io.Writer
 }

@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,4 +173,29 @@ func TestDockerLauncherTranscriptCheck(t *testing.T) {
 			t.Fatalf("transcript: %s", got)
 		}
 	})
+}
+
+// The Docker variant cannot name the host's config dir. In a real session that is logged once, not on every turn; on the eval's stand-in
+// path (StandIn) it is not logged at all.
+func TestNoPathMapWarningOncePerSessionAndNeverOnTheStandIn(t *testing.T) {
+	count := func(a *Adapter, handles ...string) int {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		for _, h := range handles {
+			spec := transcriptSpec(t, true)
+			spec.NativeSessionHandle = h
+			a.resumeOrFresh(spec, nil, "/x")
+		}
+		return strings.Count(buf.String(), "no path map to the container's config dir")
+	}
+	if got := count(&Adapter{Variant: "docker"}, transcriptID, transcriptID, transcriptID); got != 1 {
+		t.Fatalf("production: %d warnings for three turns of one session, want 1", got)
+	}
+	if got := count(&Adapter{Variant: "docker"}, transcriptID, "1f6c1a52-3b7e-4c1d-9a55-7d2e8b1c4f91"); got != 2 {
+		t.Fatalf("production: %d warnings for two sessions, want 2", got)
+	}
+	if got := count(&Adapter{Variant: "docker", StandIn: true}, transcriptID, transcriptID); got != 0 {
+		t.Fatalf("stand-in: %d warnings, want 0", got)
+	}
 }

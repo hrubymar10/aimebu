@@ -172,7 +172,9 @@ func pick(all []eval.Scenario, full bool, names string) []eval.Scenario {
 func newAdapter(tool string) (adapter.Adapter, error) {
 	switch tool {
 	case eval.KindClaude:
-		return claude.NewDocker(), nil
+		a := claude.NewDocker()
+		a.StandIn = true
+		return a, nil
 	case eval.KindCodex:
 		return codex.NewDocker(), nil
 	case eval.KindPi:
