@@ -302,3 +302,47 @@ func TestPoolRespawnRefusesADeciderWhoIsNoLongerAllowed(t *testing.T) {
 		t.Fatalf("the item did not carry the reason: %+v", back)
 	}
 }
+
+func TestPoolRespawnRefusesADeactivatedProjectOwner(t *testing.T) {
+	t.Parallel()
+	f, cards := poolMovedFixture(t, 1)
+	cookie, csrf := registerSecondUser(t, f, "decider-owner")
+	user, err := f.db.UserByLogin(t.Context(), "decider-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,?,'owner')`, f.project.ID, user.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items := poolItemsAs(t, f, cookie, csrf)
+	if len(items) != 1 {
+		t.Fatalf("project owner's items: %+v", items)
+	}
+	if status := decidePoolAs(t, f, cookie, csrf, items[0], "respawn"); status != http.StatusCreated {
+		t.Fatalf("decision: %d", status)
+	}
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.DeactivateUser(t.Context(), owner.ID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.srv.advancePoolRespawns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err := f.db.AgentCardByID(t.Context(), cards[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Switch != nil {
+		t.Fatalf("the respawn ran for a disabled owner: %+v", card.Switch)
+	}
+	back := poolItemsAs(t, f, f.cookie, f.csrf)
+	if len(back) != 1 || len(back[0].PoolAgents) != 1 || back[0].PoolAgents[0].RespawnError != "respawn failed: the decider of the change is no longer an owner or admin of the project" {
+		t.Fatalf("the item did not carry the refusal reason: %+v", back)
+	}
+}

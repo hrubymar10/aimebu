@@ -343,7 +343,8 @@ func (s *Store) MarkPoolOrigin(ctx context.Context, agentID, launcherID, model s
 // poolChangeDecider says the actor may decide a project's pool item: the project's owner, or an admin of the instance who is a member.
 func (tx *Tx) poolChangeDecider(projectID, actorID string) error {
 	var role string
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, actorID).Scan(&role)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT m.role FROM membership m JOIN user u ON u.id=m.user_id
+		WHERE m.project_id=? AND m.user_id=? AND u.disabled_at IS NULL`, projectID, actorID).Scan(&role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrForbidden
 	}
