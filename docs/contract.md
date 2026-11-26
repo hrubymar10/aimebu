@@ -1571,7 +1571,7 @@ compare-and-set on (state, rev) — an answer to an open item matches
   the admin state, so a manual stop or room/project pause survives). A
   decision is rejected (`stale_rev`) if newer
   evidence or a newer turn exists.
-  Abandoning a recovery withdraws every note that was queued for the agent when the decision is made, not only the notes of the failed turn; the agent stays active and is woken again only by notes created after it. A stop is different: a note addressed to an already stopped agent stays queued for its restart.
+  Abandoning a recovery withdraws every note that was queued for the agent when the decision is made, not only the notes of the failed turn; the agent stays active and is woken again only by notes created after it. A stop is different: a note addressed to an already stopped agent stays queued for its restart, except that abandoning a recovery withdraws them as well.
 
 ## 3b. Supervisor journal (per machine, durable local SQLite)
 

@@ -305,6 +305,9 @@ func (tx *Tx) decideQuiescenceWait(originID, projectID, roomID, agentID, actorID
 		if _, err := tx.Exec(`UPDATE note SET state='aborted' WHERE id IN(SELECT note_id FROM turn_note WHERE turn_id=?) AND state='queued'`, childID); err != nil {
 			return "", err
 		}
+		if err := tx.withdrawQueuedNotes(agentID); err != nil {
+			return "", err
+		}
 		if _, err := tx.AppendEvent(Event{Kind: "recovery_override", ProjectID: projectID, RoomID: roomID,
 			AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"actor": actorID, "choice": "abandon_after_wait"})}); err != nil {
 			return "", err

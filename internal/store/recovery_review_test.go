@@ -396,6 +396,7 @@ func TestLostRecoveryWaitingItemCanAbandonContinuation(t *testing.T) {
 	if err != nil || len(waiting) != 1 {
 		t.Fatalf("waiting item=%+v %v", waiting, err)
 	}
+	unrelated := queueUnrelatedNote(t, s, f)
 	if _, _, err := s.DecideRecovery(ctx, waiting[0].ID, owner, "abandon-wait", "abandon", int(waiting[0].Rev)); err != nil {
 		t.Fatalf("abandon wait=%v", err)
 	}
@@ -406,6 +407,9 @@ func TestLostRecoveryWaitingItemCanAbandonContinuation(t *testing.T) {
 	var state string
 	if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, f.note.ID).Scan(&state); err != nil || state != "aborted" {
 		t.Fatalf("abandoned note=%q %v", state, err)
+	}
+	if err := s.db.QueryRow(`SELECT state FROM note WHERE id=?`, unrelated.ID).Scan(&state); err != nil || state != "aborted" {
+		t.Fatalf("unrelated queued note=%q %v, want aborted", state, err)
 	}
 	if _, ready, err := s.PrepareDispatch(ctx, f.agent.ID, ""); err != nil || ready {
 		t.Fatalf("abandoned continuation dispatch ready=%t %v", ready, err)
