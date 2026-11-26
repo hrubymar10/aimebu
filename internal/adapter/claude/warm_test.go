@@ -505,6 +505,27 @@ func TestWarmSessionEndFDLauncherFailureIsNotWarmFallback(t *testing.T) {
 	}
 }
 
+// Exit 2 after the launcher reported its exec ID is the harness's own exit (a container ran), not a rejected fd: no start failure.
+func TestWarmExitTwoAfterTheExecIDIsNotALaunchFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\nprintf 'HARNESS_DOCKER_EXEC_ID=%s\\n' " + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:42-7-99" + " >&2\nexit 2\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker", AllowNative: true}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	spec.LauncherReportsContainer = true
+	spec.LauncherReportsSessionEnd = true
+	session, err := a.StartWarm(context.Background(), spec)
+	if errors.Is(err, adapter.ErrWarmLaunch) {
+		t.Fatalf("exit 2 after the exec ID must not be a start failure: %v", err)
+	}
+	if session != nil {
+		_ = session.Close(100 * time.Millisecond)
+	}
+}
+
 func TestWarmLegacyLauncherTwentySecondTermPath(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")

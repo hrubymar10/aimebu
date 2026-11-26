@@ -242,7 +242,8 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 		w.mu.Lock()
 		code := w.exitCode
 		w.mu.Unlock()
-		if spec.LauncherReportsSessionEnd && w.reap.Reaped() && code == 2 {
+		// Only while the launcher has not reported an exec ID: after that a container ran, and exit 2 is the harness's own.
+		if id, _ := container.Container(); spec.LauncherReportsSessionEnd && w.reap.Reaped() && code == 2 && container != nil && id == "" {
 			return nil, fmt.Errorf("%w: session end fd was rejected", adapter.ErrWarmLaunch)
 		}
 		return nil, err

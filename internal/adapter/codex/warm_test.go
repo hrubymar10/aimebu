@@ -84,6 +84,23 @@ func TestWarmSessionEndFDLauncherFailureIsNotWarmFallback(t *testing.T) {
 	}
 }
 
+// Exit 2 after the launcher reported its exec ID is the harness's own exit (a container ran), not a rejected fd.
+func TestWarmExitTwoAfterTheExecIDIsNotALaunchFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex-docker")
+	script := "#!/bin/sh\nprintf 'HARNESS_DOCKER_EXEC_ID=%s\\n' " + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:42-7-99" + " >&2\nexit 2\n"
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a, spec := warmSpec(t, path)
+	spec.LauncherContainerized = true
+	spec.LauncherReportsContainer = true
+	spec.LauncherReportsSessionEnd = true
+	_, err := a.StartWarm(context.Background(), spec)
+	if err == nil || errors.Is(err, adapter.ErrWarmLaunch) {
+		t.Fatalf("exit 2 after the exec ID is an ordinary harness exit: %v", err)
+	}
+}
+
 func TestCodexWarmHelper(t *testing.T) {
 	mode := os.Getenv("AIMEBU_CODEX_WARM_FAKE_MODE")
 	if mode == "" {

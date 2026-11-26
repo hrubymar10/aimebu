@@ -131,7 +131,9 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 			w.mu.Lock()
 			code := w.exitCode
 			w.mu.Unlock()
-			if code == 2 {
+			// Exit 2 is the launcher rejecting the fd at startup only while nothing has run: once it reported its exec ID a container
+			// was started, and the exit is the harness's own (the normal path and the cold fallback handle it).
+			if id, _ := container.Container(); code == 2 && container != nil && id == "" {
 				return nil, fmt.Errorf("%w: session end fd was rejected", adapter.ErrWarmLaunch)
 			}
 		case <-time.After(50 * time.Millisecond):
