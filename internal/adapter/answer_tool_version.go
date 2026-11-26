@@ -95,9 +95,9 @@ func AnswerToolEndpoint(endpoint string) string {
 
 // OffersAnswerTool reports whether a turn with this spec is offered the submit_answer tool. It is the one test the OpenCode and Pi
 // adapters apply before they list the tool for the turn and mark the turn's bus endpoint with AnswerToolEndpoint, each naming its own
-// tool: a turn whose probed harness version supports it and whose mode is not a restricted one, and no other. The supervisor answers
+// tool: a turn whose probed harness version supports it and whose mode is the normal one (an empty mode is not), and no other. The supervisor answers
 // the turn's answer frame with the same result, so the server's held-reply repair note follows what the turn actually had — a launcher
 // turn included — and the report can never drift from what the adapter did.
 func OffersAnswerTool(tool string, spec TurnSpec) bool {
-	return spec.Mode != ModeCorrection && spec.Mode != ModeDiagnostic && SupportsAnswerTool(tool, spec.HarnessVersion)
+	return spec.Mode == ModeNormal && SupportsAnswerTool(tool, spec.HarnessVersion)
 }

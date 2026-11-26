@@ -47,7 +47,7 @@ func TestOffersAnswerTool(t *testing.T) {
 		{"a harness with no answer tool", "claude", TurnSpec{Mode: ModeNormal, HarnessVersion: "2.0.0"}, false},
 		{"a correction turn", "opencode", TurnSpec{Mode: ModeCorrection, HarnessVersion: "1.19.6"}, false},
 		{"a diagnostic turn", "pi", TurnSpec{Mode: ModeDiagnostic, HarnessVersion: "1.6.1"}, false},
-		{"a modeless spec (a test convenience; dispatch always sets the mode)", "opencode", TurnSpec{HarnessVersion: "1.19.6"}, true},
+		{"a modeless spec (the adapters mark the endpoint only for a normal turn)", "opencode", TurnSpec{HarnessVersion: "1.19.6"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := OffersAnswerTool(tc.tool, tc.spec); got != tc.want {
