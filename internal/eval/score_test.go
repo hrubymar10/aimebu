@@ -139,8 +139,9 @@ func TestAnAskWithAttentionControlsIsValidButNotStrict(t *testing.T) {
 func TestToleratedShapesAreValidButNotStrict(t *testing.T) {
 	s := Scenario{ID: "x", Layer: LayerLive}
 	body := `{"messages":[{"room":"` + TaskRoom + `","body":"hi"}]}`
-	for name, raw := range map[string]string{"fence": "```json\n" + body + "\n```", "think": "<think>hmm</think>" + body, "lone object": `{"room":"` + TaskRoom + `","body":"hi"}`} {
-		if r := Score(raw, s, nil); !r.Valid || r.Strict && name != "lone object" {
+	for name, raw := range map[string]string{"fence": "```json\n" + body + "\n```", "think": "<think>hmm</think>" + body, "lone object": `{"room":"` + TaskRoom + `","body":"hi"}`,
+		"bare array": `[{"room":"` + TaskRoom + `","body":"hi"}]`, "fenced bare array": "```json\n[{\"room\":\"" + TaskRoom + "\",\"body\":\"hi\"}]\n```"} {
+		if r := Score(raw, s, nil); !r.Valid || r.Strict {
 			t.Errorf("%s: valid=%t strict=%t warnings=%v", name, r.Valid, r.Strict, r.Warnings)
 		}
 	}

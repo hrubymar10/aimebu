@@ -1,3 +1,3 @@
 {"id":"m07-bare-array","title":"a bare array of messages is read as the envelope","layer":"mock",
  "output":{"kinds":["claude","codex","pi","opencode","vibe"],"candidate":"[{\"room\":\"room_01EVALTASKROOM00000000000\",\"body\":\"hi\"}]"},
- "expect":{"parse":"valid"}}
+ "expect":{"parse":"valid","strict":false}}

@@ -40,7 +40,7 @@ func TestSummarizeSeparatesFirstAttemptFromRepairs(t *testing.T) {
 	if s.Strict != (Stat{2, 4}) || s.Accepted != (Stat{3, 4}) || s.Correct != (Stat{2, 4}) || s.ValidAfter != (Stat{4, 4}) || s.CorrectAfter != (Stat{3, 4}) {
 		t.Fatalf("rates strict=%v accepted=%v correct=%v validAfter=%v correctAfter=%v", s.Strict, s.Accepted, s.Correct, s.ValidAfter, s.CorrectAfter)
 	}
-	if s.Harness != 1 || s.Errors[ClassField] != 1 || s.Errors[ClassBehaviour] != 1 || s.MedianMillis != 2000 {
+	if s.Harness != 1 || s.Errors[ClassField] != 1 || s.Errors[ClassBehaviour] != 1 || s.MedianMillis != 1750 {
 		t.Fatalf("harness=%d errors=%v median=%d", s.Harness, s.Errors, s.MedianMillis)
 	}
 	if s.TokensFirst != 330 || s.TokensAll != 440 {
@@ -59,5 +59,20 @@ func TestRender(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestMedianOfAnEvenCountIsTheMeanOfTheTwoMiddleValues(t *testing.T) {
+	ok := func(ms int64) Attempt { return Attempt{Valid: true, Strict: true, Correct: true, Millis: ms} }
+	got := Summarize([]Case{{Model: "m", Scenario: "a", Attempts: []Attempt{ok(1000)}}, {Model: "m", Scenario: "a", Rep: 1, Attempts: []Attempt{ok(100000)}}})
+	if got[0].MedianMillis != 50500 {
+		t.Fatalf("median of 1000 and 100000 ms is %d ms, want 50500", got[0].MedianMillis)
+	}
+	odd := Summarize([]Case{{Model: "m", Scenario: "a", Attempts: []Attempt{ok(3000)}}, {Model: "m", Scenario: "a", Rep: 1, Attempts: []Attempt{ok(1000)}}, {Model: "m", Scenario: "a", Rep: 2, Attempts: []Attempt{ok(2000)}}})
+	if odd[0].MedianMillis != 2000 {
+		t.Fatalf("odd median %d", odd[0].MedianMillis)
+	}
+	if text := Render("t", []Case{{Model: "m", Scenario: "a", Attempts: []Attempt{ok(1000)}}, {Model: "m", Scenario: "a", Rep: 1, Attempts: []Attempt{ok(100000)}}}, nil); !strings.Contains(text, "50.5 s") {
+		t.Fatalf("the report shows the median:\n%s", text)
 	}
 }

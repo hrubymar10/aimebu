@@ -84,8 +84,9 @@ type Expect struct {
 	// ErrorContains is a text the parser's error must hold (repairable).
 	ErrorContains string `json:"error_contains,omitempty"`
 	Class         string `json:"class,omitempty"`
-	// Strict says the answer is accepted with no tolerance warning; WarningContains names a warning it must carry.
-	Strict          bool     `json:"strict,omitempty"`
+	// Strict, when set, says whether the answer must be strict (accepted with no tolerance warning and in the envelope shape) or must not be;
+	// unset it is not checked. WarningContains names a warning it must carry.
+	Strict          *bool    `json:"strict,omitempty"`
 	WarningContains []string `json:"warning_contains,omitempty"`
 	// AnswerContains is a text the extracted candidate must hold (valid or repairable); it pins what the adapter cut out of the stream.
 	AnswerContains string  `json:"answer_contains,omitempty"`
@@ -192,7 +193,7 @@ func (s Scenario) Validate() error {
 		if s.Expect.ErrorContains == "" || (s.Expect.Class != ClassFormat && s.Expect.Class != ClassField) {
 			return fmt.Errorf("%s: a repairable expectation needs error_contains and class format or field", s.ID)
 		}
-		if len(s.Expect.Checks) > 0 || s.Expect.Strict {
+		if len(s.Expect.Checks) > 0 || s.Expect.Strict != nil {
 			return fmt.Errorf("%s: a repairable answer has no checks and is not strict", s.ID)
 		}
 	case ParseTerminal:

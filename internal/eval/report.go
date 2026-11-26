@@ -141,7 +141,11 @@ func Summarize(cases []Case) []ModelSummary {
 		}
 		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 		if len(times) > 0 {
-			s.MedianMillis = times[len(times)/2]
+			mid := len(times) / 2
+			s.MedianMillis = times[mid]
+			if len(times)%2 == 0 {
+				s.MedianMillis = (times[mid-1] + times[mid]) / 2
+			}
 		}
 		out = append(out, s)
 	}

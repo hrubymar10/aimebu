@@ -33,7 +33,7 @@ usage) is what the adapter's parser made of the stream. `Scenario.Verdict` then 
  "expect": {"parse": "repairable", "error_contains": "text around the JSON", "class": "format", "answer_contains": "Let me answer."}}
 ```
 
-- `parse`: `valid` (the parser accepts the candidate; `strict` says with no tolerance warning, `warning_contains` names a warning it must carry),
+- `parse`: `valid` (the parser accepts the candidate; `strict` says whether the answer must be strict (true) or must not be (false; unset is not checked), `warning_contains` names a warning it must carry),
   `repairable` (the parser rejects it with a reason the repair path sends back; `error_contains` and `class` are required) or `terminal` (the
   harness ended without any answer a repair could fix; class `harness`).
 - `class`: `format` (not one JSON object: prose around it, truncated JSON, a bare array that is not an answer), `field` (JSON whose fields break
@@ -51,14 +51,15 @@ usage) is what the adapter's parser made of the stream. `Scenario.Verdict` then 
 ## The scorer and the metrics
 
 `eval.Score(raw, scenario, tools)` parses the candidate with `answer.Parse` and applies the checks. It reports: **strict** (valid, no tolerance
-warning: no fence, no reasoning block, no lone object, nothing dropped), **accepted** (valid, which is what the server takes today), **correct**
+warning, and the text is the envelope itself, one JSON object with a `messages` field: no fence, no reasoning block, nothing dropped, and not a lone
+message object or a bare array of messages, which the parser reads as the envelope without a warning), **accepted** (valid, which is what the server takes today), **correct**
 (valid and every check passes) and the error class. The gap between strict and accepted is what the server forgives today and a stricter way to
 submit an answer might not. A handoff without an outcome is judged invalid, as the server holds it for a supervisor that reports
 `supports_handoff_outcome` (`internal/store/answers.go`, `handoffOutcomeRequired`).
 
 A live case runs up to `max_turns_to_valid` attempts. `eval.Render` writes the report from `[]eval.Case` (each case is the attempts of one
 repetition of one scenario on one model): per model, **first attempt against after repairs** (strict, accepted, correct, valid after repairs,
-correct after repairs, each with its 95% Wilson interval), the first-attempt errors by class, time and tokens and cost (first attempts and all),
+correct after repairs, each with its 95% Wilson interval), the first-attempt errors by class, time (the median, the mean of the two middle values for an even count) and tokens and cost (first attempts and all),
 the model by scenario matrix, and the most common errors. A first-attempt miss that a repair fixes points at the prompt; one that survives the
 repairs points at the model or the repair loop; a valid answer that fails a check is a behaviour fault no repair can see.
 

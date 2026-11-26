@@ -1,10 +1,10 @@
 package eval
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
@@ -41,7 +41,7 @@ func Score(raw string, s Scenario, tools []string) Result {
 			return Result{Err: msg, Class: ClassField}
 		}
 	}
-	r := Result{Valid: true, Strict: len(candidate.Warnings) == 0, Warnings: candidate.Warnings, Candidate: candidate}
+	r := Result{Valid: true, Strict: len(candidate.Warnings) == 0 && isEnvelope(raw), Warnings: candidate.Warnings, Candidate: candidate}
 	r.Failed = append(r.Failed, universal(s.Input, candidate)...)
 	for _, check := range s.Expect.Checks {
 		if problem := check.run(candidate, tools); problem != "" {
@@ -67,4 +67,15 @@ func Classify(err string) string {
 	return ClassField
 }
 
-var errNoAnswer = errors.New("the harness ended without a final answer")
+// isEnvelope says the candidate, as the model wrote it, is the envelope: one JSON object with a messages field. The parser also reads a lone
+// message object and a bare array of message objects as the envelope they mean, without a warning (internal/answer/answer.go,
+// tolerateAnswerShapes), so a candidate with no warning can still be one of those. A fence or a reasoning block is a warning of its own, so when
+// this is asked of a candidate that has none, the text is the JSON itself.
+func isEnvelope(raw string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &fields) != nil {
+		return false
+	}
+	_, ok := fields["messages"]
+	return ok
+}

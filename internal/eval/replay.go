@@ -55,8 +55,11 @@ func (s Scenario) Verdict(p Played) string {
 	if e.Parse == ParseRepairable {
 		return fmt.Sprintf("accepted (warnings %v), want a repairable rejection holding %q", r.Warnings, e.ErrorContains)
 	}
-	if e.Strict && !r.Strict {
-		return fmt.Sprintf("accepted with warnings %v, want strict", r.Warnings)
+	if e.Strict != nil && *e.Strict != r.Strict {
+		if *e.Strict {
+			return fmt.Sprintf("accepted with warnings %v or in a tolerated shape, want strict", r.Warnings)
+		}
+		return "the answer is strict, want a tolerated shape or a warning"
 	}
 	for _, want := range e.WarningContains {
 		found := false
