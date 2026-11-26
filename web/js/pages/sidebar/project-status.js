@@ -44,7 +44,7 @@ export function ProjectStatus({ counts, id, projectName, folded, onOpen }) {
   if (!counts || !(counts.needs + counts.waiting + counts.working)) return null;
   const rooms = statusRoomsLine(counts), summary = statusSummary(counts);
   const working = kindOf(counts) === 'working';
-  const label = working ? `Open ${projectName} room — ${counts.working} ${counts.working === 1 ? 'agent' : 'agents'} working`
+  const label = working ? `Open ${projectName} room — ${counts.working} ${counts.working === 1 ? 'room' : 'rooms'} with an agent working`
     : folded ? `Expand ${projectName}: ${rooms}.` : `${projectName}: ${rooms}. Click to open.`;
   const pillRef = useRef(null), tooltipRef = useRef(null), [shown, setShown] = useState(false);
   useLayoutEffect(() => {
@@ -61,5 +61,5 @@ export function ProjectStatus({ counts, id, projectName, folded, onOpen }) {
     window.addEventListener('scroll', place, true);
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
   }, [shown, rooms, label]);
-  return html`<span class="project-status-wrap"><button ref=${pillRef} type="button" class="row-btn project-status" title=${working ? label : undefined} aria-label=${label} aria-describedby=${id} onClick=${() => { setShown(false); onOpen?.(statusFocus(counts)); }} onMouseEnter=${() => setShown(true)} onMouseLeave=${() => setShown(false)} onFocus=${() => setShown(true)} onBlur=${() => setShown(false)}><${VariantA} counts=${counts} /></button><span class="sr-only" id=${id}>${summary}</span>${shown && createPortal(html`<span ref=${tooltipRef} class="project-status-tooltip" role="tooltip"><span class="project-status-tooltip-rooms">${working ? label : rooms}</span><span class="project-status-tooltip-summary">${summary}</span></span>`, document.body)}</span>`;
+  return html`<span class="project-status-wrap"><button ref=${pillRef} type="button" class="row-btn project-status" aria-label=${label} aria-describedby=${id} onClick=${() => { setShown(false); onOpen?.(statusFocus(counts)); }} onMouseEnter=${() => setShown(true)} onMouseLeave=${() => setShown(false)} onFocus=${() => setShown(true)} onBlur=${() => setShown(false)}><${VariantA} counts=${counts} /></button><span class="sr-only" id=${id}>${summary}</span>${shown && createPortal(html`<span ref=${tooltipRef} class="project-status-tooltip" role="tooltip"><span class="project-status-tooltip-rooms">${working ? label : rooms}</span><span class="project-status-tooltip-summary">${summary}</span></span>`, document.body)}</span>`;
 }

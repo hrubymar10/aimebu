@@ -197,8 +197,8 @@ async function main() {
     assert.equal(await folded(), !initiallyFolded, 'the chevron still toggles the tree');
     assert.deepEqual(await calls(page), [], 'folding does not select a room');
     await page.focus(`${selector} .project-status`);
-    assert.equal(await page.$eval(`${selector} .project-status`, node => node.title), 'Open Alpha room — 1 agent working');
-    assert.equal(await page.$eval(`${selector} .project-status`, node => node.getAttribute('aria-label')), 'Open Alpha room — 1 agent working');
+    assert.equal(await page.$eval(`${selector} .project-status`, node => node.hasAttribute('title')), false, 'only the custom tooltip, no native title');
+    assert.equal(await page.$eval(`${selector} .project-status`, node => node.getAttribute('aria-label')), 'Open Alpha room — 1 room with an agent working');
     await page.keyboard.press('Enter');
     assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'Enter on the pill opens home');
     assert.equal(await folded(), !initiallyFolded, 'keyboard activation leaves the fold state alone');
@@ -219,7 +219,7 @@ async function main() {
     const touchPage = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': twoWorking }), touch: [390, 844], setup: previewOn });
     await checkStatusLine(touchPage, 'Alpha wrapping check with a few more words');
     await checkStatusLine(touchPage, 'Alpha');
-    assert.equal(await touchPage.$eval(`${selector} .project-status`, node => node.title), 'Open Alpha room — 2 agents working');
+    assert.equal(await touchPage.$eval(`${selector} .project-status`, node => node.getAttribute('aria-label')), 'Open Alpha room — 2 rooms with an agent working');
     assert.equal(await controlsSeparated(touchPage), true, 'touch controls and working pill occupy separate space');
     const touchFold = await touchPage.$eval(selector, node => node.classList.contains('collapsed'));
     await touchPage.tap(`${selector} .project-menu-btn`);
@@ -2214,7 +2214,7 @@ async function main() {
     await page.close();
   };
   await onlyPill('rm_notes', { gate: 'paused' }, 'waiting', 'Waiting: notes (paused)', 'Expand Alpha: Waiting: notes (paused).');
-  await onlyPill('rm_mute', { working: true, muted_until: '' }, 'working', 'Open Alpha room — 1 agent working', 'Open Alpha room — 1 agent working', 'rm_ah');
+  await onlyPill('rm_mute', { working: true, muted_until: '' }, 'working', 'Open Alpha room — 1 room with an agent working', 'Open Alpha room — 1 room with an agent working', 'rm_ah');
   await onlyPill('rm_api', { finished_unseen: false, attention_open: 2 }, 'attention', 'Needs you: api-work (needs an answer)', 'Expand Alpha: Needs you: api-work (needs an answer).');
   // Six rooms that need you: the tooltip names five and says how many more, never a raw room id.
   {
