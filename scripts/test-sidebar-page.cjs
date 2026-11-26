@@ -119,6 +119,100 @@ async function main() {
   const rows = page => page.$$eval('#projects .room-group', (groups, glyphs) => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${glyphs[row.querySelector('.room-item-icon').dataset.roomType]} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }), GLYPHS);
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
+  // A working project's status opens its home; other row controls keep their existing actions.
+  {
+    const working = rooms().prj_a.map(item => item.id === 'rm_mute' ? { ...item, purpose: 'task', working: true } : item);
+    const previewOn = "localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1')";
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': working }), setup: previewOn });
+    const selector = '[data-room-id=rm_ah]';
+    const checkStatusLine = async (page, name) => {
+      await page.evaluate(name => { window.__sidebar.projects.get('prj_a').name = name; window.__sidebar.rooms.get('rm_ah').title = name; window.__sidebar.store.touch(); }, name);
+      await settle(page);
+      const box = await page.$eval(selector, row => {
+        const rect = node => { const r = node.getBoundingClientRect(); return { left: r.left, top: r.top, bottom: r.bottom }; };
+        return { name: rect(row.querySelector('.room-item-name')), pill: rect(row.querySelector('.project-status')), preview: rect(row.querySelector('.room-item-preview')) };
+      });
+      assert.ok(Math.abs(box.name.left - box.pill.left) <= 1, `${name}: the pill starts at the first letter of the name`);
+      assert.ok(box.pill.top >= box.name.bottom, `${name}: the pill starts below the name`);
+      assert.ok(box.preview.top >= box.pill.bottom, `${name}: the preview follows the pill`);
+    };
+    await checkStatusLine(page, 'Alpha wrapping check with a few more words');
+    await checkStatusLine(page, 'Alpha');
+    const folded = () => page.$eval(selector, node => node.classList.contains('collapsed'));
+    const initiallyFolded = await folded();
+    const controlsSeparated = page => page.$eval(selector, row => {
+      const pill = row.querySelector('.project-status').getBoundingClientRect();
+      const menu = row.querySelector('.project-menu-btn').getBoundingClientRect();
+      return pill.right <= menu.left || menu.right <= pill.left || pill.bottom <= menu.top || menu.bottom <= pill.top;
+    });
+    await page.hover(`${selector} > .room-item`);
+    assert.equal(await controlsSeparated(page), true, 'hover actions and working pill occupy separate space');
+    await page.click(`${selector} .project-menu-btn`);
+    assert.ok(await page.$(`${selector} .project-menu-list`), 'the project actions menu opens on desktop');
+    assert.deepEqual(await calls(page), [], 'opening the project menu selects no room');
+    assert.equal(await folded(), initiallyFolded, 'opening the project menu leaves the fold state alone');
+    await page.keyboard.press('Escape');
+    await page.click(`${selector} .project-status`);
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'the working pill opens the project home');
+    assert.equal(await folded(), initiallyFolded, 'the pill leaves the fold state alone');
+    await page.click(`${selector} > .room-item .room-item-icon`);
+    assert.equal(await folded(), initiallyFolded, 'clicking the row body does not fold the tree');
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'clicking the row body still selects home');
+    await page.click(`${selector} .room-item-name`);
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'clicking the project name still selects home');
+    await page.click(`${selector} .room-collapse`);
+    assert.equal(await folded(), !initiallyFolded, 'the chevron still toggles the tree');
+    assert.deepEqual(await calls(page), [], 'folding does not select a room');
+    await page.focus(`${selector} .project-status`);
+    assert.equal(await page.$eval(`${selector} .project-status`, node => node.title), 'Open Alpha room — 1 agent working');
+    assert.equal(await page.$eval(`${selector} .project-status`, node => node.getAttribute('aria-label')), 'Open Alpha room — 1 agent working');
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'Enter on the pill opens home');
+    assert.equal(await folded(), !initiallyFolded, 'keyboard activation leaves the fold state alone');
+    await page.keyboard.press('Space');
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'Space on the pill opens home');
+    assert.equal(await folded(), !initiallyFolded, 'Space leaves the fold state alone');
+    await checkStatusLine(page, 'Alpha wrapping check with a few more words');
+    await page.click(`${selector} .project-menu-btn`);
+    assert.ok(await page.$(`${selector} .project-menu-list`), 'the project menu remains clickable beside a long name');
+    assert.deepEqual(await calls(page), [], 'the long-name menu selects no room');
+    await page.keyboard.press('Escape');
+    await page.click(`${selector} .project-status`);
+    assert.deepEqual(await calls(page), [['select', 'rm_ah', '']], 'the long-name pill opens home');
+    assert.equal(await folded(), !initiallyFolded, 'the long-name pill leaves folding alone');
+    await page.close();
+
+    const twoWorking = working.map(item => item.id === 'rm_api' ? { ...item, purpose: 'task', working: true } : item);
+    const touchPage = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': twoWorking }), touch: [390, 844], setup: previewOn });
+    await checkStatusLine(touchPage, 'Alpha wrapping check with a few more words');
+    await checkStatusLine(touchPage, 'Alpha');
+    assert.equal(await touchPage.$eval(`${selector} .project-status`, node => node.title), 'Open Alpha room — 2 agents working');
+    assert.equal(await controlsSeparated(touchPage), true, 'touch controls and working pill occupy separate space');
+    const touchFold = await touchPage.$eval(selector, node => node.classList.contains('collapsed'));
+    await touchPage.tap(`${selector} .project-menu-btn`);
+    assert.ok(await touchPage.$(`${selector} .project-menu-list`), 'the project actions menu opens on touch');
+    assert.deepEqual(await calls(touchPage), [], 'tapping the project menu selects no room');
+    assert.equal(await touchPage.$eval(selector, node => node.classList.contains('collapsed')), touchFold, 'tapping the project menu leaves the fold state alone');
+    await touchPage.evaluate(() => document.body.click());
+    const target = await touchPage.$eval(`${selector} .project-status`, node => {
+      const box = node.getBoundingClientRect(), pseudo = getComputedStyle(node, '::after');
+      return { height: box.height, top: parseFloat(pseudo.top), bottom: parseFloat(pseudo.bottom) };
+    });
+    assert.ok(target.height - target.top - target.bottom >= 40, 'the working pill has a touch target at least 40px high');
+    await touchPage.tap(`${selector} .project-status`);
+    assert.deepEqual(await calls(touchPage), [['select', 'rm_ah', '']], 'tapping the pill opens home');
+    assert.equal(await touchPage.$eval(selector, node => node.classList.contains('collapsed')), touchFold, 'tap leaves the fold state alone');
+    await checkStatusLine(touchPage, 'Alpha wrapping check with a few more words');
+    await touchPage.tap(`${selector} .project-menu-btn`);
+    assert.ok(await touchPage.$(`${selector} .project-menu-list`), 'the long-name project menu opens on touch');
+    assert.deepEqual(await calls(touchPage), [], 'the long-name touch menu selects no room');
+    await touchPage.evaluate(() => document.body.click());
+    await touchPage.tap(`${selector} .project-status`);
+    assert.deepEqual(await calls(touchPage), [['select', 'rm_ah', '']], 'the long-name pill opens home on touch');
+    assert.equal(await touchPage.$eval(selector, node => node.classList.contains('collapsed')), touchFold, 'the long-name touch pill leaves folding alone');
+    await touchPage.close();
+  }
+
   // Capture the released layout from a detached baseline before its new assertions stop the test.
   if (process.env.AIMEBU_A134_BEFORE_SHOTS) {
     const statusList = rooms().prj_a.map(item => item.id === 'rm_api' ? { ...item, purpose: 'task', finished_unseen: true, attention_open: 0 } : item.id === 'rm_notes' ? { ...item, purpose: 'task', gate: 'paused' } : item.id === 'rm_mute' ? { ...item, purpose: 'task', working: true } : item);
@@ -1952,8 +2046,9 @@ async function main() {
       assert.ok(box.chevronOff <= 2.5, `${label}: chevron is centered (${box.chevronOff.toFixed(2)} px)`);
       assert.ok(box.badges.every(badge => Math.abs(badge.top - box.badges[0].top) < 2), `${label}: warning and bell stay grouped`);
       assert.ok(box.badges[0].width && box.badges[1].width && box.pill.width, `${label}: all badges and pill render`);
-      assert.ok(box.pill.top >= box.badges[0].bottom - 1 ||
-        (box.pill.left >= box.badges[1].right - 1 && box.pill.bottom > box.badges[0].top), `${label}: pill follows the badge group`);
+      assert.ok(Math.abs(box.pill.left - box.name.left) <= 1, `${label}: pill aligns with the project name`);
+      assert.ok(box.pill.top >= box.name.bottom - 1, `${label}: pill starts on a second line`);
+      assert.ok(box.badges[0].left >= box.pill.right - 1 || box.badges[0].top >= box.pill.bottom - 1, `${label}: badge group follows the pill`);
       assert.ok(box.preview.top >= Math.max(box.pill.bottom, ...box.badges.map(badge => badge.bottom)) - 1, `${label}: preview follows badges and pill`);
       console.log(`project-row ${label}: scrollWidth=${box.name.scrollWidth} clientWidth=${box.name.clientWidth} contentWidth=${box.contentWidth.toFixed(2)} nameWidth=${box.name.width.toFixed(2)} badgeTop=${box.badges[0].top.toFixed(2)} pillTop=${box.pill.top.toFixed(2)}`);
     };
@@ -1975,12 +2070,10 @@ async function main() {
       await setCase(name, width);
       const box = await measureRow();
       check(box, label, clipped);
-      if (label !== 'narrow-short' && width === 220) assert.ok(box.badges[0].top >= box.name.bottom - 1, `${label}: badges wrap below the name`);
-      if (width === 480) assert.ok(box.badges[0].top < box.name.bottom - 1, 'wide: name and badges share a line');
+      assert.ok(box.badges[0].top >= box.name.bottom - 1, `${label}: badges remain with the pill below the name`);
       await shot(label);
     }
-    // With a status, the name may share the first line with badges or take the line alone.
-    // In either layout the actions are at the row edge and clear the visible name text.
+    // The project name is the first line, with hover actions at its right edge.
     const hoverGeometry = async (label, theme, selected = false, focused = false) => {
       await page.evaluate((theme, selected) => {
         document.documentElement.dataset.theme = theme;
@@ -2071,7 +2164,7 @@ async function main() {
   }
   // A pill whose highest priority is waiting or working names its own rooms, and a click opens the first of them. The pill is
   // focused before its project is expanded, so its accessible name is the folded one.
-  const onlyPill = async (id, patch, label, expectTitle, expectLabel) => {
+  const onlyPill = async (id, patch, label, expectTitle, expectLabel, destination = id) => {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === id ? { ...item, purpose: 'task', ...patch } : item) }) });
     await settle(page);
     await page.$eval('[data-room-id=rm_ah] .project-status', node => node.focus());
@@ -2079,11 +2172,11 @@ async function main() {
     assert.equal(await page.$eval('.project-status-tooltip .project-status-tooltip-rooms', node => node.textContent), expectTitle, `the ${label} pill names its room and why`);
     assert.equal(await page.$eval('[data-room-id=rm_ah] .project-status', node => node.getAttribute('aria-label')), expectLabel, `the ${label} pill's accessible name names the project and the action`);
     await page.$eval('[data-room-id=rm_ah] .project-status', node => node.click());
-    assert.deepEqual(await page.evaluate(() => window.__calls.splice(0)), [['select', id, '']], `the ${label} pill opens its room`);
+    assert.deepEqual(await page.evaluate(() => window.__calls.splice(0)), [['select', destination, '']], `the ${label} pill opens its room`);
     await page.close();
   };
   await onlyPill('rm_notes', { gate: 'paused' }, 'waiting', 'Waiting: notes (paused)', 'Expand Alpha: Waiting: notes (paused).');
-  await onlyPill('rm_mute', { working: true, muted_until: '' }, 'working', 'Working: muted-room (working)', 'Expand Alpha: Working: muted-room (working).');
+  await onlyPill('rm_mute', { working: true, muted_until: '' }, 'working', 'Open Alpha room — 1 agent working', 'Open Alpha room — 1 agent working', 'rm_ah');
   await onlyPill('rm_api', { finished_unseen: false, attention_open: 2 }, 'attention', 'Needs you: api-work (needs an answer)', 'Expand Alpha: Needs you: api-work (needs an answer).');
   // Six rooms that need you: the tooltip names five and says how many more, never a raw room id.
   {
