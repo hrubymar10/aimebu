@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -166,6 +167,26 @@ func poolChangeText(count int) string {
 	return fmt.Sprintf("A role's default pool changed: %d running agents use a harness or model the pool no longer lists.", count)
 }
 
+func poolChangeFingerprint(ctx context.Context, q poolQuerier, projectID string, affected []PoolAgent) (string, error) {
+	sigs := make(map[string]string)
+	entries := make([]string, 0, len(affected))
+	for _, agent := range affected {
+		sig, ok := sigs[agent.RoleKey]
+		if !ok {
+			_, current, err := effectivePool(ctx, q, projectID, agent.RoleKey)
+			if err != nil {
+				return "", err
+			}
+			sig = current
+			sigs[agent.RoleKey] = sig
+		}
+		entries = append(entries, agent.AgentID+"\x00"+agent.RoleKey+"\x00"+sig)
+	}
+	slices.Sort(entries)
+	sum := sha256.Sum256([]byte(strings.Join(entries, "\x00")))
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // syncPoolChange brings a project's pool_change item in line with the agents a pool leaves behind: one open item per project, created when
 // there are some, updated (its revision moves, so a decision made on the older list is refused as stale) when the list or the pool changed
 // again, withdrawn when none are left. A pool change before a decision therefore never raises a second item.
@@ -193,6 +214,10 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 		return err
 	}
 	next := inboxAsk{Text: poolChangeText(len(affected)), Options: PoolChangeOptions}
+	next.PoolFingerprint, err = poolChangeFingerprint(tx.ctx, tx.tx, projectID, affected)
+	if err != nil {
+		return err
+	}
 	if exists {
 		var options string
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(options_json,'') FROM inbox_item WHERE id=?`, itemID).Scan(&options); err != nil {

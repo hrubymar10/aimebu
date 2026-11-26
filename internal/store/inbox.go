@@ -71,6 +71,8 @@ type inboxAsk struct {
 	TargetRooms []string `json:"target_rooms,omitempty"`
 	// RespawnFailures says, per agent of a pool_change item, why its last respawn could not begin.
 	RespawnFailures map[string]string `json:"respawn_failures,omitempty"`
+	// PoolFingerprint records the affected agent IDs and their role pools when the card revision was written.
+	PoolFingerprint string `json:"pool_fingerprint,omitempty"`
 }
 
 // inboxFromSQL and inboxVisibleSQL say which items a person can access (two ? placeholders: the user, twice). They are shared by the full

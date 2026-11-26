@@ -99,10 +99,15 @@ func TestPoolChangeFlagsEveryoneWhoseChoiceLeftThePool(t *testing.T) {
 	if l := byID[f.lead.ID]; !l.Lead || l.RoomID != f.room.ID {
 		t.Fatalf("lead entry: %+v", l)
 	}
-	// The same pool change again (and a server restart) raises nothing twice; the affected list being unchanged, the item and its revision
-	// stay as they are, so a card on screen does not go stale.
+	// A changed pool moves the revision even when the affected agents stay the same.
 	before := items[0].Rev
 	f.setPool(t, "worker", f.b, SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-c"})
+	items = f.openItems(t, "usr_owner")
+	if len(items) != 1 || items[0].Rev <= before {
+		t.Fatalf("changed pool: %+v", items)
+	}
+	before = items[0].Rev
+	// A restart re-check with the same pool and affected agents leaves the revision alone.
 	if err := f.s.DetectPoolChanges(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +128,36 @@ func TestPoolChangeFlagsEveryoneWhoseChoiceLeftThePool(t *testing.T) {
 	f.setPool(t, "worker", f.b)
 	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
 		t.Fatalf("item stayed with nobody to switch: %+v", items)
+	}
+}
+
+func TestPoolChangeSwapInvalidatesTheOldDecision(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	if _, err := f.s.db.Exec(`UPDATE agent SET role_id='role_worker',model='gpt-b',pool_model='gpt-b' WHERE id=?`, f.lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.setPool(t, "worker", f.b)
+	before := f.openItems(t, "usr_owner")[0]
+	if len(before.PoolAgents) != 1 || before.PoolAgents[0].AgentID != f.worker.ID {
+		t.Fatalf("first affected agent: %+v", before.PoolAgents)
+	}
+	f.setPool(t, "worker", f.a)
+	after := f.openItems(t, "usr_owner")[0]
+	if after.ID != before.ID || after.Rev <= before.Rev || len(after.PoolAgents) != 1 || after.PoolAgents[0].AgentID != f.lead.ID {
+		t.Fatalf("swapped affected agent: before=%+v after=%+v", before, after)
+	}
+	var updates int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='inbox_item_updated' AND json_extract(payload_json,'$.inbox_item_id')=?`, before.ID).Scan(&updates); err != nil || updates != 1 {
+		t.Fatalf("update events: %d (%v)", updates, err)
+	}
+	if _, _, err := f.s.DecidePoolChange(ctx, before.ID, "usr_owner", "swap-old", PoolChangeRespawn, int(before.Rev), []string{f.worker.ID}); !errors.Is(err, ErrStaleInboxRev) {
+		t.Fatalf("old revision decision: %v", err)
+	}
+	var queued int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM pool_respawn`).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("old revision queued %d agents: %v", queued, err)
 	}
 }
 
