@@ -56,7 +56,8 @@ grace, checks the process identity of each turn still listed as running. It
 records a `supervisor_lost` exit only after the process is proved gone or its
 termination is verified. An identified turn whose process cannot be checked
 or whose termination cannot be verified remains running in the journal for a
-later drain. A legacy turn without a process identity keeps the earlier drain
+later drain, and a failed identity read defers every row, legacy ones
+included, to a later drain. A legacy turn without a process identity keeps the earlier drain
 behaviour and is ended as `supervisor_lost`. Journaled exits are replayed to
 the server by the next connection or drain instance.
 A turn whose exit info cannot be written at all is retried with a short

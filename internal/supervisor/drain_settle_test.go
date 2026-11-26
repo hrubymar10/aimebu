@@ -97,25 +97,47 @@ func TestDrainTimeoutWithNoTurnsSkipsGrace(t *testing.T) {
 	}
 }
 
-// When the identity read fails at the drain timeout, the drain falls back to the per-id lost-exit write, so legacy rows are still settled.
-func TestDrainTimeoutSettlesLegacyRowsWhenTheIdentityReadFails(t *testing.T) {
-	oldGrace := drainSettleGrace
-	drainSettleGrace = 0
-	t.Cleanup(func() { drainSettleGrace = oldGrace })
-	journal := openTestJournal(t)
-	recordRunningTurn(t, journal, "turn-legacy", 0, 0, "")
-	c := NewClient("machine", "key", "http://unused.invalid", journal, adapter.NewFake())
-	c.active["agent_x"] = "turn-legacy"
-	// The identity read selects pid_start; renaming the column makes it fail while the exit write does not touch it.
+// failIdentityRead renames the column the identity read selects, so RunningTurnProcesses fails while an exit write does not touch it.
+func failIdentityRead(t *testing.T, journal *Journal) {
+	t.Helper()
 	if _, err := journal.db.Exec(`ALTER TABLE turn_start RENAME COLUMN pid_start TO pid_start_renamed`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := journal.RunningTurnProcesses(context.Background()); err == nil {
 		t.Fatal("the identity read did not fail")
 	}
+}
+
+func settleWithFailedRead(t *testing.T, turnID string, pid int, start string) *Journal {
+	t.Helper()
+	oldGrace := drainSettleGrace
+	drainSettleGrace = 0
+	t.Cleanup(func() { drainSettleGrace = oldGrace })
+	journal := openTestJournal(t)
+	recordRunningTurn(t, journal, turnID, pid, pid, start)
+	c := NewClient("machine", "key", "http://unused.invalid", journal, adapter.NewFake())
+	c.active["agent_x"] = turnID
+	// Even a process proved gone must not be settled: the read failed, so nothing is known.
+	c.ProcessStartState = func(int) (ProcessStartState, string) { return StartGone, "" }
+	failIdentityRead(t, journal)
 	c.settleDrainTimeout()
+	return journal
+}
+
+// An identified row survives a failed identity read: no exit is written, and a later drain settles it.
+func TestDrainTimeoutKeepsAnIdentifiedRowWhenTheIdentityReadFails(t *testing.T) {
+	journal := settleWithFailedRead(t, "turn-identified", 4242, "recorded")
 	exits, err := journal.PendingExits(context.Background())
-	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-legacy" || exits[0].Exit.ErrorEvent != "supervisor_lost" {
-		t.Fatalf("the failed identity read left the legacy turn unsettled: exits=%+v err=%v", exits, err)
+	if err != nil || len(exits) != 0 {
+		t.Fatalf("the failed identity read wrote an exit for an identified turn: exits=%+v err=%v", exits, err)
+	}
+}
+
+// A failed identity read defers every row, legacy ones included, to a later drain.
+func TestDrainTimeoutWritesNoRowWhenTheIdentityReadFails(t *testing.T) {
+	journal := settleWithFailedRead(t, "turn-legacy", 0, "")
+	exits, err := journal.PendingExits(context.Background())
+	if err != nil || len(exits) != 0 {
+		t.Fatalf("the failed identity read wrote an exit for a legacy turn: exits=%+v err=%v", exits, err)
 	}
 }
