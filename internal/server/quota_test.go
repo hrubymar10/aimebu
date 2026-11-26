@@ -15,6 +15,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/credtarget"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/quota"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
@@ -326,6 +327,32 @@ func TestImportedProfileHoldsItsManualChoiceOnTheNextQuotaPass(t *testing.T) {
 		if event.Kind == "quota_switch" {
 			t.Fatalf("manual import caused automatic switch event: %+v", event)
 		}
+	}
+	*now = now.Add(6 * time.Minute)
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "A" {
+		t.Fatalf("preferred profile did not resume after dwell: %s", got)
+	}
+}
+
+// A /login the credential reconciler files into an existing, non-preferred profile with SetActive is a person's choice: it starts the
+// same dwell as an import or a web switch, so the next quota pass does not take the profile back at once.
+func TestReconcilerLoginIntoAnExistingProfileHoldsItsDwell(t *testing.T) {
+	f, m, _ := quotaEnv(t)
+	src := &quotaFakeSource{names: []string{"A", "B"}, choice: func() (switcher.ManualChoice, error) {
+		return m.ManualChoice(switcher.ToolClaude)
+	}}
+	runner, now := runnerOver(t, f, src)
+	quotaConfig(t, runner, func(c *quota.Config) { c.MinDwellMinutes = 5 })
+	login := credtarget.LoginImport{Tool: switcher.ToolClaude, Profile: "B", SetActive: true,
+		Full: []byte(startupClaudeCreds("tok_bbbb", "ref_bbbb", time.Now().Add(6*time.Hour)))}
+	if err := m.ImportLogin(login); err != nil {
+		t.Fatal(err)
+	}
+	src.set(quota.Observation{Active: "B", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 10, 10), qobs("B", 10, 10)}})
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "B" {
+		t.Fatalf("a login filed with SetActive was switched away on the next pass: %s", got)
 	}
 	*now = now.Add(6 * time.Minute)
 	runner.Evaluate(context.Background())

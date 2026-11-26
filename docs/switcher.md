@@ -477,6 +477,7 @@ account that was logged in before it.
    live file now holds its account. A replaced credential is backed up first,
    the write happens under that profile's account lock and the switcher lock,
    and the file is always a regular file, never written through a link.
+   A detected login that selects a profile this way starts the same dwell timer as a manual switch (`manual-choice-<tool>.json`).
 5. The live file is rewritten token-only and fanned out to the other targets.
    The strip uses the writer's per-call login-replacing method; the ordinary
    write refuses a target that still holds a refresh token, so no fan-out can

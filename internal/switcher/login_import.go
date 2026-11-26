@@ -90,7 +90,8 @@ func (m *Manager) importLoginLocked(in credtarget.LoginImport, state State) erro
 	if in.SetActive && state.Active[in.Tool] != in.Profile {
 		previous := state.Active[in.Tool]
 		state.Active[in.Tool] = in.Profile
-		if err := m.saveState(state); err != nil {
+		// A login the reconciler files with SetActive is a person's choice, like an import: it starts the same dwell timer.
+		if err := m.saveStateWithChoice(state, in.Tool, in.Profile, false); err != nil {
 			return fmt.Errorf("import login: update state: %w", err)
 		}
 		if previous != "" {
