@@ -113,11 +113,21 @@ export function useRoles() {
     if (!role || !role.builtin || !await confirmDialog(resetQuestion(role), { title: 'Reset role', confirm: 'Reset', danger: true })) return;
     await write(() => request(`/api/roles/${role.id}/reset`, { method: 'POST', body: { rev: role.rev } }), () => load(role.id));
   };
+  const useDefault = async () => {
+    const role = selectedRole();
+    if (!role?.default_body_changed || !await confirmDialog(`Discard your edited instructions for ${role.label} and use the new default?`, { title: 'Use the new default', confirm: 'Use default', danger: true })) return;
+    await write(() => request(`/api/roles/${role.id}/use-default`, { method: 'POST', body: { rev: role.rev } }), () => load(role.id));
+  };
+  const keepDefault = () => {
+    const role = selectedRole();
+    if (!role?.default_body_changed) return;
+    return write(() => request(`/api/roles/${role.id}/keep-default`, { method: 'POST', body: { rev: role.rev } }), () => load(role.id));
+  };
   const remove = async () => {
     const role = selectedRole();
     if (!role || !await confirmDialog(`Delete role ${role.label}?`, { title: 'Delete role', confirm: 'Delete', danger: true })) return;
     await write(() => request(`/api/roles/${role.id}?rev=${role.rev}`, { method: 'DELETE' }), () => load());
   };
 
-  return { state, open, edit, pick, cancel, setField, setDefaults, save, reset, remove, selectedRole };
+  return { state, open, edit, pick, cancel, setField, setDefaults, save, reset, remove, useDefault, keepDefault, selectedRole };
 }

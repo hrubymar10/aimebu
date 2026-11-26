@@ -31,7 +31,7 @@ func allLiveRoles(ctx context.Context, q roleQuerier) ([]RoleDefinition, error) 
 
 func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) ([]RoleDefinition, error) {
 	rows, err := q.QueryContext(ctx, `SELECT id,role_key,label,emoji,COALESCE(body,''),cardinality,
- cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends,spawn_defaults_json,spawn_pick_mode FROM role`+where+` ORDER BY role_key`, args...)
+ cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends,spawn_defaults_json,spawn_pick_mode,COALESCE(default_body_fingerprint,''),COALESCE(default_body_base,'') FROM role`+where+` ORDER BY role_key`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) (
 		var r RoleDefinition
 		var defaultsJSON string
 		if err := rows.Scan(&r.ID, &r.Key, &r.Label, &r.Emoji, &r.Body, &r.Cardinality,
-			&r.Lead, &r.CanSpawn, &r.Writer, &r.Rev, &r.Extends, &defaultsJSON, &r.PickMode); err != nil {
+			&r.Lead, &r.CanSpawn, &r.Writer, &r.Rev, &r.Extends, &defaultsJSON, &r.PickMode, &r.DefaultBodyFingerprint, &r.DefaultBodyBase); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(defaultsJSON), &r.DefaultAgents); err != nil {
@@ -241,7 +241,7 @@ func (s *Store) ResetRole(ctx context.Context, actorID, id string, rev int64) (R
 			}
 		}
 		if _, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
-   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json='[]',spawn_pick_mode='in_turn',rev=rev+1 WHERE id=?`,
+   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json='[]',spawn_pick_mode='in_turn',default_body_fingerprint=NULL,default_body_base=NULL,rev=rev+1 WHERE id=?`,
 			reset.Label, reset.Emoji, "", reset.Extends, reset.Cardinality, reset.Lead, reset.CanSpawn, reset.Writer, id); err != nil {
 			return err
 		}

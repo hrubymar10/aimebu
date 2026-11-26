@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -26,19 +27,23 @@ func (tx *Tx) AuthorizeSpawn(roomID, actorKind, actorID string) error {
 }
 
 type RoleDefinition struct {
-	ID            string               `json:"id"`
-	Key           string               `json:"role_key"`
-	Label         string               `json:"label"`
-	Emoji         string               `json:"emoji"`
-	Body          string               `json:"body"`
-	Cardinality   string               `json:"cardinality"`
-	Lead          bool                 `json:"cap_is_lead"`
-	CanSpawn      bool                 `json:"cap_can_spawn"`
-	Writer        bool                 `json:"cap_singleton_writer"`
-	DefaultAgents []SpawnDefaultChoice `json:"default_agents"`
-	PickMode      string               `json:"pick_mode"`
-	Rev           int64                `json:"rev"`
-	Builtin       bool                 `json:"builtin"`
+	ID                     string               `json:"id"`
+	Key                    string               `json:"role_key"`
+	Label                  string               `json:"label"`
+	Emoji                  string               `json:"emoji"`
+	Body                   string               `json:"body"`
+	Cardinality            string               `json:"cardinality"`
+	Lead                   bool                 `json:"cap_is_lead"`
+	CanSpawn               bool                 `json:"cap_can_spawn"`
+	Writer                 bool                 `json:"cap_singleton_writer"`
+	DefaultAgents          []SpawnDefaultChoice `json:"default_agents"`
+	PickMode               string               `json:"pick_mode"`
+	Rev                    int64                `json:"rev"`
+	Builtin                bool                 `json:"builtin"`
+	DefaultBody            string               `json:"default_body,omitempty"`
+	DefaultBodyBase        string               `json:"default_body_base,omitempty"`
+	DefaultBodyChanged     bool                 `json:"default_body_changed"`
+	DefaultBodyFingerprint string               `json:"-"`
 	// Extends is the key of the role this one adds to ("" for none); ResolvedBody, set only when listing, is the text an agent
 	// with the role receives (see role_extends.go).
 	Extends      string `json:"extends"`
@@ -49,6 +54,21 @@ type RoleDefinition struct {
 	// EffectiveBody, set only when listing, is the delivered text at the global scope: the resolved body with the global
 	// extension joined, skipping empty parts. A project's flow override and extension add to what its agents receive.
 	EffectiveBody string `json:"effective_body"`
+}
+
+func roleDefaultFingerprint(key, body string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(key+"\x00"+body)))
+}
+
+func importedRoleBody(id, body string) (stored, fingerprint, base string) {
+	def, builtin := builtinRoles()[id]
+	if !builtin {
+		return body, "", ""
+	}
+	if body == "" || body == def.Body {
+		return "", "", ""
+	}
+	return body, roleDefaultFingerprint(def.Key, def.Body), def.Body
 }
 
 func (s *Store) ListRoles(ctx context.Context) ([]RoleDefinition, error) {
@@ -64,6 +84,11 @@ func (s *Store) ListRoles(ctx context.Context) ([]RoleDefinition, error) {
 		return nil, err
 	}
 	for i := range roles {
+		if def, ok := builtinRoles()[roles[i].ID]; ok {
+			roles[i].DefaultBody = def.Body
+			roles[i].DefaultBodyChanged = roles[i].DefaultBodyFingerprint != "" &&
+				roles[i].DefaultBodyFingerprint != roleDefaultFingerprint(def.Key, def.Body)
+		}
 		roles[i].ResolvedBody = resolveRoleBody(roles[i], roles)
 		if ext, ok := extensions[roles[i].ID]; ok {
 			copy := ext.Body
@@ -89,13 +114,13 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 			return err
 		}
 		existing := r.ID != ""
+		var old RoleDefinition
 		if deleteRole || r.ID != "" {
-			var old RoleDefinition
 			var defaultsJSON string
 			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,role_key,label,emoji,COALESCE(body,''),cardinality,
-   cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,spawn_defaults_json,spawn_pick_mode FROM role WHERE id=? AND deleted_at IS NULL`, r.ID).
+   cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,spawn_defaults_json,spawn_pick_mode,COALESCE(default_body_fingerprint,''),COALESCE(default_body_base,'') FROM role WHERE id=? AND deleted_at IS NULL`, r.ID).
 				Scan(&old.ID, &old.Key, &old.Label, &old.Emoji, &old.Body, &old.Cardinality,
-					&old.Lead, &old.CanSpawn, &old.Writer, &old.Rev, &defaultsJSON, &old.PickMode)
+					&old.Lead, &old.CanSpawn, &old.Writer, &old.Rev, &defaultsJSON, &old.PickMode, &old.DefaultBodyFingerprint, &old.DefaultBodyBase)
 			if err != nil {
 				return err
 			}
@@ -222,14 +247,23 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 			return err
 		}
 		storedBody := r.Body
+		fingerprint := ""
+		base := ""
 		if def, ok := builtinRoles()[r.ID]; ok && (storedBody == "" || storedBody == def.Body) {
 			storedBody = ""
 			r.Body = def.Body
+		} else if def, ok := builtinRoles()[r.ID]; ok {
+			fingerprint = roleDefaultFingerprint(def.Key, def.Body)
+			base = def.Body
 		}
 		if existing {
+			if storedBody == old.Body {
+				fingerprint = old.DefaultBodyFingerprint
+				base = old.DefaultBodyBase
+			}
 			_, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
-   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json=?,spawn_pick_mode=?,rev=rev+1 WHERE id=?`,
-				r.Label, r.Emoji, storedBody, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode, r.ID)
+   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json=?,spawn_pick_mode=?,default_body_fingerprint=?,default_body_base=?,rev=rev+1 WHERE id=?`,
+				r.Label, r.Emoji, storedBody, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode, fingerprint, base, r.ID)
 			if err != nil {
 				return err
 			}
@@ -264,6 +298,65 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 		return nil
 	})
 	return result, err
+}
+
+// KeepRoleDefault acknowledges a new shipped prompt without changing the saved instructions.
+func (s *Store) KeepRoleDefault(ctx context.Context, actorID, id string, rev int64) (int64, error) {
+	var next int64
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.authorizeDefinitionActor("", actorID, false); err != nil {
+			return err
+		}
+		def, ok := builtinRoles()[id]
+		if !ok {
+			return ErrInvalidTransition
+		}
+		var body string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT body,rev FROM role WHERE id=? AND deleted_at IS NULL`, id).Scan(&body, &next); err != nil {
+			return err
+		}
+		if next != rev {
+			return ErrStaleRev
+		}
+		if body == "" {
+			return ErrInvalidTransition
+		}
+		if _, err := tx.Exec(`UPDATE role SET default_body_fingerprint=?,default_body_base=?,rev=rev+1 WHERE id=?`, roleDefaultFingerprint(def.Key, def.Body), def.Body, id); err != nil {
+			return err
+		}
+		next++
+		return nil
+	})
+	return next, err
+}
+
+// UseRoleDefault removes only the instructions override, preserving the role's other settings and extensions.
+func (s *Store) UseRoleDefault(ctx context.Context, actorID, id string, rev int64) (int64, error) {
+	var next int64
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.authorizeDefinitionActor("", actorID, false); err != nil {
+			return err
+		}
+		if _, ok := builtinRoles()[id]; !ok {
+			return ErrInvalidTransition
+		}
+		var body string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT body,rev FROM role WHERE id=? AND deleted_at IS NULL`, id).Scan(&body, &next); err != nil {
+			return err
+		}
+		if next != rev {
+			return ErrStaleRev
+		}
+		if body == "" {
+			return ErrInvalidTransition
+		}
+		if _, err := tx.Exec(`UPDATE role SET body='',default_body_fingerprint=NULL,default_body_base=NULL,rev=rev+1 WHERE id=?`, id); err != nil {
+			return err
+		}
+		next++
+		return nil
+	})
+	return next, err
 }
 
 func (tx *Tx) authorizeDefinitionActor(projectID, actorID string, capabilityChange bool) error {

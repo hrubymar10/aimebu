@@ -1398,6 +1398,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-switch { -webkit-mask-image: url("/icons/switch.svg"); mask-image: url("/icons/switch.svg"); }
 .icon-mask-copy { -webkit-mask-image: url("/icons/copy.svg"); mask-image: url("/icons/copy.svg"); }
 .icon-mask-check { -webkit-mask-image: url("/icons/check.svg"); mask-image: url("/icons/check.svg"); }
+.role-default-marker { color: var(--danger, #b45309); display: inline-flex; align-items: center; }
+.role-default-diff { max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .icon-mask-reopen { -webkit-mask-image: url("/icons/reopen.svg"); mask-image: url("/icons/reopen.svg"); }
 .icon-mask-list-checks { -webkit-mask-image: url("/icons/list-checks.svg"); mask-image: url("/icons/list-checks.svg"); }
 .icon-mask-scroll-text { -webkit-mask-image: url("/icons/scroll-text.svg"); mask-image: url("/icons/scroll-text.svg"); }

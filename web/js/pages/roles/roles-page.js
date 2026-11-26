@@ -44,8 +44,8 @@ export function RolesPage({ openToken, onDirty = () => {} }) {
         ${list.map(item => html`<${RoleCard} key=${item.id} role=${item} roles=${list} selected=${selected === item.id}
           open=${editorOpen && selected === item.id} onEdit=${() => roles.edit(item.id)} onClose=${roles.cancel} />`)}
       </div>
-      <${RoleForm} hidden=${!editorOpen} roles=${list} role=${role} form=${form} options=${state.options.value} busy=${state.busy.value} resolved=${role?.resolved_body ?? ''} owner=${rights.owner}
-        onField=${roles.setField} onDefaults=${roles.setDefaults} onSave=${roles.save} onCancel=${roles.cancel} onReset=${roles.reset} onDelete=${roles.remove} />
+      <${RoleForm} hidden=${!editorOpen} roles=${list} role=${role} form=${form} options=${state.options.value} busy=${state.busy.value} dirty=${formState(form) !== state.baseline.value} resolved=${role?.resolved_body ?? ''} owner=${rights.owner}
+        onField=${roles.setField} onDefaults=${roles.setDefaults} onSave=${roles.save} onCancel=${roles.cancel} onReset=${roles.reset} onDelete=${roles.remove} onUseDefault=${roles.useDefault} onKeepDefault=${roles.keepDefault} />
       <p id="roles-error" class="error" role="alert">${state.error.value}</p>
     <//>
   `;

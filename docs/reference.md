@@ -720,6 +720,14 @@ For built-in roles, the shipped instructions of the running build are used
 until the owner saves different text. Saving the shipped text or resetting the
 role returns to that default. On upgrade to this behavior, the prior saved
 body is archived for manual recovery as described in [upgrade notes](upgrade-notes.md#built-in-role-instructions-follow-the-running-build).
+When the shipped instructions change after a built-in role's body was edited,
+Settings → Agents → Roles marks that role quietly. Its editor compares the
+default saved when the edit was made with the new default. For an older edit
+whose earlier default is unknown, it compares the owner's text with the new
+default and says why. **Use the new default** asks for confirmation and discards only the
+body edit. **Keep my version** retains the body and acknowledges the current
+default. Existing edits whose earlier default is unknown show the marker once.
+The marker stays in Settings and does not create an Inbox item or notification.
 Unavailable machines, unmapped project folders, launchers, and models are skipped. So is an entry whose provider's active login is already known rejected in the usage snapshot (`auth_missing`, or an expired token): the pool picks the next healthy entry in rotation order and the spawn notice names the skip ("skipped codex/native/gpt-6-sol: login rejected"); a stale, errored or unknown reading never skips. When every entry is rejected the pool does not loop: it falls back to the first skipped entry and the notice says every configured default entry is unhealthy. The Spawn dialog
 prefills the next available choice and remains editable. Roles are global
 only, with no per-project roles.

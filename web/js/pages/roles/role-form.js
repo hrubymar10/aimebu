@@ -9,7 +9,16 @@ const Toggle = ({ label, desc, id, name, form, set }) => html`
     <input name=${name} type="checkbox" checked=${form[name]} onChange=${event => set(name, event.currentTarget.checked)} />
   <//>`;
 
-export function RoleForm({ hidden, roles, role, form, options, busy, resolved, owner, onField, onDefaults, onSave, onCancel, onReset, onDelete }) {
+function promptDiff(before, after) {
+  const oldLines = before.split('\n'), newLines = after.split('\n');
+  let start = 0, end = 0;
+  while (start < oldLines.length && start < newLines.length && oldLines[start] === newLines[start]) start++;
+  while (end < oldLines.length - start && end < newLines.length - start && oldLines[oldLines.length - 1 - end] === newLines[newLines.length - 1 - end]) end++;
+  return [...oldLines.slice(0, start).map(line => `  ${line}`), ...oldLines.slice(start, oldLines.length - end).map(line => `- ${line}`),
+    ...newLines.slice(start, newLines.length - end).map(line => `+ ${line}`), ...oldLines.slice(oldLines.length - end).map(line => `  ${line}`)].join('\n');
+}
+
+export function RoleForm({ hidden, roles, role, form, options, busy, dirty, resolved, owner, onField, onDefaults, onSave, onCancel, onReset, onDelete, onUseDefault, onKeepDefault }) {
   const set = onField;
   const text = name => ({ name, value: form[name], onInput: event => set(name, event.currentTarget.value) });
   return html`<form id="role-editor" hidden=${hidden} aria-labelledby="role-editor-title" onSubmit=${event => { event.preventDefault(); onSave(); }}
@@ -36,6 +45,12 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
       <${SettingsRow} label="Instructions" desc="Prompt text given to every agent that holds this role, on top of the shared room protocol (and after the instructions of the role it extends, if any)." id="role-body" className="settings-row-stack">
         <textarea class="settings-text-input settings-textarea" ...${text('body')} rows="8"></textarea>
       <//>
+      ${role?.default_body_changed && html`<div class="settings-row settings-row-stack" id="role-default-change">
+        <div class="settings-row-info"><span class="settings-label">Default prompt changed</span><span class="settings-desc">${role.default_body_base ? 'Compare the default you edited against with the new default.' : 'We do not know which default this was based on. Compare your saved instructions with the new default.'}</span></div>
+        <div class="settings-control"><details><summary>Show prompt diff</summary><pre class="role-default-diff" aria-label=${role.default_body_base ? 'Previous default to new default diff' : 'Your instructions to new default diff'}>${promptDiff(role.default_body_base || role.body, role.default_body)}</pre></details>${dirty && html`<p class="settings-desc">Save or discard your draft before choosing a default action.</p>`}
+          <div class="dialog-actions"><button type="button" class="btn-icon" disabled=${busy || dirty} title="Use the new default" aria-label="Use the new default" onClick=${onUseDefault}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/></svg></button><button type="button" class="btn-icon" disabled=${busy || dirty} title="Keep my version" aria-label="Keep my version" onClick=${onKeepDefault}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></button></div>
+        </div>
+      </div>`}
       <${SettingsRow} label="Extension" desc=${owner ? 'Text added after the instructions without replacing them, so updates to the default instructions keep flowing. Projects can add more of their own.' : 'Text added after the instructions without replacing them. Only the owner can change it.'} id="role-extension" className="settings-row-stack">
         <textarea class="settings-text-input settings-textarea" ...${text('body_extension')} rows="4" readOnly=${!owner} placeholder=${owner ? '' : 'Only the owner edits the extension.'}></textarea>
       <//>

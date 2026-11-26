@@ -269,6 +269,10 @@ func TestV1SettingsAndRoleImportPreview(t *testing.T) {
 	if byKey["analyst"].Cardinality != "singleton" || byKey["deep-reviewer"].Body != "Extra checks" || byKey["sec-reviewer"].Body != "v1 security focus" {
 		t.Fatalf("imported roles=%+v", byKey)
 	}
+	if sec := byKey["sec-reviewer"]; sec.DefaultBodyBase != builtinRoles()[sec.ID].Body ||
+		sec.DefaultBodyFingerprint != roleDefaultFingerprint(sec.Key, sec.DefaultBodyBase) || sec.DefaultBodyChanged {
+		t.Fatalf("imported built-in base=%q fingerprint=%q changed=%t", sec.DefaultBodyBase, sec.DefaultBodyFingerprint, sec.DefaultBodyChanged)
+	}
 	// The links came across, and the text an agent would get is the parent's followed by the role's own, as in v1.
 	if byKey["deep-reviewer"].Extends != "reviewer" || byKey["sec-reviewer"].Extends != "reviewer" ||
 		byKey["deep-reviewer"].ResolvedBody != currentReviewerRoleBody+"\n\nExtra checks" || byKey["sec-reviewer"].ResolvedBody != currentReviewerRoleBody+"\n\nv1 security focus" {

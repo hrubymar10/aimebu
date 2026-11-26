@@ -153,6 +153,36 @@ func (s *Server) roleReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, saved)
 }
 
+func (s *Server) roleKeepDefault(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Rev int64 `json:"rev"`
+	}
+	if !readJSON(w, r, &input) {
+		return
+	}
+	rev, err := s.Store.KeepRoleDefault(r.Context(), userID(r), r.PathValue("id"), input.Rev)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]int64{"rev": rev})
+}
+
+func (s *Server) roleUseDefault(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Rev int64 `json:"rev"`
+	}
+	if !readJSON(w, r, &input) {
+		return
+	}
+	rev, err := s.Store.UseRoleDefault(r.Context(), userID(r), r.PathValue("id"), input.Rev)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]int64{"rev": rev})
+}
+
 // rolePrompts lists every live role as one project's role-prompt settings show it: the base, both saved extensions, and the
 // delivered text. Only the project's owner or operators.
 func (s *Server) rolePrompts(w http.ResponseWriter, r *http.Request) {

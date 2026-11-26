@@ -495,6 +495,19 @@ Roles, agents
   `spawn_defaults_json` stores at most 32 ordered `{launcher_id,model}` pairs
   listed by detected harness models when saved. Empty means manual choice. A
   removed model or unavailable launcher is skipped at spawn.
+- **role.default_body_fingerprint** and **role.default_body_base** — for a
+  nonempty edited built-in body, the SHA-256 fingerprint of its role key,
+  a NUL byte, and shipped default text, plus that complete text, saved when the body
+  changes. Existing edits with no known base have fingerprint `unknown` and
+  no base text. An unchanged body retains its prior base on other role saves.
+  Settings → Agents → Roles marks an edit when the fingerprint differs from
+  the current shipped default. The editor compares the saved base with the
+  new default, or the edited body with the new default when the base is
+  unknown. **Use the new default** confirms before clearing only the body
+  override and these fields; **Keep my version** retains the edit and saves
+  the current default text and fingerprint. Both require the owner or an
+  admin and the current role revision. The marker is confined to Settings;
+  it creates no Inbox item or notification.
 - **project_role_spawn_default**(project_id, role_id, items_json,
   pick_mode[in_turn|randomly]) — a row replaces the role's global list and mode
   for one project; no row inherits both.

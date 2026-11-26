@@ -283,7 +283,8 @@ func importV1Roles(ctx context.Context, tx *sql.Tx, data *v1ImportData, mapping 
 						return ErrRoleInUse
 					}
 				}
-				if _, err := tx.ExecContext(ctx, `UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,rev=rev+1 WHERE id=?`, role.Label, role.Emoji, role.Body, role.Extends, role.Cardinality, current.ID); err != nil {
+				body, fingerprint, base := importedRoleBody(current.ID, role.Body)
+				if _, err := tx.ExecContext(ctx, `UPDATE role SET label=?,emoji=?,body=?,default_body_fingerprint=?,default_body_base=?,extends=?,cardinality=?,rev=rev+1 WHERE id=?`, role.Label, role.Emoji, body, fingerprint, base, role.Extends, role.Cardinality, current.ID); err != nil {
 					return err
 				}
 				report.Imported["roles"]++
@@ -326,7 +327,8 @@ func importV1Roles(ctx context.Context, tx *sql.Tx, data *v1ImportData, mapping 
 				_, parentLive := roleParent(role, all)
 				body := resolveRoleBody(role, all)
 				if parentLive && len(body) <= 32768 {
-					if _, err := tx.ExecContext(ctx, `UPDATE role SET body=?,extends='' WHERE id=?`, body, role.ID); err != nil {
+					stored, fingerprint, base := importedRoleBody(role.ID, body)
+					if _, err := tx.ExecContext(ctx, `UPDATE role SET body=?,default_body_fingerprint=?,default_body_base=?,extends='' WHERE id=?`, stored, fingerprint, base, role.ID); err != nil {
 						return err
 					}
 					report.Skipped["role_links"]++
@@ -352,8 +354,12 @@ func importV1Roles(ctx context.Context, tx *sql.Tx, data *v1ImportData, mapping 
 // ledger entry is dropped, so the role reads as skipped (a later run may bring it).
 func undoImportedRole(ctx context.Context, tx *sql.Tx, sourceKey string, role RoleDefinition, before map[string]RoleDefinition, report *V1ImportReport) error {
 	if prior, ok := before[role.Key]; ok {
-		if _, err := tx.ExecContext(ctx, `UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,rev=rev+1 WHERE id=?`,
-			prior.Label, prior.Emoji, prior.Body, prior.Extends, prior.Cardinality, role.ID); err != nil {
+		stored := prior.Body
+		if def, ok := builtinRoles()[prior.ID]; ok && stored == def.Body {
+			stored = ""
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE role SET label=?,emoji=?,body=?,default_body_fingerprint=?,default_body_base=?,extends=?,cardinality=?,rev=rev+1 WHERE id=?`,
+			prior.Label, prior.Emoji, stored, prior.DefaultBodyFingerprint, prior.DefaultBodyBase, prior.Extends, prior.Cardinality, role.ID); err != nil {
 			return err
 		}
 	} else if _, err := tx.ExecContext(ctx, `DELETE FROM role WHERE id=?`, role.ID); err != nil {

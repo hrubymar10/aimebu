@@ -17,6 +17,8 @@ type migration struct {
 	sql     string
 }
 
+const roleDefaultBaseMigrationVersion = 144
+
 var migrations = []migration{{1, `
 CREATE TABLE seq_counter (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -2283,6 +2285,12 @@ INSERT INTO inbox_item_new(id,project_id,room_id,message_id,turn_id,agent_id,req
 DROP TABLE inbox_item;
 ALTER TABLE inbox_item_new RENAME TO inbox_item;
 CREATE INDEX inbox_lead_recovery_due ON inbox_item(lead_due_at) WHERE kind='recovery' AND state='open' AND lead_due_at IS NOT NULL;
+`}, {roleDefaultBaseMigrationVersion, `
+UPDATE role SET default_body_fingerprint='unknown'
+WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND deleted_at IS NULL
+  AND id IN ('role_leader_default','role_dispatcher_default','role_advisor_default',
+    'role_worker_default','role_reviewer_default','role_researcher_default',
+    'role_sec-reviewer_default','role_test-reviewer_default','role_ux-reviewer_default');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2348,6 +2356,38 @@ const roomLimitsMarker = "room daily limits are dropped here"
 
 func migrate(ctx context.Context, db *sql.DB) error { return migrateUpTo(ctx, db, 0) }
 
+func ensureRoleDefaultColumns(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(role)`)
+	if err != nil {
+		return err
+	}
+	found := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, name := range []string{"default_body_fingerprint", "default_body_base"} {
+		if found[name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE role ADD COLUMN `+name+` TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // migrateUpTo applies the pending migrations up to and including version limit (0 means all); tests use it to stop before a migration.
 func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (
@@ -2397,6 +2437,9 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		}
 		if err == nil && m.version == 124 {
 			err = ensureUsageTotalColumns(ctx, tx)
+		}
+		if err == nil && m.version == roleDefaultBaseMigrationVersion {
+			err = ensureRoleDefaultColumns(ctx, tx)
 		}
 		var droppedRoomLimits []string
 		if err == nil && strings.Contains(m.sql, roomLimitsMarker) {

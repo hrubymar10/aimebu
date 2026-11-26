@@ -283,6 +283,49 @@ async function main() {
       assert.equal(await gone.$eval('#role-editor [aria-label="Add default agent"]', el => el.disabled), true, 'nothing to add when nothing is offered');
       await gone.close();
     }
+    // A changed built-in prompt shows a quiet marker, an explicit comparison, and two icon actions.
+    {
+      const changed = ROLES.map(item => item.role_key === 'worker' ? { ...item, default_body_changed: true, default_body: 'new default instructions' } : item);
+      const page = await mount({ auto: { ...AUTO, [READ]: changed } });
+      assert.deepEqual(await page.$eval('[data-role-key=worker] .role-default-marker', el => [el.querySelector('svg') !== null, el.title, el.getAttribute('aria-label')]),
+        [true, 'The default prompt has changed since you edited this role', 'The default prompt has changed since you edited this role']);
+      assert.equal(await page.$('[data-role-key=reviewer] .role-default-marker'), null);
+      await click(page, '#roles-cards [data-role-key=worker] .role-card-edit');
+      assert.match(await page.$eval('#role-default-change', el => el.textContent), /We do not know which default this was based on/);
+      assert.equal(await page.$eval('#role-default-change pre', el => el.textContent), '- worker instructions\n+ new default instructions');
+      assert.deepEqual(await page.$$eval('#role-default-change button', buttons => buttons.map(button => [button.getAttribute('aria-label'), button.title, !!button.querySelector('svg'), button.textContent.trim()])),
+        [['Use the new default', 'Use the new default', true, ''], ['Keep my version', 'Keep my version', true, '']]);
+      await click(page, '[aria-label="Use the new default"]');
+      await dialog(page);
+      await click(page, '#app-dialog .app-dialog-cancel');
+      assert.equal(await count(page, 'POST', '/api/roles/role_worker/use-default'), 0);
+      await click(page, '[aria-label="Keep my version"]');
+      const keep = await pending(page, 'POST', '/api/roles/role_worker/keep-default');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, keep), { rev: 4 });
+      await page.evaluate(() => { delete window.__auto['GET /api/roles']; });
+      await answer(page, keep, 200, { rev: 5 });
+      await answer(page, await pending(page, 'GET', '/api/roles'), 200, ROLES);
+      await page.waitForFunction(() => !document.querySelector('[data-role-key=worker] .role-default-marker'));
+      await page.close();
+      const usePage = await mount({ auto: { ...AUTO, [READ]: changed } });
+      await click(usePage, '#roles-cards [data-role-key=worker] .role-card-edit');
+      await click(usePage, '[aria-label="Use the new default"]');
+      await dialog(usePage);
+      await click(usePage, '#app-dialog .app-dialog-ok');
+      const use = await pending(usePage, 'POST', '/api/roles/role_worker/use-default');
+      assert.deepEqual(await usePage.evaluate(index => window.__requests[index].body, use), { rev: 4 });
+      await usePage.evaluate(() => { delete window.__auto['GET /api/roles']; });
+      await answer(usePage, use, 200, { rev: 5 });
+      await answer(usePage, await pending(usePage, 'GET', '/api/roles'), 200, ROLES);
+      await usePage.waitForFunction(() => !document.querySelector('[data-role-key=worker] .role-default-marker'));
+      await usePage.close();
+      const based = changed.map(item => item.role_key === 'worker' ? { ...item, default_body_base: 'previous shipped instructions' } : item);
+      const basedPage = await mount({ auto: { ...AUTO, [READ]: based } });
+      await click(basedPage, '#roles-cards [data-role-key=worker] .role-card-edit');
+      assert.equal(await basedPage.$eval('#role-default-change pre', el => el.textContent), '- previous shipped instructions\n+ new default instructions');
+      assert.match(await basedPage.$eval('#role-default-change', el => el.textContent), /default you edited against/);
+      await basedPage.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('roles page tests passed');
   } finally {

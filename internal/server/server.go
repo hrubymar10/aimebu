@@ -298,6 +298,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/roles/{id}", s.Auth.RequireUser(http.HandlerFunc(s.role)))
 	mux.Handle("DELETE /api/roles/{id}", s.Auth.RequireUser(http.HandlerFunc(s.role)))
 	mux.Handle("POST /api/roles/{id}/reset", s.Auth.RequireUser(http.HandlerFunc(s.roleReset)))
+	mux.Handle("POST /api/roles/{id}/keep-default", s.Auth.RequireUser(http.HandlerFunc(s.roleKeepDefault)))
+	mux.Handle("POST /api/roles/{id}/use-default", s.Auth.RequireUser(http.HandlerFunc(s.roleUseDefault)))
 	mux.Handle("GET /api/projects/{project}/role-spawn-defaults", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefaults)))
 	mux.Handle("PUT /api/projects/{project}/role-spawn-defaults/{role}", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefault)))
 	mux.Handle("GET /api/projects/{project}/role-spawn-defaults/{role}/next", s.Auth.RequireUser(http.HandlerFunc(s.projectRoleSpawnDefaultNext)))
