@@ -754,6 +754,22 @@ structured human asks. Global instructions refer agents to each project's
 `AGENTS.md` for local test and commit rules. Upgrades refresh only untouched
 global defaults; edited roles retain their
 instructions.
+The dispatcher's instructions carry four duties beyond the shared ones
+(`dispatcherRuleDuties` in `internal/store/role_defaults.go`). Watch: on every
+wake it goes through its active workers. A paused one (a runaway or recovery
+item) it decides with `list_recoveries` and `resolve_recovery`; one silent for
+more than about 30 minutes with no running `run_command` of its own and no
+handoff it reads with `agent_output`, nudges with a mention or replaces in the
+same room, and tells the leader in one line; one whose first turn failed it
+replaces right away. Scope: it gives workers only what the specification asks
+for, and an extra check, an experiment or a question for a person goes to the
+leader as a proposal first, never to a worker and never through one. Evidence:
+every brief requires each causal claim in a commit body ("X happens because Y")
+to cite the code line as `file:line`, and when a handoff arrives the dispatcher
+opens the cited lines before it passes the handoff on, saying in its relay to
+the leader when a citation does not hold. Quick reads: every brief tells the
+worker to read with `rg`, `cat` and `git show` through its own shell tool and to
+keep `run_command` for long jobs such as tests and builds.
 Assignments to spawned agents need a live mention in ordinary prose to wake
 them. Agent replies to other agents keep their thread link without waking the
 parent author; an explicit mention or handoff wakes the intended agent. A
