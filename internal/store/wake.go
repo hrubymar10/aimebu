@@ -18,6 +18,9 @@ type roomRecipient struct {
 	// project is the agent's own project (an ID and a name). In a chat between agents the room has no project, so a
 	// project-qualified mention is read against this.
 	projectID, projectName string
+	// desired/observed are the agent's control state: the stop guarantee reads them at note creation (an unaddressed
+	// note is not created for a stopped agent, and no note is created in a closing or closed room).
+	desired, observed string
 	// createdAt orders agents that share a name: the display of the later duplicate is `name-2`, and `@name-2`
 	// resolves to it (see the `-N` branch of resolveMentions).
 	createdAt string
@@ -35,7 +38,7 @@ func (tx *Tx) roomRecipients(roomID string) ([]roomRecipient, error) {
 }
 
 func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, error), ctx context.Context, roomID string) ([]roomRecipient, error) {
-	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name,a.created_at
+	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name,a.created_at,a.desired,a.observed
 		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
 		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL
 		ORDER BY a.id`, roomID)
@@ -46,7 +49,7 @@ func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, 
 	for rows.Next() {
 		var item roomRecipient
 		item.kind = "agent"
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName, &item.createdAt); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName, &item.createdAt, &item.desired, &item.observed); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -646,7 +649,7 @@ func (tx *Tx) loopGuardAnnounced(roomID string) (bool, error) {
 	return found == 1, err
 }
 
-func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, projectID, roomKind string) error {
+func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, projectID, roomKind, lifecycle string) error {
 	members, err := tx.roomRecipients(message.RoomID)
 	if err != nil {
 		return err
@@ -702,6 +705,16 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 			skip = "not_addressed"
 		case (reason == "human_message" || reason == "broadcast") && member.auto:
 			skip = "auto_member" // the lead reads this room but was not put in it; an unaddressed message is the worker's
+		}
+		if skip == "" && lifecycle != "open" {
+			// The stop guarantee reads the room's lifecycle at note creation: a closing or closed room starts no turn for
+			// anybody, addressed or not (a re-opened room's history is read on the next turn instead).
+			skip = "room_" + lifecycle
+		}
+		if skip == "" && member.desired == "stopped" && (reason == "human_message" || reason == "broadcast" || reason == "group") {
+			// A stopped agent gets no turn from room chatter: an unaddressed note is not created for it. A note addressed
+			// to it (a mention, a reply, a handoff) stays queued in an open room for when it is started again.
+			skip = "agent_stopped"
 		}
 		if skip == "" && reason == "agent_dm" && agentChatFull {
 			skip = "dm_turn_cap"

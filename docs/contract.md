@@ -2503,7 +2503,16 @@ Computed in the message-insert transaction; every decision → note or
   message stays visible;
 - never: own messages, duplicates, routine system chatter, agents that are
   revoked or have left the room. Role/control changes ride in the next
-  `deliver` context.
+  `deliver` context. The wake is judged at note creation, in the message's own
+  transaction: a **closing or closed room** creates no note at all — addressed
+  or not — and every would-be recipient gets a `message_not_woken` event with
+  reason `room_closing` or `room_closed` (the room can hand no turn out any
+  more; a re-opened room's history is read on the next turn); a **stopped
+  agent** gets no note from an unaddressed reason (`human_message`,
+  `broadcast`, `group`), with reason `agent_stopped`, while a note addressed to
+  it (a mention, a reply, a handoff) stays queued in an open room for when it
+  is started again — the stop guarantee is that a stopped agent is never put
+  back to work by room chatter, and dispatch refuses a stopped agent anyway.
 Dispatch (separate): agent desired=active, room/project gate open, switch
 gate open, room lifecycle=open, `recovery_block=false`, no pending **and**
 no running turn → batch =

@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// An agent's last activity (the age of its state on the card) is its own doing. Anyone posting in a room it belongs to queues a note for it, and
-// that event names the agent too, so a stopped agent used to show "0:00" after every message and after every spawn next to it.
+// An agent's last activity (the age of its state on the card) is its own doing. A message in its room still names it in a
+// message_not_woken event while it is stopped, but must not make its age appear fresh.
 func TestAnAgentsLastActivityMovesOnlyForWhatItDoesItself(t *testing.T) {
 	t.Parallel()
 	s, project, room, agent, _ := wakeFixture(t)
@@ -45,14 +45,14 @@ func TestAnAgentsLastActivityMovesOnlyForWhatItDoesItself(t *testing.T) {
 		t.Fatal("a stopped agent has an age")
 	}
 
-	// A person's message in its room queues a note for it: not its doing.
+	// A person's unaddressed message in its room is skipped for it: not its doing.
 	time.Sleep(2 * time.Millisecond)
 	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "usr_owner", Body: "hello everyone"}); err != nil {
 		t.Fatal(err)
 	}
-	var queued int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE agent_id=? AND kind='note_queued'`, agent.ID).Scan(&queued); err != nil || queued == 0 {
-		t.Fatalf("the message should have queued a note for the agent (%d, %v): the test would prove nothing", queued, err)
+	var skipped int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE agent_id=? AND kind='message_not_woken' AND json_extract(payload_json,'$.reason')='agent_stopped'`, agent.ID).Scan(&skipped); err != nil || skipped == 0 {
+		t.Fatalf("the message should have recorded a skipped wake for the agent (%d, %v)", skipped, err)
 	}
 	if got := last(); got != stopped {
 		t.Fatalf("a message in its room moved a stopped agent's last activity from %s to %s", stopped, got)

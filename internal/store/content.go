@@ -695,9 +695,9 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 			}
 		}
 	}
-	var projectID, roomKind string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind FROM room WHERE id = ?`,
-		message.RoomID).Scan(&projectID, &roomKind); err != nil {
+	var projectID, roomKind, roomLifecycle string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind,lifecycle FROM room WHERE id = ?`,
+		message.RoomID).Scan(&projectID, &roomKind, &roomLifecycle); err != nil {
 		return Message{}, err
 	}
 	// The author and the members the message addresses ride along, so a browser decides whether it is worth a sound or a notification
@@ -730,7 +730,7 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 			return Message{}, err
 		}
 	}
-	if err := tx.queueMessageWakes(message, wake, projectID, roomKind); err != nil {
+	if err := tx.queueMessageWakes(message, wake, projectID, roomKind, roomLifecycle); err != nil {
 		return Message{}, err
 	}
 	if guard != nil {

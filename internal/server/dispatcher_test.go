@@ -230,13 +230,22 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The stopped agent gets no note from an unaddressed message (the wake fix): only the other agent's turn dispatches, and the stopped agent's marker stays empty.
 	stopped := post("work when one stopped")
 	if count, err := dispatcher.Pass(ctx); err != nil || count != 1 {
 		t.Fatalf("stopped dispatch=%d %v", count, err)
 	}
 	waitDone(agents[1].ID, stopped)
-	if note, err := f.db.NoteForAgentMessage(ctx, agents[0].ID, stopped); err != nil || note.State != "queued" {
-		t.Fatalf("stopped note=%+v %v", note, err)
+	if _, err := f.db.NoteForAgentMessage(ctx, agents[0].ID, stopped); err == nil {
+		t.Fatal("unaddressed note queued for a stopped agent")
+	}
+	// A note addressed to the stopped agent (a mention) stays queued for when it is started again, and its turn then dispatches.
+	mentioned := post("@one handle this when back")
+	if count, err := dispatcher.Pass(ctx); err != nil || count != 0 {
+		t.Fatalf("mention dispatch for a stopped agent=%d %v", count, err)
+	}
+	if note, err := f.db.NoteForAgentMessage(ctx, agents[0].ID, mentioned); err != nil || note.State != "queued" {
+		t.Fatalf("addressed note for a stopped agent=%+v %v", note, err)
 	}
 	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
 		_, err := tx.Exec(`UPDATE agent SET desired='active',desired_rev=2 WHERE id=?`, agents[0].ID)
@@ -247,7 +256,7 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 	if count, err := dispatcher.Pass(ctx); err != nil || count != 1 {
 		t.Fatalf("reactivated dispatch=%d %v", count, err)
 	}
-	waitDone(agents[0].ID, stopped)
+	waitDone(agents[0].ID, mentioned)
 	cancel()
 	<-done
 }
