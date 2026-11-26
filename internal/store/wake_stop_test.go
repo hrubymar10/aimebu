@@ -169,3 +169,56 @@ func lastRoomMessageID(t *testing.T, s *Store, roomID string) string {
 	}
 	return id
 }
+
+// A person's plain message in their own DM with an agent is addressed to that agent, so a stopped agent keeps
+// the note queued and runs it once started again. In a task room the same message is chatter and is skipped.
+func TestStoppedAgentKeepsAPlainDMNoteAndRunsItOnRestart(t *testing.T) {
+	t.Parallel()
+	s, _, room, one, _ := wakeFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_dm','owner','hash','{}','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES ((SELECT project_id FROM room WHERE id=?),'usr_dm','owner')`, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	dm, err := s.OpenDM(ctx, "usr_dm", one.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET desired='stopped',observed='stopped' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := s.InsertMessage(ctx, Message{RoomID: dm.ID, AuthorKind: "user", AuthorID: "usr_dm", Body: "are you there"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reason string
+	if err := s.db.QueryRow(`SELECT wake_reason FROM note WHERE agent_id=? AND message_id=? AND state='queued'`, one.ID, msg.ID).Scan(&reason); err != nil {
+		t.Fatalf("plain DM note not queued for the stopped agent: %v", err)
+	}
+	if reason != "human_message" {
+		t.Fatalf("wake reason=%q", reason)
+	}
+	// The same plain message in the task room stays chatter.
+	task, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "usr_dm", Body: "chatter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := noQueuedNote(t, s, one.ID, task.ID, "task room, unaddressed, stopped agent"); err != nil {
+		t.Fatal(err)
+	}
+	// Started again, a turn can be prepared from the queued note.
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SetAgentDesired(one.ID, "usr_dm", "active", 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET observed='idle' WHERE id=?`, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ready, err := s.PrepareDispatch(ctx, one.ID, ""); err != nil || !ready {
+		t.Fatalf("no turn after restart: ready=%t %v", ready, err)
+	}
+}

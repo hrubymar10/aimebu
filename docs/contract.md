@@ -2551,7 +2551,8 @@ Computed in the message-insert transaction; every decision → note or
   `broadcast`, `group`), with reason `agent_stopped`, while a note addressed to
   it (a mention, a reply, a handoff) stays queued in an open room for when it
   is started again — the stop guarantee is that a stopped agent is never put
-  back to work by room chatter, and dispatch refuses a stopped agent anyway.
+  back to work by room chatter, and dispatch refuses a stopped agent anyway;
+  a person's plain message in their `dm` room with an agent counts as addressed to that agent, so its note stays queued for a stopped agent too.
 Dispatch (separate): agent desired=active, room/project gate open, switch
 gate open, room lifecycle=open, `recovery_block=false`, no pending **and**
 no running turn → batch =
