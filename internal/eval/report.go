@@ -194,7 +194,7 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	fmt.Fprintf(&b, "# %s\n\n", title)
 	summaries := Summarize(cases)
 	b.WriteString("## Headline: first attempt against after repairs\n\n")
-	b.WriteString("Rates are over cases the harness completed, with the 95% Wilson interval in percent. \"Strict\" is valid with no tolerance warning; \"accepted\" is what the server takes today; \"correct\" also passes the scenario checks. \"After repairs\" is the last attempt.\n\n")
+	b.WriteString("Rates are over cases the harness completed, with the 95% Wilson interval in percent. \"Strict\" is valid with no tolerance warning and the text is the envelope itself (one JSON object with a `messages` field); \"accepted\" is what the server takes today; \"correct\" also passes the scenario checks. \"After repairs\" is the last attempt.\n\n")
 	b.WriteString("| model | strict first try | accepted first try | correct first try | valid after repairs | correct after repairs | harness failures |\n|---|---|---|---|---|---|---|\n")
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %d |\n", s.Model, s.Strict, s.Accepted, s.Correct, s.ValidAfter, s.CorrectAfter, s.Harness)

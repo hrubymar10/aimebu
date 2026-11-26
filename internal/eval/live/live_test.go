@@ -359,8 +359,8 @@ func TestRunStartsAScenarioWithNoToolsWithAnEmptyToolbox(t *testing.T) {
 		t.Fatalf("a normal turn needs agent tools access even with no tools: %+v %v", cases, err)
 	}
 	_, list := rpc(t, o.MCP.Port(), key, `{"id":1,"method":"tools/list"}`)
-	if strings.Contains(list, `"name"`) {
-		t.Fatalf("the toolbox of a no-tools scenario offers nothing: %s", list)
+	if strings.Contains(list, `"name"`) || !strings.Contains(list, `"tools":[]`) {
+		t.Fatalf("the toolbox of a no-tools scenario offers an empty array: %s", list)
 	}
 }
 

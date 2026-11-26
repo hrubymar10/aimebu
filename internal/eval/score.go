@@ -11,7 +11,7 @@ import (
 // Result is the score of one candidate answer.
 type Result struct {
 	// Valid says the answer parser accepts the candidate; Strict says it does so with no tolerance warning (a fence, a reasoning block, a
-	// lone object, a dropped field), which is what a stricter tool such as submit_answer would require.
+	// dropped field) and the text is the envelope itself, one JSON object with a messages field, which is what a stricter tool such as submit_answer would require.
 	Valid    bool
 	Strict   bool
 	Warnings []string

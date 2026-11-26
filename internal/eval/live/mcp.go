@@ -105,7 +105,7 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"aimebu-eval","version":"1"}}}`, id)
 	case "tools/list":
-		var list []map[string]any
+		list := []map[string]any{} // an empty toolbox is `"tools":[]`, as the real toolbox answers, never null
 		for _, name := range offered {
 			list = append(list, map[string]any{"name": name, "description": toolDescriptions[name],
 				"inputSchema": map[string]any{"type": "object", "additionalProperties": true}})
