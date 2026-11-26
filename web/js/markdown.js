@@ -147,7 +147,7 @@ const MAX_BLOCK_DEPTH = 8;
 const leadingWidth = line => indentOf(line.match(/^\s*/)[0]);
 // Where an item's text begins on its line (marker and the spaces after it counted), and a line with up to that many columns of indent
 // removed: a fence under an item is read relative to that column, exactly as the server's prose scanner reads it
-// (internal/store/mention_ids.go), so a fence at any depth is code in both. Both are checked against one case table
+// (internal/store/prose_blocks.go: scanProseBlocks, scanProseList, proseStripColumn), so a fence at any depth is code in both. Both are checked against one case table
 // (internal/store/testdata/fence_cases.json).
 const contentColumn = (line, body) => line.slice(0, line.length - body.length).replace(/\t/g, '    ').length;
 const stripColumn = (line, column) => {

@@ -243,7 +243,38 @@
   "live": [
    "@tablecell",
    "@after"
+  ]
+ },
+ {
+  "name": "a list-looking line right after a table header is a row, not an item with a fence",
+  "body": "| a | b |\n| --- | --- |\n- item | x\n      ```\n      @m1\n      ```",
+  "fenced": [],
+  "live": [
+   "@m1"
+  ]
+ },
+ {
+  "name": "without a table the same item holds a closed fence",
+  "body": "- item | x\n      ```\n      @m1\n      ```",
+  "fenced": [
+   "@m1"
   ],
-  "known_divergence": "the renderer reads a line with a pipe right after a table as one of its rows, so the scanner's fence here is not a fence on screen; tables are not ported (prose_blocks.go)"
+  "live": []
+ },
+ {
+  "name": "a heading with a pipe is not a table header",
+  "body": "# a | b\n| --- | --- |\n```\n@h1\n```",
+  "fenced": [
+   "@h1"
+  ],
+  "live": []
+ },
+ {
+  "name": "a quote with a pipe is not a table header",
+  "body": "> a | b\n| --- | --- |\n```\n@q1\n```",
+  "fenced": [
+   "@q1"
+  ],
+  "live": []
  }
 ]

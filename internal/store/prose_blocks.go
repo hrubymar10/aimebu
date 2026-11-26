@@ -8,7 +8,7 @@ import (
 // The prose scanner decides which lines of a message are code, so that a mention or a room reference in code never wakes an agent or
 // becomes a link. The web renderer (web/js/markdown.js, renderBlocks and readList) decides what is code on screen; the two must agree,
 // so this file is a port of that block structure, reduced to what decides liveness: a fenced block, an indented block after a blank
-// line, and the lists that nest blocks of their own. A list item's lines under it (everything indented deeper that is not another item)
+// line, the tables whose rows are prose whatever they look like, and the lists that nest blocks of their own. A list item's lines under it (everything indented deeper that is not another item)
 // are dedented by their shared minimum width and read as blocks again, exactly as the renderer does it. Everything else is a line of
 // prose, in which only inline code spans and \@ hide a mention. One case table, testdata/fence_cases.json, is read by this package's
 // test and by scripts/test-markdown.cjs.
@@ -268,6 +268,24 @@ func scanProseBlocks(out *proseOutput, lines []proseLine, depth int) {
 			}
 			continue
 		}
+		// The renderer reads a heading and a quote before a table, and a table before a rule or a list: a line that opens a table is
+		// never an item, and the lines after it that hold a pipe are its rows, not fences or items.
+		if !proseHeadingOrQuote(line.text) {
+			next := ""
+			if i+1 < len(lines) {
+				next = lines[i+1].text
+			}
+			if proseTableStart(line.text, next) {
+				out.line(line)
+				out.line(lines[i+1])
+				i += 2
+				for i < len(lines) && !proseBlank(lines[i]) && strings.Contains(lines[i].text, "|") {
+					out.line(lines[i])
+					i++
+				}
+				continue
+			}
+		}
 		if _, _, ok := proseListItem(line.text); ok {
 			i = scanProseList(out, lines, i, depth)
 			continue
@@ -275,6 +293,59 @@ func scanProseBlocks(out *proseOutput, lines []proseLine, depth int) {
 		out.line(line)
 		i++
 	}
+}
+
+var (
+	proseHeadingPattern = regexp.MustCompile(`^#{1,6}\s+.+$`)
+	proseRulePattern    = regexp.MustCompile(`^:?-+:?$`)
+)
+
+// proseHeadingOrQuote says whether the renderer reads line as a heading or a quote, both before it looks for a table.
+func proseHeadingOrQuote(line string) bool {
+	return strings.HasPrefix(line, ">") || proseHeadingPattern.MatchString(line)
+}
+
+// proseTableCells is cells in web/js/markdown-table.js: a row split at its unescaped pipes outside a code span.
+func proseTableCells(line string) []string {
+	row := strings.TrimSpace(line)
+	row = strings.TrimPrefix(row, "|")
+	row = strings.TrimSuffix(row, "|")
+	var out []string
+	var cell strings.Builder
+	ticks := false
+	for i := 0; i < len(row); i++ {
+		switch c := row[i]; {
+		case c == '\\' && i+1 < len(row) && row[i+1] == '|':
+			cell.WriteByte('|')
+			i++
+		case c == '`':
+			ticks = !ticks
+			cell.WriteByte(c)
+		case c == '|' && !ticks:
+			out = append(out, strings.TrimSpace(cell.String()))
+			cell.Reset()
+		default:
+			cell.WriteByte(c)
+		}
+	}
+	return append(out, strings.TrimSpace(cell.String()))
+}
+
+// proseTableStart is tableSpec: a line with a pipe followed by a rule line with as many cells, each of dashes with optional colons.
+func proseTableStart(line, next string) bool {
+	if !strings.Contains(line, "|") {
+		return false
+	}
+	headings, rules := proseTableCells(line), proseTableCells(next)
+	if len(headings) != len(rules) {
+		return false
+	}
+	for _, rule := range rules {
+		if !proseRulePattern.MatchString(rule) {
+			return false
+		}
+	}
+	return true
 }
 
 // scanProseList is readList: the list that starts at lines[start], item by item. An item's own line is prose; the lines under it (deeper
