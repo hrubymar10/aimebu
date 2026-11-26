@@ -1001,6 +1001,7 @@ Inbox, usage, events, settings
   A room's agent list and the person's room list report `finished_unseen`: an agent
   with no running turn has written a message for the asking person after their read
   cursor. It is derived from the cursor and stored nowhere.
+  The person's room list also reports `working_agents`, the number of distinct agents with a pending or running turn in that room, and `working` is true exactly when `working_agents` is above zero; both are derived from turns and stored nowhere.
 - **agent_room_seen**(room_id, agent_id, seq) — the newest message of a room
   the router handed an agent with nothing for it to do (not addressed to it,
   system chatter, or an unaddressed message for the worker while it is the

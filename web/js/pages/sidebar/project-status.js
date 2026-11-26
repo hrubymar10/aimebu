@@ -24,7 +24,7 @@ export const statusRoomsLine = counts => {
 };
 
 // The overview under the rooms line: every count, in the pill's own words.
-export const statusSummary = ({ needs, waiting, working }) => `${needs} need you, ${waiting} waiting, ${working} working`;
+export const statusSummary = ({ needs, waiting, workingAgents }) => `${needs} need you, ${waiting} waiting, ${workingAgents} working`;
 
 function Mark({ kind, size = 11 }) {
   const shape = kind === 'needs' ? html`<path d="M6 1 11 11H1Z" />`
@@ -36,7 +36,7 @@ function Mark({ kind, size = 11 }) {
 function VariantA({ counts }) {
   const kind = kindOf(counts);
   const label = kind === 'needs' ? counts.needs === 1 ? 'Needs you' : `${counts.needs} need you`
-    : kind === 'waiting' ? `${counts.waiting} waiting` : `${counts.working} working`;
+    : kind === 'waiting' ? `${counts.waiting} waiting` : `${counts.workingAgents} working`;
   return html`<span class=${`project-status-a project-status-${kind}`}><${Mark} kind=${kind} />${label}</span>`;
 }
 
@@ -44,7 +44,7 @@ export function ProjectStatus({ counts, id, projectName, folded, onOpen }) {
   if (!counts || !(counts.needs + counts.waiting + counts.working)) return null;
   const rooms = statusRoomsLine(counts), summary = statusSummary(counts);
   const working = kindOf(counts) === 'working';
-  const label = working ? `Open ${projectName} room — ${counts.working} ${counts.working === 1 ? 'room' : 'rooms'} with an agent working`
+  const label = working ? `Open ${projectName} room — ${counts.workingAgents} ${counts.workingAgents === 1 ? 'agent' : 'agents'} working`
     : folded ? `Expand ${projectName}: ${rooms}.` : `${projectName}: ${rooms}. Click to open.`;
   const pillRef = useRef(null), tooltipRef = useRef(null), [shown, setShown] = useState(false);
   useLayoutEffect(() => {

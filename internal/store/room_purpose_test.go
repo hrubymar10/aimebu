@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -137,8 +138,67 @@ func TestRoomListReportsWorkingAndAddressedUnread(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec) VALUES ('t_run','a1','s1',0,?,2,'normal','running')`, room.ID); err != nil {
 		t.Fatal(err)
 	}
-	if view = notifyView(t, s, ctx, room, "one"); !view.Working {
-		t.Fatal("a running turn is not reported as working")
+	if view = notifyView(t, s, ctx, room, "one"); !view.Working || view.WorkingAgents != 1 {
+		t.Fatalf("a running turn is not reported as working: %+v", view)
+	}
+}
+
+// The room list counts the agents that are in a turn in each room: two in one room and one in another make three across the project.
+func TestRoomListCountsWorkingAgentsPerRoom(t *testing.T) {
+	s, room, ctx := notifyFixture(t)
+	other, err := s.CreateRoom(ctx, Room{ProjectID: room.ProjectID, ParentID: room.ParentID, Kind: "task", Title: "second", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{`INSERT INTO machine(id,name,key_hash,approved) VALUES ('m1','host','hash',1)`,
+		`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('c1',?,'m1','/tmp/test')`}
+	for _, id := range []string{"a1", "a2", "a3"} {
+		statements = append(statements,
+			`INSERT INTO agent(id,slug,project_id,role_id,tool,variant,model,provider,machine_id,checkout_id,key_hash,created_by,created_at,observed) VALUES ('`+id+`','`+id+`',?,'role_worker_default','fake','test','test','fake','m1','c1','hash','owner','now','in_turn')`,
+			`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('s_`+id+`','`+id+`',0,'fresh_with_history','now')`)
+	}
+	// a1 also has a finished turn in the same room: only an active turn counts, and an agent has at most one active turn (a unique index on turn.agent_id), so DISTINCT is a guard.
+	statements = append(statements,
+		`INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec,outcome,settle) VALUES ('t_a1_done','a1','s_a1',0,'`+room.ID+`',2,'normal','exited','completed','settled')`)
+	for id, place := range map[string]string{"a1": room.ID, "a2": room.ID, "a3": other.ID} {
+		statements = append(statements, `INSERT INTO turn(id,agent_id,session_id,generation,room_id,attempt,mode,exec) VALUES ('t_`+id+`','`+id+`','s_`+id+`',0,'`+place+`',1,'normal','running')`)
+	}
+	for _, statement := range statements {
+		args := []any{}
+		if strings.HasPrefix(statement, "INSERT INTO checkout(") || strings.HasPrefix(statement, "INSERT INTO agent(") {
+			args = append(args, room.ProjectID)
+		}
+		if _, err := s.db.Exec(statement, args...); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	quiet, err := s.CreateRoom(ctx, Room{ProjectID: room.ProjectID, ParentID: room.ParentID, Kind: "task", Title: "quiet", CreatedBy: "usr_test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.RoomsForUserProject(ctx, room.ProjectID, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Room{}
+	for _, view := range listed {
+		byID[view.ID] = view
+	}
+	first, second, quietView := byID[room.ID], byID[other.ID], byID[quiet.ID]
+	if first.WorkingAgents != 2 || second.WorkingAgents != 1 || !first.Working || !second.Working {
+		t.Fatalf("working agents: first=%d second=%d, want 2 (a1's finished turn does not count) and 1", first.WorkingAgents, second.WorkingAgents)
+	}
+	if first.WorkingAgents+second.WorkingAgents != 3 {
+		t.Fatalf("the project's two rooms sum to %d, want 3", first.WorkingAgents+second.WorkingAgents)
+	}
+	// A room whose agents work elsewhere has none, and working is working_agents > 0 for every room.
+	for _, view := range []Room{first, second, quietView} {
+		if view.Working != (view.WorkingAgents > 0) {
+			t.Fatalf("room %s: working=%v with working_agents=%d", view.Title, view.Working, view.WorkingAgents)
+		}
+	}
+	if quietView.WorkingAgents != 0 {
+		t.Fatalf("a room whose agents work elsewhere reports %d working agents", quietView.WorkingAgents)
 	}
 }
 

@@ -141,8 +141,10 @@ type Room struct {
 	ReadCursor       int64  `json:"read_cursor"`
 	UnreadCount      int    `json:"unread_count"`
 	// UnreadAddressed counts the unread messages that name this person or reply to them (the ones in UnreadCount that target them), and
-	// Working is true while an agent has a pending or running turn in the room. Both are set only on a person's room list.
+	// WorkingAgents counts the room's agents that are in a turn (distinct agents with a pending or running turn in the room), and
+	// Working is WorkingAgents > 0. All three are set only on a person's room list.
 	UnreadAddressed int  `json:"unread_addressed"`
+	WorkingAgents   int  `json:"working_agents"`
 	Working         bool `json:"working"`
 	// FinishedUnseen is true while an agent that is not in a turn has written a message for this person (it names them, or asks for
 	// attention) after the person's read cursor: it finished and they have not seen it. Derived from the read cursor, never stored.

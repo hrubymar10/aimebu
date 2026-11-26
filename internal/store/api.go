@@ -243,7 +243,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 			AND (COALESCE(v.notify,'default')<>'mentions' OR EXISTS (SELECT 1 FROM json_each(um.targets_json) WHERE value=?))),
 		(SELECT COUNT(*) FROM message am WHERE am.room_id=r.id AND am.seq>COALESCE(c.last_read_seq,0)
 			AND EXISTS (SELECT 1 FROM json_each(am.targets_json) WHERE value=?)),
-		EXISTS (SELECT 1 FROM turn t WHERE t.room_id=r.id AND t.exec IN ('pending','running')),
+		(SELECT COUNT(DISTINCT t.agent_id) FROM turn t WHERE t.room_id=r.id AND t.exec IN ('pending','running')),
 		EXISTS (SELECT 1 FROM message fm WHERE fm.room_id=r.id AND fm.author_kind='agent' AND fm.seq>COALESCE(c.last_read_seq,0)
 			AND `+messageForPersonSQL+`
 			AND NOT EXISTS (SELECT 1 FROM turn ft WHERE ft.agent_id=fm.author_id AND ft.exec IN ('pending','running')))
@@ -266,9 +266,10 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.Purpose, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount, &r.UnreadAddressed, &r.Working, &r.FinishedUnseen); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.TeamFlowRoomKey, &r.Restricted, &r.Purpose, &r.MemberCount, &r.MessageCount, &r.UserMessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount, &r.UnreadAddressed, &r.WorkingAgents, &r.FinishedUnseen); err != nil {
 			return nil, err
 		}
+		r.Working = r.WorkingAgents > 0
 		r.ParentID, r.DMKey, r.ClosedAt = parent.String, dm.String, closed.String
 		if memory.Valid {
 			r.MemoryEnabled = &memory.Bool

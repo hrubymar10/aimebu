@@ -112,17 +112,18 @@ export function roomStatus(room) {
   return { key: 'idle', label: 'Idle', title: 'Nothing is running in this room' };
 }
 
-// The project indicator counts rooms, not agents or inbox entries. Keep the same
+// The project indicator counts rooms, except that its working number counts agents (`working_agents` summed over the rooms, `workingAgents`). Keep the same
 // priority as its own status display when several flags describe one room. Each
 // count also keeps the rooms it names, in list order, so the pill's tooltip can
 // name them and a click can open the first.
 export function projectStatusCounts(projectID, rooms, pending = false) {
   if (pending) return null;
-  const counts = { needs: 0, waiting: 0, working: 0, rooms: { needs: [], waiting: [], working: [] } };
+  const counts = { needs: 0, waiting: 0, working: 0, workingAgents: 0, rooms: { needs: [], waiting: [], working: [] } };
   for (const room of rooms) {
     if (room.project_id !== projectID || !tracksStatus(room) || room.lifecycle !== 'open') continue;
     const kind = room.finished_unseen || (room.attention_open || 0) > 0 ? 'needs' : room.gate === 'paused' ? 'waiting' : room.working ? 'working' : '';
     if (!kind) continue;
+    if (kind === 'working') counts.workingAgents += Math.max(1, room.working_agents || 0); // a working room names at least the one agent that made it so
     counts[kind]++;
     counts.rooms[kind].push(room);
   }
@@ -135,7 +136,7 @@ export function memoProjectStatusCounts() {
     if (pending) { cache.delete(projectID); return null; }
     const own = [];
     for (const room of rooms) if (room.project_id === projectID && tracksStatus(room)) own.push(room);
-    const signature = own.map(room => `${room.id}:${room.lifecycle}:${!!room.finished_unseen}:${(room.attention_open || 0) > 0}:${room.gate}:${!!room.working}:${room.title}`).join('|');
+    const signature = own.map(room => `${room.id}:${room.lifecycle}:${!!room.finished_unseen}:${(room.attention_open || 0) > 0}:${room.gate}:${!!room.working}:${room.working_agents || 0}:${room.title}`).join('|');
     const previous = cache.get(projectID);
     if (previous?.signature === signature) return previous.counts;
     const next = projectStatusCounts(projectID, own);
