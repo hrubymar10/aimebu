@@ -160,6 +160,11 @@ func (tx *Tx) BeginAgentSwitchToLauncher(id, actorID, roomID, tool, variant, mod
 	if _, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=?`, id); err != nil {
 		return AgentCard{}, err
 	}
+	// A switch is somebody's choice of harness and model, not the pool's: the agent is not flagged when a pool changes (a respawn on the
+	// pool marks itself "pool" again once it has begun).
+	if _, err := tx.Exec(`UPDATE agent SET pool_origin='explicit',pool_kept_sig=NULL WHERE id=? AND pool_origin IN ('pool','unknown')`, id); err != nil {
+		return AgentCard{}, err
+	}
 	if _, err := tx.AppendEvent(Event{Kind: "agent_switch_requested", ProjectID: projectID, AgentID: id,
 		PayloadJSON: payloadJSON(map[string]string{"tool": tool, "variant": variant, "model": model, "machine_id": machineID, "actor_id": actorID, "room_id": roomID, "resume_desired": desired})}); err != nil {
 		return AgentCard{}, err

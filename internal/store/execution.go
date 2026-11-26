@@ -28,6 +28,8 @@ type Agent struct {
 	// harness and model choice outside its role's default pool (an
 	// agent-initiated spawn); empty for every other spawn.
 	ApprovedBy string
+	// PoolOrigin is where the harness and model came from (see pool_change.go); empty stores "unknown".
+	PoolOrigin string
 }
 
 func (s *Store) CreateAgent(ctx context.Context, agent Agent) (Agent, error) {
@@ -49,6 +51,13 @@ func (tx *Tx) CreateAgent(agent Agent) (Agent, error) {
 	if checkoutProject != agent.ProjectID || checkoutMachine != agent.MachineID {
 		return Agent{}, fmt.Errorf("%w: agent project/machine differs from checkout", ErrScopeMismatch)
 	}
+	poolOrigin, poolLauncher, poolModel := agent.PoolOrigin, "", ""
+	if poolOrigin == "" {
+		poolOrigin = PoolOriginUnknown
+	}
+	if poolOrigin == PoolOriginPool {
+		poolLauncher, poolModel = agent.LauncherID, agent.Model
+	}
 	var err error
 	agent.ID, err = newID("agt")
 	if err != nil {
@@ -56,11 +65,12 @@ func (tx *Tx) CreateAgent(agent Agent) (Agent, error) {
 	}
 	_, err = tx.Exec(`INSERT INTO agent
 		(id, slug, project_id, role_id, tool, variant, launcher_id, model, provider,
-		 machine_id, checkout_id, key_hash, created_by, created_at, approved_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.Slug,
+		 machine_id, checkout_id, key_hash, created_by, created_at, approved_by, pool_origin, pool_launcher_id, pool_model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, agent.ID, agent.Slug,
 		agent.ProjectID, agent.RoleID, agent.Tool, agent.Variant, nullableString(agent.LauncherID), agent.Model,
 		agent.Provider, agent.MachineID, agent.CheckoutID, agent.KeyHash,
-		agent.CreatedBy, timestamp(), nullableString(agent.ApprovedBy))
+		agent.CreatedBy, timestamp(), nullableString(agent.ApprovedBy), poolOrigin,
+		nullableString(poolLauncher), nullableString(poolModel))
 	if err != nil {
 		return Agent{}, err
 	}

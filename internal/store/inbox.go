@@ -53,6 +53,9 @@ type InboxEntry struct {
 	Provider string `json:"provider,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 	Window   string `json:"window,omitempty"`
+	// PoolAgents is a pool_change item's live list: the agents a respawn on the pool would switch, with the room each is in. It shrinks as
+	// agents stop or are switched, and is empty for every other item.
+	PoolAgents []PoolAgent `json:"pool_agents,omitempty"`
 }
 
 type inboxAsk struct {
@@ -86,13 +89,15 @@ const inboxHiddenSQL = `(i.kind IN ('question','approval') AND r.kind<>'home' AN
 // A closed room's items never show: nothing in it can be acted on, and closing settles them (the usage kinds belong to the project, not the room).
 // A recovery still open there is one the settle pass left on purpose (a lost turn with no proof its process is gone): only a person can accept that
 // risk, so it stays visible.
-const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
-        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery'))` + inboxVisibleSQL
+const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit','pool_change')
+        AND (r.lifecycle<>'closed' OR i.kind IN ('usage_info','usage_limit','recovery','pool_change'))` + inboxVisibleSQL
 const inboxCountWhereSQL = inboxWhereSQL + ` AND NOT ` + inboxHiddenSQL
 const inboxSupersededWhereSQL = `WHERE (i.state='superseded' OR i.state='withdrawn' AND ` + reanswerableListSQL + `) AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
 		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
+		AND (i.kind!='pool_change' OR member.role='owner' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL
+			AND (u.admin=1 OR u.id=(SELECT id FROM user ORDER BY created_at,id LIMIT 1))))
 		AND (i.requester_id NOT LIKE 'note:%' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL
 			AND (u.admin=1 OR u.id=(SELECT id FROM user ORDER BY created_at,id LIMIT 1))))
 		AND (member.role='owner' OR NOT EXISTS (SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id))
@@ -193,6 +198,16 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	rows.Close()
+	for i := range entries {
+		if entries[i].Kind == "pool_change" {
+			list, err := s.PoolAffected(ctx, entries[i].ProjectID)
+			if err != nil {
+				return nil, err
+			}
+			entries[i].PoolAgents = list
+		}
 	}
 	// The stored question keeps the ids-are-truth tokens its writer left in it; the human view translates the agent
 	// ones the way a room's messages are translated (named by the item's room, its duplicate suffixes included).

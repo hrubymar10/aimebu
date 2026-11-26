@@ -157,8 +157,10 @@ func (s *Store) SetProjectRoleSpawnDefaults(ctx context.Context, projectID, acto
 			return err
 		}
 		if inherit {
-			_, err := tx.Exec(`DELETE FROM project_role_spawn_default WHERE project_id=? AND role_id=?`, projectID, roleID)
-			return err
+			if _, err := tx.Exec(`DELETE FROM project_role_spawn_default WHERE project_id=? AND role_id=?`, projectID, roleID); err != nil {
+				return err
+			}
+			return tx.syncPoolChange(projectID)
 		}
 		if err := tx.validateSpawnDefaults(items, mode); err != nil {
 			return err
@@ -170,7 +172,10 @@ func (s *Store) SetProjectRoleSpawnDefaults(ctx context.Context, projectID, acto
 		_, err = tx.Exec(`INSERT INTO project_role_spawn_default(project_id,role_id,items_json,pick_mode)
   VALUES(?,?,?,?) ON CONFLICT(project_id,role_id) DO UPDATE SET items_json=excluded.items_json,pick_mode=excluded.pick_mode`,
 			projectID, roleID, string(encoded), mode)
-		return err
+		if err != nil {
+			return err
+		}
+		return tx.syncPoolChange(projectID)
 	})
 	if err != nil {
 		return RoleSpawnDefaults{}, err

@@ -15,6 +15,11 @@ const SessionCookieName = "aimebu_session"
 
 type userContextKey struct{}
 
+// ContextWithUserID is a context that carries the user a server-initiated request acts for, as the session check would set it.
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userContextKey{}, userID)
+}
+
 func UserIDFromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(userContextKey{}).(string)
 	return id, ok

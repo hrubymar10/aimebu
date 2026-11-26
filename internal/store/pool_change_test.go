@@ -1,0 +1,358 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"testing"
+)
+
+// poolFixture is a project with an owner, an operator, an admin who is a member, a worker pool of two models on one launcher, and two
+// agents of origin "pool" (a worker on model A, the lead on model A of the lead role's pool).
+type poolFixture struct {
+	s       *Store
+	project Project
+	room    Room
+	worker  Agent
+	lead    Agent
+	a, b    SpawnDefaultChoice
+}
+
+func newPoolFixture(t *testing.T) poolFixture {
+	t.Helper()
+	s, project, room, worker, lead := wakeFixture(t)
+	roleReviewUsers(t, s, project.ID)
+	for _, statement := range []string{
+		`INSERT INTO user(id,login,pw_hash,pw_params,created_at,admin) VALUES ('usr_admin','usr_admin','hash','{}','3',1)`,
+		`INSERT INTO membership(project_id,user_id,role) VALUES ('` + project.ID + `','usr_admin','operator')`,
+		`INSERT INTO machine_launcher(id,machine_id,tool,name,command,enabled) VALUES ('lnch_a','mch_wake','codex','native','codex',1)`,
+		`INSERT INTO harness_model(launcher_id,slug,label,is_default,position) VALUES ('lnch_a','gpt-a','A',1,0)`,
+		`INSERT INTO harness_model(launcher_id,slug,label,is_default,position) VALUES ('lnch_a','gpt-b','B',0,1)`,
+		`INSERT INTO harness_model(launcher_id,slug,label,is_default,position) VALUES ('lnch_a','gpt-c','C',0,2)`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := poolFixture{s: s, project: project, room: room, worker: worker, lead: lead,
+		a: SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-a"}, b: SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-b"}}
+	for _, key := range []string{"worker", "lead"} {
+		if _, err := s.SetProjectRoleSpawnDefaults(context.Background(), project.ID, "usr_owner", key, false, []SpawnDefaultChoice{f.a, f.b}, "in_turn"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{worker.ID, lead.ID} {
+		if _, err := s.db.Exec(`UPDATE agent SET launcher_id='lnch_a',model='gpt-a',pool_origin='pool',pool_launcher_id='lnch_a',pool_model='gpt-a' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return f
+}
+
+func (f poolFixture) setPool(t *testing.T, key string, items ...SpawnDefaultChoice) {
+	t.Helper()
+	if _, err := f.s.SetProjectRoleSpawnDefaults(context.Background(), f.project.ID, "usr_owner", key, false, items, "in_turn"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f poolFixture) openItems(t *testing.T, user string) []InboxEntry {
+	t.Helper()
+	items, err := f.s.InboxForUser(context.Background(), user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []InboxEntry
+	for _, item := range items {
+		if item.Kind == "pool_change" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func TestPoolChangeFlagsEveryoneWhoseChoiceLeftThePool(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("an unchanged pool raised an item: %+v", items)
+	}
+	// Both pools drop model A; the lead and the dispatcher-like roles count exactly as workers do.
+	f.setPool(t, "worker", f.b)
+	f.setPool(t, "lead", f.b)
+	items := f.openItems(t, "usr_owner")
+	if len(items) != 1 || items[0].RoomID == "" || len(items[0].Options) != 2 || items[0].Options[0] != PoolChangeOptions[0] {
+		t.Fatalf("items: %+v", items)
+	}
+	if len(items[0].PoolAgents) != 2 {
+		t.Fatalf("flagged: %+v", items[0].PoolAgents)
+	}
+	byID := map[string]PoolAgent{}
+	for _, a := range items[0].PoolAgents {
+		byID[a.AgentID] = a
+	}
+	if w := byID[f.worker.ID]; w.RoomID != f.room.ID || w.RoomTitle != "task" || w.Lead || w.Model != "gpt-a" {
+		t.Fatalf("worker entry: %+v", w)
+	}
+	if l := byID[f.lead.ID]; !l.Lead || l.RoomID != f.room.ID {
+		t.Fatalf("lead entry: %+v", l)
+	}
+	// The same pool change again (and a server restart) updates the one item; nothing is raised twice.
+	before := items[0].Rev
+	f.setPool(t, "worker", f.b, SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-c"})
+	if err := f.s.DetectPoolChanges(ctx); err != nil {
+		t.Fatal(err)
+	}
+	items = f.openItems(t, "usr_owner")
+	if len(items) != 1 || items[0].Rev <= before {
+		t.Fatalf("second change: %+v", items)
+	}
+	var total int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE kind='pool_change'`).Scan(&total); err != nil || total != 1 {
+		t.Fatalf("items stored: %d %v", total, err)
+	}
+	// An agent that stopped drops off the list; with none left the item is withdrawn.
+	for _, id := range []string{f.worker.ID, f.lead.ID} {
+		if _, err := f.s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.setPool(t, "worker", f.b)
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("item stayed with nobody to switch: %+v", items)
+	}
+}
+
+func TestPoolChangeSkipsWhatIsNotFromThePool(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	for origin, id := range map[string]string{"explicit": f.worker.ID, "approved": f.lead.ID} {
+		if _, err := f.s.db.Exec(`UPDATE agent SET pool_origin=? WHERE id=?`, origin, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.setPool(t, "worker", f.b)
+	f.setPool(t, "lead", f.b)
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("an explicit or approved choice was flagged: %+v", items)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET pool_origin='unknown' WHERE id=?`, f.worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.setPool(t, "worker", f.b, f.a)
+	f.setPool(t, "worker", f.b)
+	if items := f.openItems(t, "usr_owner"); len(items) != 0 {
+		t.Fatalf("an unknown origin was flagged: %+v", items)
+	}
+}
+
+func TestPoolChangeShowsOnlyToTheOwnerAndAdmins(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	f.setPool(t, "worker", f.b)
+	if len(f.openItems(t, "usr_owner")) != 1 || len(f.openItems(t, "usr_admin")) != 1 {
+		t.Fatal("the owner and an admin member must see the item")
+	}
+	if items := f.openItems(t, "usr_operator"); len(items) != 0 {
+		t.Fatalf("an operator saw the item: %+v", items)
+	}
+	item := f.openItems(t, "usr_owner")[0]
+	if _, _, err := f.s.DecidePoolChange(context.Background(), item.ID, "usr_operator", "k-op", PoolChangeKeep, int(item.Rev), nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("operator decided: %v", err)
+	}
+}
+
+func TestPoolChangeKeepRecordsTheDecisionUntilThePoolChangesAgain(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	item := f.openItems(t, "usr_admin")[0]
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_admin", "k1", PoolChangeKeep, int(item.Rev)+1, nil); !errors.Is(err, ErrStaleInboxRev) {
+		t.Fatalf("stale revision: %v", err)
+	}
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_admin", "k1", PoolChangeKeep, int(item.Rev), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.DetectPoolChanges(ctx); err != nil || len(f.openItems(t, "usr_owner")) != 0 {
+		t.Fatalf("a kept model came back at restart: %v", err)
+	}
+	var queued int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM pool_respawn`).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("keep queued a respawn: %d %v", queued, err)
+	}
+	f.setPool(t, "worker", f.b, SpawnDefaultChoice{LauncherID: "lnch_a", Model: "gpt-c"})
+	if items := f.openItems(t, "usr_owner"); len(items) != 1 || len(items[0].PoolAgents) != 1 {
+		t.Fatalf("the pool changed again but the item did not return: %+v", items)
+	}
+}
+
+func TestPoolChangeRespawnQueuesIdleAgentsAndWaitsForBusyOnes(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	f.setPool(t, "lead", f.b)
+	if _, err := f.s.db.Exec(`INSERT INTO turn(id,agent_id,session_id,generation,room_id,exec,settle) VALUES ('turn_busy',?,'ses_lead',0,?,'running','pending')`, f.lead.ID, f.room.ID); err != nil {
+		t.Skipf("turn schema differs: %v", err)
+	}
+	item := f.openItems(t, "usr_owner")[0]
+	var busy int
+	for _, a := range item.PoolAgents {
+		if a.Busy {
+			busy++
+		}
+	}
+	if busy != 1 {
+		t.Fatalf("busy flags: %+v", item.PoolAgents)
+	}
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_owner", "k2", PoolChangeRespawn, int(item.Rev), nil); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := f.s.PoolRespawnsReady(ctx)
+	if err != nil || len(ready) != 1 || ready[0].AgentID != f.worker.ID {
+		t.Fatalf("ready with a busy lead: %+v %v", ready, err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE turn SET exec='done',settle='settled' WHERE id='turn_busy'`); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err = f.s.PoolRespawnsReady(ctx); err != nil || len(ready) != 2 {
+		t.Fatalf("ready after the turn: %+v %v", ready, err)
+	}
+	// An agent that stopped meanwhile leaves the queue.
+	if _, err := f.s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, f.lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err = f.s.PoolRespawnsReady(ctx); err != nil || len(ready) != 1 {
+		t.Fatalf("ready after a stop: %+v %v", ready, err)
+	}
+}
+
+func TestPoolChangeRespawnHonoursAPerAgentKeep(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	f.setPool(t, "lead", f.b)
+	item := f.openItems(t, "usr_owner")[0]
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_owner", "k3", PoolChangeRespawn, int(item.Rev), []string{f.lead.ID}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := f.s.PoolRespawnsReady(ctx)
+	if err != nil || len(ready) != 1 || ready[0].AgentID != f.worker.ID {
+		t.Fatalf("queued: %+v %v", ready, err)
+	}
+	if err := f.s.DetectPoolChanges(ctx); err != nil || len(f.openItems(t, "usr_owner")) != 0 {
+		t.Fatalf("the kept lead or the queued worker came back: %v", err)
+	}
+}
+
+func TestPoolOriginAtSpawn(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	origin := func(explicit, approvedBy, launcher, model string) string {
+		var got string
+		err := f.s.Tx(context.Background(), func(tx *Tx) error {
+			var err error
+			got, err = tx.poolOriginFor(f.project.ID, "worker", explicit, approvedBy, launcher, model)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	for name, want := range map[string]string{
+		origin(PoolOriginPool, "", "lnch_a", "gpt-a"):      PoolOriginPool,
+		origin(PoolOriginExplicit, "", "lnch_a", "gpt-a"):  PoolOriginExplicit,
+		origin(PoolOriginPool, "msg_1", "lnch_a", "gpt-c"): PoolOriginApproved,
+		origin("", "", "lnch_a", "gpt-b"):                  PoolOriginPool,
+		origin("", "", "lnch_a", "gpt-c"):                  PoolOriginExplicit,
+		origin("", "", "", "gpt-a"):                        PoolOriginExplicit,
+	} {
+		if name != want {
+			t.Errorf("origin %q, want %q", name, want)
+		}
+	}
+	agent, err := f.s.CreateAgent(context.Background(), Agent{Slug: "fresh", ProjectID: f.project.ID, RoleID: "role_worker", Tool: "codex", Variant: "native",
+		LauncherID: "lnch_a", Model: "gpt-b", Provider: "codex", MachineID: "mch_wake", CheckoutID: "chk_wake", KeyHash: "k", CreatedBy: "usr_owner", PoolOrigin: PoolOriginPool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, launcher, model string
+	if err := f.s.db.QueryRow(`SELECT pool_origin,COALESCE(pool_launcher_id,''),COALESCE(pool_model,'') FROM agent WHERE id=?`, agent.ID).Scan(&got, &launcher, &model); err != nil ||
+		got != "pool" || launcher != "lnch_a" || model != "gpt-b" {
+		t.Fatalf("stored provenance: %s %s %s %v", got, launcher, model, err)
+	}
+}
+
+// The migration marks an existing agent "pool" only when the pool in force lists its launcher and model, and never flags the rest.
+func TestPoolProvenanceMigrationIsConservative(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "before.sqlite")
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateUpTo(ctx, db, 142); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO project(id,name,folder,created_at) VALUES ('prj_m','m','/tmp/m','2026-01-01T00:00:00.000000000Z')`,
+		`INSERT INTO machine(id,name,key_hash,approved,is_host) VALUES ('mch_m','host','hash',1,1)`,
+		`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_m','prj_m','mch_m','/tmp/m')`,
+		`INSERT INTO machine_launcher(id,machine_id,tool,name,command,enabled) VALUES ('lnch_m','mch_m','codex','native','codex',1)`,
+		`INSERT INTO machine_launcher(id,machine_id,tool,name,command,enabled) VALUES ('lnch_n','mch_m','codex','other','codex',1)`,
+		`INSERT OR REPLACE INTO role(id,key,label,body,role_key,spawn_defaults_json) VALUES ('role_mw','mworker','MWorker','w','mworker','[{"launcher_id":"lnch_m","model":"m-a"}]')`,
+		`INSERT INTO project_role_spawn_default(project_id,role_id,items_json,pick_mode) VALUES ('prj_m','role_mw','[{"launcher_id":"lnch_m","model":"m-b"}]','in_turn')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	insert := func(id, launcher, model, approvedBy string) {
+		t.Helper()
+		var launcherArg, approvedArg any
+		if launcher != "" {
+			launcherArg = launcher
+		}
+		if approvedBy != "" {
+			approvedArg = approvedBy
+		}
+		if _, err := db.Exec(`INSERT INTO agent(id,slug,project_id,role_id,tool,variant,launcher_id,model,provider,machine_id,checkout_id,key_hash,created_by,created_at,approved_by)
+			VALUES (?,?,'prj_m','role_mw','codex','native',?,?,'codex','mch_m','chk_m','k','u','2026-01-01T00:00:00.000000000Z',?)`, id, id, launcherArg, model, approvedArg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("agt_in", "lnch_m", "m-b", "")        // in the project's override
+	insert("agt_old", "lnch_m", "m-a", "")       // only in the role's own pool, which the override replaces
+	insert("agt_other", "lnch_n", "m-b", "")     // a launcher the pool does not list
+	insert("agt_nolauncher", "", "m-b", "")      // no launcher recorded
+	insert("agt_approved", "lnch_m", "m-c", "m") // an approved deviation
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	want := map[string]string{"agt_in": "pool", "agt_old": "unknown", "agt_other": "unknown", "agt_nolauncher": "unknown", "agt_approved": "approved"}
+	for id, origin := range want {
+		var got string
+		if err := s.db.QueryRow(`SELECT pool_origin FROM agent WHERE id=?`, id).Scan(&got); err != nil || got != origin {
+			t.Errorf("%s: origin %q, want %q (%v)", id, got, origin, err)
+		}
+	}
+	// An agent migrated to "unknown" is never flagged, whatever the pool does.
+	if err := s.DetectPoolChanges(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var items int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE kind='pool_change'`).Scan(&items); err != nil || items != 0 {
+		t.Fatalf("the migration raised %d items", items)
+	}
+}

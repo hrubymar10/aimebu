@@ -246,6 +246,9 @@ func (s *Store) ResetRole(ctx context.Context, actorID, id string, rev int64) (R
 			return err
 		}
 		reset.DefaultAgents, reset.PickMode = []SpawnDefaultChoice{}, "in_turn"
+		if err := tx.syncPoolChanges(); err != nil {
+			return err
+		}
 		reset.Rev++
 		for i := range all {
 			if all[i].ID == id {

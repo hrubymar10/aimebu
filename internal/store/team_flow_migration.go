@@ -1066,6 +1066,9 @@ func (tx *Tx) applyFlowMigration(id, projectID, actorID, fromKey, toKey string, 
 			ON CONFLICT(project_id,role_id) DO UPDATE SET items_json=excluded.items_json,pick_mode=excluded.pick_mode`, projectID, roleID, string(items), mode); err != nil {
 			return nil, err
 		}
+		if err := tx.syncPoolChange(projectID); err != nil {
+			return nil, err
+		}
 	}
 	var leaderID string
 	_ = tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND r.role_key='leader' AND a.revoked_at IS NULL

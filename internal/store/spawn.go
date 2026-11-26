@@ -129,6 +129,9 @@ type SpawnInput struct {
 	// ApprovedBy is the message of a person that approved this exact harness and model choice outside the role's default pool. Only an
 	// agent-initiated spawn carries one (the route validates it); a person's own spawn needs no approval and records none.
 	ApprovedBy string
+	// PoolOrigin says where the harness and model came from when the caller knows: PoolOriginPool for a pick from the role's default pool,
+	// PoolOriginExplicit for a person's own choice. Empty reads it from the pool in force (a choice it lists is "pool").
+	PoolOrigin string
 }
 
 // ErrJoinParentRefused is a spawn with JoinParent whose parent join cannot happen: the room has no parent, the parent is the home room or is
@@ -333,7 +336,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if provider == "" {
 		provider = in.Tool
 	}
-	agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: projectID, RoleID: roleID, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, CheckoutID: checkoutID, KeyHash: in.KeyHash, CreatedBy: in.ActorID, ApprovedBy: in.ApprovedBy})
+	poolOrigin, err := tx.poolOriginFor(projectID, in.RoleKey, in.PoolOrigin, in.ApprovedBy, in.LauncherID, in.Model)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: projectID, RoleID: roleID, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, CheckoutID: checkoutID, KeyHash: in.KeyHash, CreatedBy: in.ActorID, ApprovedBy: in.ApprovedBy, PoolOrigin: poolOrigin})
 	if err != nil {
 		return AgentCard{}, err
 	}

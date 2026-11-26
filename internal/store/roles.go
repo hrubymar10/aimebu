@@ -234,6 +234,9 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 				return err
 			}
 			r.Rev++
+			if err := tx.syncPoolChanges(); err != nil {
+				return err
+			}
 		} else {
 			_, err := tx.Exec(`INSERT INTO role(id,key,project_id,role_key,label,emoji,body,extends,cardinality,
    cap_is_lead,cap_can_spawn,cap_singleton_writer,spawn_defaults_json,spawn_pick_mode)

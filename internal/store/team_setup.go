@@ -238,6 +238,9 @@ func (tx *Tx) CreateTeamSetup(projectID, actorID string, in TeamSetupInput) (Tea
 		if _, err := tx.Exec(`INSERT INTO project_role_spawn_default(project_id,role_id,items_json,pick_mode) VALUES (?,?,?,?) ON CONFLICT(project_id,role_id) DO UPDATE SET items_json=excluded.items_json,pick_mode=excluded.pick_mode`, projectID, roleID, string(encoded), mode); err != nil {
 			return out, err
 		}
+		if err := tx.syncPoolChange(projectID); err != nil {
+			return out, err
+		}
 		out.DefaultsSaved = append(out.DefaultsSaved, role)
 	}
 	for _, spec := range []struct {

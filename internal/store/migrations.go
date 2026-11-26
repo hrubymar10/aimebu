@@ -2232,6 +2232,57 @@ CREATE INDEX IF NOT EXISTS note_queued ON note(agent_id) WHERE state='queued';
 CREATE INDEX IF NOT EXISTS turn_pending ON turn(agent_id) WHERE exec='pending';
 CREATE INDEX IF NOT EXISTS team_flow_migration_unsettled ON team_flow_migration(created_at)
   WHERE state IN ('draining','applying','cancelled','failed');
+`}, {143, `
+-- Pool provenance (A14-1): whether an agent's harness and model came from its role's default pool, a person's own choice, or an approved
+-- deviation. 'unknown' is every agent the pool does not contain at this migration: it is never flagged when the pool changes. pool_kept_sig
+-- is the signature of the pool the owner chose to keep this agent's model against; the agent is flagged again only when the pool changes.
+ALTER TABLE agent ADD COLUMN pool_origin TEXT NOT NULL DEFAULT 'unknown' CHECK (pool_origin IN ('pool','explicit','approved','unknown'));
+ALTER TABLE agent ADD COLUMN pool_launcher_id TEXT;
+ALTER TABLE agent ADD COLUMN pool_model TEXT;
+ALTER TABLE agent ADD COLUMN pool_kept_sig TEXT;
+UPDATE agent SET pool_origin='approved' WHERE approved_by IS NOT NULL AND approved_by<>'';
+UPDATE agent SET pool_origin='pool',pool_launcher_id=launcher_id,pool_model=model
+WHERE pool_origin='unknown' AND revoked_at IS NULL AND launcher_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM role ar JOIN role cur ON cur.role_key=ar.role_key AND cur.deleted_at IS NULL
+    WHERE ar.id=agent.role_id AND EXISTS (SELECT 1 FROM json_each(COALESCE(
+        (SELECT o.items_json FROM project_role_spawn_default o WHERE o.project_id=agent.project_id AND o.role_id=cur.id),
+        cur.spawn_defaults_json)) j
+      WHERE json_extract(j.value,'$.launcher_id')=agent.launcher_id AND json_extract(j.value,'$.model')=agent.model));
+-- Agents whose respawn on the pool model an owner or admin asked for; the dispatcher pass switches each once no turn of it is running.
+CREATE TABLE pool_respawn (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  project_id TEXT NOT NULL REFERENCES project(id),
+  decided_by TEXT NOT NULL REFERENCES user(id),
+  requested_at TEXT NOT NULL
+);
+-- The Inbox gains the pool_change kind (one open item per project) and the superseded state already in use; the table is rebuilt for its CHECK.
+CREATE TABLE inbox_item_new (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES project(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  message_id TEXT REFERENCES message(id),
+  turn_id TEXT REFERENCES turn(id),
+  agent_id TEXT REFERENCES agent(id),
+  requester_kind TEXT NOT NULL,
+  requester_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit','pool_change')),
+  options_json TEXT,
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved','withdrawn','superseded')),
+  rev INTEGER NOT NULL DEFAULT 0 CHECK (rev >= 0),
+  answer_message_id TEXT REFERENCES message(id),
+  resolved_by TEXT,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL,
+  lead_due_at TEXT,
+  recovery_lead_id TEXT
+);
+INSERT INTO inbox_item_new(id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,state,rev,
+    answer_message_id,resolved_by,resolved_at,created_at,lead_due_at,recovery_lead_id)
+  SELECT id,project_id,room_id,message_id,turn_id,agent_id,requester_kind,requester_id,kind,options_json,state,rev,
+    answer_message_id,resolved_by,resolved_at,created_at,lead_due_at,recovery_lead_id FROM inbox_item;
+DROP TABLE inbox_item;
+ALTER TABLE inbox_item_new RENAME TO inbox_item;
+CREATE INDEX inbox_lead_recovery_due ON inbox_item(lead_due_at) WHERE kind='recovery' AND state='open' AND lead_due_at IS NOT NULL;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2318,7 +2369,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if limit > 0 && m.version > limit {
 			break
 		}
-		if m.version == 103 || m.version == 117 || m.version == 123 || m.version == 137 {
+		if m.version == 103 || m.version == 117 || m.version == 123 || m.version == 137 || m.version == 143 {
 			if err := migrateWithForeignKeysOff(ctx, db, m); err != nil {
 				return fmt.Errorf("migration %d: %w", m.version, err)
 			}

@@ -2,9 +2,21 @@ package store
 
 import "testing"
 
+// dropPoolProvenance undoes migration 143's tables and columns (the inbox_item rebuild replays as it is), for a test that replays it.
+func dropPoolProvenance(t *testing.T, s *Store) {
+	t.Helper()
+	for _, statement := range []string{`DROP TABLE pool_respawn`, `ALTER TABLE agent DROP COLUMN pool_origin`, `ALTER TABLE agent DROP COLUMN pool_launcher_id`,
+		`ALTER TABLE agent DROP COLUMN pool_model`, `ALTER TABLE agent DROP COLUMN pool_kept_sig`} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // dropSupervisorInstances undoes migration 140 (the instance table, the owner columns and their indexes), for a test that replays it.
 func dropSupervisorInstances(t *testing.T, s *Store) {
 	t.Helper()
+	dropPoolProvenance(t, s)
 	for _, statement := range []string{`DROP INDEX turn_open_journal`, `DROP INDEX command_job_open_journal`,
 		`ALTER TABLE turn DROP COLUMN journal_id`, `ALTER TABLE command_job DROP COLUMN journal_id`, `DROP TABLE supervisor_instance`} {
 		if _, err := s.db.Exec(statement); err != nil {
