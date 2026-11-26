@@ -770,10 +770,12 @@ func (tx *Tx) roomAgentRoster(roomID, agentID string, notes []protocol.DeliveryN
 	}
 	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT DISTINCT a.id,a.slug,r.role_key,a.tool,a.model,r.cap_is_lead,a.observed
 		FROM room_member mine JOIN room rm ON rm.id=mine.room_id
+		JOIN agent recipient ON recipient.id=mine.member_id
 		JOIN room_member mb ON mb.room_id=mine.room_id AND mb.member_kind='agent' AND mb.left_at IS NULL
 		JOIN agent a ON a.id=mb.member_id JOIN role r ON r.id=a.role_id
 		WHERE mine.member_kind='agent' AND mine.member_id=? AND mine.left_at IS NULL
-		AND rm.lifecycle='open' AND a.revoked_at IS NULL AND a.desired='active'
+		AND rm.lifecycle='open' AND a.project_id=recipient.project_id
+		AND a.revoked_at IS NULL AND a.desired='active'
 		ORDER BY a.slug,a.id`, agentID)
 	if err != nil {
 		return nil, nil, 0, err

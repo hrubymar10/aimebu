@@ -100,6 +100,98 @@ func TestDispatchRosterIncludesOtherOpenRoomsOnce(t *testing.T) {
 	}
 }
 
+func TestDispatchRosterExcludesOtherProjectAgentInSharedDM(t *testing.T) {
+	s, _, room, one, _ := wakeFixture(t)
+	ctx := context.Background()
+	otherProject, err := s.CreateProject(ctx, Project{Name: "second project", Folder: "/tmp/wake-other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_other_roster',?,'mch_wake','/tmp/wake-other')`, otherProject.ID); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := s.CreateAgent(ctx, Agent{Slug: "foreignpeer", ProjectID: otherProject.ID, RoleID: one.RoleID,
+		Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: one.MachineID,
+		CheckoutID: "chk_other_roster", KeyHash: "foreignkey", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.CreateRoom(ctx, Room{ProjectID: AgentDMProjectID, Kind: "dm", Title: "shared chat", CreatedBy: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{one.ID, foreign.ID} {
+		if err := s.AddMember(ctx, chat.ID, "agent", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one report"}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, one.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("dispatch ready=%t err=%v", ready, err)
+	}
+	var data struct {
+		TeamRoster []map[string]string `json:"team_roster"`
+	}
+	if err := json.Unmarshal(delivery.Context, &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range data.TeamRoster {
+		if agent["id"] == foreign.ID {
+			t.Fatalf("other project's agent leaked into roster: %v", data.TeamRoster)
+		}
+	}
+	if len(data.TeamRoster) != 2 || data.TeamRoster[0]["id"] != one.ID {
+		t.Fatalf("recipient's project roster: %v", data.TeamRoster)
+	}
+}
+
+func TestDispatchRosterCapsCompactEntriesSeparately(t *testing.T) {
+	s, _, room, one, lead := wakeFixture(t)
+	ctx := context.Background()
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		for i := 0; i < 205; i++ {
+			slug := fmt.Sprintf("compact%03d", i)
+			agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: one.ProjectID, RoleID: one.RoleID,
+				Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: one.MachineID,
+				CheckoutID: one.CheckoutID, KeyHash: slug, CreatedBy: "owner"})
+			if err != nil {
+				return err
+			}
+			if err := tx.AddMember(room.ID, "agent", agent.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one report"}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, one.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("dispatch ready=%t err=%v", ready, err)
+	}
+	var data struct {
+		TeamRoster     []map[string]string `json:"team_roster"`
+		TeamRosterMore string              `json:"team_roster_more"`
+	}
+	if err := json.Unmarshal(delivery.Context, &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.TeamRoster) != 202 || data.TeamRosterMore != "5 more" || data.TeamRoster[0]["id"] != one.ID || data.TeamRoster[1]["id"] != lead.ID {
+		t.Fatalf("roster length=%d more=%q first=%v", len(data.TeamRoster), data.TeamRosterMore, data.TeamRoster[:2])
+	}
+	for _, entry := range data.TeamRoster[2:] {
+		if entry["observed"] != "idle" || entry["harness"] != "" || entry["model"] != "" {
+			t.Fatalf("noncompact entry: %v", entry)
+		}
+	}
+}
+
 func TestDispatchContextListsRestrictedMembershipAndRoutingInstructions(t *testing.T) {
 	s, project, room, _, leader := wakeFixture(t)
 	ctx := context.Background()

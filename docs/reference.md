@@ -1335,7 +1335,8 @@ in the room and system events.
 the tool and model are omitted. An explicit machine limits defaults to that
 machine; a matching default supplies the machine when none was named. A
 lead or dispatcher should check `team_roster` before spawning: it includes idle
-agents in the turn's rooms. An agent-tool spawn of a role already held by an
+agents of the recipient's project in open rooms they share. An agent-tool
+spawn of a role already held by an
 active idle agent in the target room returns 409 `idle_agent_exists` with that
 agent's name and id. Pass `reason` to create an intentional second agent; a
 person's spawn is unaffected. The roster has up to 20 detailed and 200 compact

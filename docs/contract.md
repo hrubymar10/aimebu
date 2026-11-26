@@ -2118,8 +2118,9 @@ it never silently reruns a turn with uncertain effects.
   allowed_tools?, agent:{id, tool, variant, model, provider},
   native_session?, native_session_started?, import_legacy_session?}` — rooms in context list every current open agent room membership, including restricted rooms, with its title and kind; they are information, not grants. Closed rooms are omitted. In the dispatcher flow, the leader's role body names the live routing room title and ID. For pi agents on gemma models `knowledge` is trimmed to a
   shared 2048-byte budget of record bodies; later records are dropped. The
-  `team_roster` lists every non-revoked agent with `desired=active` who belongs
-  to any open room in the turn's `rooms`, once per agent, with `id`, `name`,
+  `team_roster` lists every non-revoked agent of the recipient's project with
+  `desired=active` who belongs to an open room the recipient is a member of,
+  once per agent, with `id`, `name`,
   `role` and `observed`. The recipient, leads, and agents involved in delivered
   notes also have `harness` and `model`; other entries are compact. The roster
   is a dispatch-time snapshot. Full entries are capped at 20. Compact entries
