@@ -1737,6 +1737,11 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	if c.Journal == nil {
 		return
 	}
+	defer func() {
+		if err := c.Journal.PublishWarmOrphanStatus(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			c.report("publishing warm orphan status failed", err)
+		}
+	}()
 	c.warmOrphansMu.Lock()
 	empty := c.warmOrphans != nil && len(c.warmOrphans) == 0
 	c.warmOrphansMu.Unlock()
@@ -1768,6 +1773,24 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 		}
 		if process.SessionEndReport != nil && *process.SessionEndReport {
 			if !c.orphanWarmGone(ctx, process) {
+				now := time.Now()
+				since, err := c.Journal.MarkWarmOrphan(ctx, process.PID, now)
+				if err != nil {
+					c.report("recording a warm orphan's age failed", err)
+					continue
+				}
+				if age := now.Sub(since); age >= time.Hour {
+					if first, err := c.Journal.WarnWarmOrphan(ctx, process.PID); err != nil {
+						c.report("recording a warm orphan warning failed", err)
+					} else if first {
+						message := fmt.Sprintf("agent %s: warm orphan awaiting proof for %s", process.AgentID, age.Truncate(time.Second))
+						if c.warmOrphanLog != nil {
+							c.warmOrphanLog(message)
+						} else {
+							log.Print(message)
+						}
+					}
+				}
 				continue
 			}
 		}
@@ -1795,7 +1818,8 @@ func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
 			answer, err := adapter.ProbeDockerActivity(probeCtx, row.ResolvedCommand, row.Args, dirs[0], adapter.DockerControlEnv(row.EnvRefs), process.ExecToken, time.Time{})
 			cancel()
 			if err != nil {
-				return false
+				state, stateErr := c.containerState(container)
+				return stateErr == nil && state == ""
 			}
 			if answer == "ended" {
 				return true
@@ -1803,7 +1827,7 @@ func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
 		}
 	}
 	state, err := c.containerState(container)
-	return err == nil && (state == "removing" || state == "exited" || state == "dead")
+	return err == nil && (state == "" || state == "removing" || state == "exited" || state == "dead")
 }
 
 // applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU_WARM_IDLE,

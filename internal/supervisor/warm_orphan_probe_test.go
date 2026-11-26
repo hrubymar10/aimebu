@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
@@ -15,11 +17,15 @@ func TestWarmOrphanSessionEndProbe(t *testing.T) {
 	for _, tc := range []struct {
 		name, answer, state string
 		keep                bool
+		stateError          bool
 	}{
-		{"ended", "ended", "running", false},
-		{"alive", "busy", "running", true},
-		{"probe error", "error", "running", true},
-		{"probe error with stopped container", "error", "exited", true},
+		{"ended", "ended", "running", false, false},
+		{"alive", "busy", "running", true, false},
+		{"missing container", "busy", "", false, false},
+		{"Docker unavailable", "busy", "", true, true},
+		{"probe error", "error", "running", true, false},
+		{"probe error with missing container", "error", "", false, false},
+		{"probe error with stopped container", "error", "exited", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -39,7 +45,12 @@ func TestWarmOrphanSessionEndProbe(t *testing.T) {
 			if err := journal.RecordWarmProcess(ctx, process); err != nil {
 				t.Fatal(err)
 			}
-			client := &Client{Journal: journal, harnessProbeDir: root, Launchers: []protocol.LauncherRow{{LauncherDefinition: protocol.LauncherDefinition{ID: "launcher"}, ResolvedCommand: launcher, Available: true}}, ContainerState: func(string) (string, error) { return tc.state, nil }}
+			client := &Client{Journal: journal, harnessProbeDir: root, Launchers: []protocol.LauncherRow{{LauncherDefinition: protocol.LauncherDefinition{ID: "launcher"}, ResolvedCommand: launcher, Available: true}}, ContainerState: func(string) (string, error) {
+				if tc.stateError {
+					return "", fmt.Errorf("Docker unavailable")
+				}
+				return tc.state, nil
+			}}
 			client.SweepWarmOrphans(ctx)
 			left, err := journal.WarmProcesses(ctx)
 			if err != nil {
@@ -124,5 +135,56 @@ func TestWarmOrphanJournalMigration(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].SessionEndReport != nil || rows[0].ExecToken != "" || rows[0].LauncherID != "" {
 		t.Fatalf("migrated rows: %+v", rows)
+	}
+}
+
+func TestWarmOrphanOverdueLogsOnce(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "journal.sqlite")
+	journal, err := OpenJournal(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	report := true
+	if err := journal.RecordWarmProcess(ctx, WarmProcess{PID: 999999, AgentID: "agent", Started: "old", ExecToken: containerOne + ":session", SessionEndReport: &report}); err != nil {
+		t.Fatal(err)
+	}
+	var logs []string
+	client := &Client{Journal: journal, ContainerState: func(string) (string, error) { return "running", nil }, warmOrphanLog: func(message string) { logs = append(logs, message) }}
+	client.SweepWarmOrphans(ctx)
+	if len(logs) != 0 {
+		t.Fatalf("early logs: %v", logs)
+	}
+	_, err = journal.db.ExecContext(ctx, `UPDATE warm_process SET orphan_since=?`, time.Now().Add(-2*time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SweepWarmOrphans(ctx)
+	client.SweepWarmOrphans(ctx)
+	if len(logs) != 1 || !strings.Contains(logs[0], "agent agent: warm orphan awaiting proof for 2h") {
+		t.Fatalf("logs: %v", logs)
+	}
+	restarted := &Client{Journal: journal, ContainerState: client.ContainerState, warmOrphanLog: client.warmOrphanLog}
+	restarted.SweepWarmOrphans(ctx)
+	if len(logs) != 1 {
+		t.Fatalf("warning repeated after restart: %v", logs)
+	}
+	alerts, err := journal.WarmOrphansAwaitingProof(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alerts) != 1 || alerts[0].AgentID != "agent" || alerts[0].Age < 2*time.Hour {
+		t.Fatalf("alerts: %+v", alerts)
+	}
+	status, err := ReadWarmOrphanStatus(path)
+	if err != nil || len(status.WarmOrphans) != 1 || status.WarmOrphans[0].AgentID != "agent" {
+		t.Fatalf("published orphans: %+v, %v", status, err)
+	}
+	client.ContainerState = func(string) (string, error) { return "", nil }
+	client.SweepWarmOrphans(ctx)
+	status, err = ReadWarmOrphanStatus(path)
+	if err != nil || len(status.WarmOrphans) != 0 {
+		t.Fatalf("cleared orphans: %+v, %v", status, err)
 	}
 }

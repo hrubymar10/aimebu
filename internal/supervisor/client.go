@@ -108,6 +108,7 @@ type Client struct {
 	warmOrphansRechecked atomic.Bool
 	warmOrphansMu        sync.Mutex
 	warmOrphans          map[int]bool
+	warmOrphanLog        func(string)
 	// disconnectedDrops counts the sends that failed for want of a connection since the last one: the first is logged, the rest only
 	// counted and summed up in one line when the connection is back (logDisconnectedDrops).
 	disconnectedDrops atomic.Int64

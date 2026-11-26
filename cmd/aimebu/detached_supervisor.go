@@ -558,16 +558,19 @@ func supervisorControl(action string, stdout, stderr io.Writer) int {
 		}
 		if len(held) == 0 {
 			fmt.Fprintln(stdout, "supervisor is not running")
+			printWarmOrphans(stdout, config.root, time.Now())
 			return 1
 		}
 		if len(held) == 1 {
 			fmt.Fprintf(stdout, "supervisor is running (pid %d)\n", held[0].pid)
+			printWarmOrphans(stdout, config.root, time.Now())
 			return 0
 		}
 		fmt.Fprintf(stdout, "supervisor is running (%d instances side by side)\n", len(held))
 		for _, v := range held {
 			fmt.Fprintf(stdout, "  pid %d, journal %s\n", v.pid, filepath.Base(v.path))
 		}
+		printWarmOrphans(stdout, config.root, time.Now())
 		return 0
 	case "restart":
 		answered, err := askServerToRestartSupervisor(config)
@@ -590,6 +593,58 @@ func supervisorControl(action string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return 2
+}
+
+var openWarmOrphanJournal = supervisor.OpenJournal
+
+func printWarmOrphans(out io.Writer, root string, now time.Time) {
+	for _, path := range supervisor.InstanceJournals(filepath.Join(root, "supervisor")) {
+		held, _, _, err := supervisor.JournalLockInfo(path)
+		if err != nil {
+			continue
+		}
+		if held {
+			printHeldWarmOrphans(out, path, now)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		journal, err := openWarmOrphanJournal(ctx, path)
+		if errors.Is(err, supervisor.ErrJournalInUse) {
+			cancel()
+			printHeldWarmOrphans(out, path, now)
+			continue
+		}
+		if err != nil {
+			cancel()
+			continue
+		}
+		alerts, err := journal.WarmOrphansAwaitingProof(ctx, now)
+		_ = journal.Close()
+		cancel()
+		if err != nil {
+			continue
+		}
+		for _, alert := range alerts {
+			fmt.Fprintf(out, "warm orphan awaiting proof, age %s (agent %s, journal %s)\n", alert.Age.Truncate(time.Second), alert.AgentID, filepath.Base(path))
+		}
+	}
+}
+
+func printHeldWarmOrphans(out io.Writer, path string, now time.Time) {
+	held, pid, journalID, err := supervisor.JournalLockInfo(path)
+	if err != nil || !held {
+		return
+	}
+	status, err := supervisor.ReadWarmOrphanStatus(path)
+	if err != nil || strconv.Itoa(status.PID) != pid || status.JournalID != journalID {
+		return
+	}
+	for _, row := range status.WarmOrphans {
+		age := now.Sub(time.Unix(row.SinceUnix, 0))
+		if age >= time.Hour {
+			fmt.Fprintf(out, "warm orphan awaiting proof, age %s (agent %s, journal %s)\n", age.Truncate(time.Second), row.AgentID, row.Journal)
+		}
+	}
 }
 
 // askServerToRestartSupervisor uses the same same-host credential as doctor.

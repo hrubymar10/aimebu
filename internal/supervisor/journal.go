@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -69,6 +70,7 @@ type Journal struct {
 	lockFile *os.File
 	ID       string
 	path     string
+	statusMu sync.Mutex
 	closed   atomic.Bool
 }
 
@@ -195,7 +197,7 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
-	for _, column := range []string{"exec_token TEXT", "launcher_id TEXT", "session_end_report INTEGER"} {
+	for _, column := range []string{"exec_token TEXT", "launcher_id TEXT", "session_end_report INTEGER", "orphan_since INTEGER", "orphan_warned INTEGER"} {
 		name, _, _ := strings.Cut(column, " ")
 		if err := ensureColumn(ctx, db, "warm_process", name, "ALTER TABLE warm_process ADD COLUMN "+column); err != nil {
 			db.Close()
@@ -247,6 +249,10 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 	}
 	j := &Journal{db: db, lockFile: lockFile, path: path}
 	if err := db.QueryRowContext(ctx, `SELECT journal_id FROM journal_meta WHERE id=1`).Scan(&j.ID); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := os.Remove(warmOrphanStatusPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		db.Close()
 		return nil, err
 	}
@@ -950,6 +956,7 @@ type WarmProcess struct {
 	ExecToken        string
 	LauncherID       string
 	SessionEndReport *bool
+	OrphanSince      time.Time
 }
 
 // RecordWarmProcess notes a warm process so that a supervisor that dies without ending it can find and end it at its next start.
@@ -978,6 +985,33 @@ func (j *Journal) RecordWarmExecToken(ctx context.Context, pid int, token string
 	return err
 }
 
+// MarkWarmOrphan preserves the first time recovery found a session without
+// end proof. It never resets the age on a later sweep or supervisor restart.
+func (j *Journal) MarkWarmOrphan(ctx context.Context, pid int, now time.Time) (time.Time, error) {
+	_, err := j.db.ExecContext(ctx, `UPDATE warm_process SET orphan_since=COALESCE(orphan_since,?) WHERE pid=?`, now.Unix(), pid)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var since sql.NullInt64
+	if err := j.db.QueryRowContext(ctx, `SELECT orphan_since FROM warm_process WHERE pid=?`, pid).Scan(&since); err != nil {
+		return time.Time{}, err
+	}
+	if !since.Valid {
+		return time.Time{}, errors.New("warm orphan has no start time")
+	}
+	return time.Unix(since.Int64, 0), nil
+}
+
+// WarnWarmOrphan marks an overdue orphan once, durably across sweeps.
+func (j *Journal) WarnWarmOrphan(ctx context.Context, pid int) (bool, error) {
+	result, err := j.db.ExecContext(ctx, `UPDATE warm_process SET orphan_warned=1 WHERE pid=? AND orphan_warned IS NULL`, pid)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
 // ForgetWarmProcess drops a warm process that has ended.
 func (j *Journal) ForgetWarmProcess(ctx context.Context, pid int) error {
 	_, err := j.db.ExecContext(ctx, `DELETE FROM warm_process WHERE pid=?`, pid)
@@ -986,7 +1020,7 @@ func (j *Journal) ForgetWarmProcess(ctx context.Context, pid int) error {
 
 // WarmProcesses lists the warm processes noted and not yet forgotten.
 func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT pid,agent_id,started,exec_token,launcher_id,session_end_report FROM warm_process ORDER BY pid`)
+	rows, err := j.db.QueryContext(ctx, `SELECT pid,agent_id,started,exec_token,launcher_id,session_end_report,orphan_since FROM warm_process ORDER BY pid`)
 	if err != nil {
 		return nil, err
 	}
@@ -996,16 +1030,44 @@ func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
 		var process WarmProcess
 		var token, launcher sql.NullString
 		var report sql.NullBool
-		if err := rows.Scan(&process.PID, &process.AgentID, &process.Started, &token, &launcher, &report); err != nil {
+		var orphanSince sql.NullInt64
+		if err := rows.Scan(&process.PID, &process.AgentID, &process.Started, &token, &launcher, &report, &orphanSince); err != nil {
 			return nil, err
 		}
 		process.ExecToken, process.LauncherID = token.String, launcher.String
 		if report.Valid {
 			process.SessionEndReport = &report.Bool
 		}
+		if orphanSince.Valid {
+			process.OrphanSince = time.Unix(orphanSince.Int64, 0)
+		}
 		out = append(out, process)
 	}
 	return out, rows.Err()
+}
+
+// WarmOrphansAwaitingProof reads overdue rows through this journal's owner.
+func (j *Journal) WarmOrphansAwaitingProof(ctx context.Context, now time.Time) ([]WarmOrphanAlert, error) {
+	rows, err := j.db.QueryContext(ctx, `SELECT agent_id,orphan_since FROM warm_process WHERE session_end_report=1 AND orphan_since IS NOT NULL AND orphan_since<=? ORDER BY orphan_since,agent_id`, now.Add(-time.Hour).Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var alerts []WarmOrphanAlert
+	for rows.Next() {
+		var agent string
+		var since int64
+		if err := rows.Scan(&agent, &since); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, WarmOrphanAlert{AgentID: agent, Age: now.Sub(time.Unix(since, 0))})
+	}
+	return alerts, rows.Err()
+}
+
+type WarmOrphanAlert struct {
+	AgentID string
+	Age     time.Duration
 }
 
 // Remove closes the journal and deletes its files (the database, its write-ahead log and shared memory, and the lock file): what an instance that
@@ -1013,7 +1075,7 @@ func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
 func (j *Journal) Remove() error {
 	closeErr := j.Close()
 	var errs []error
-	for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".lock"} {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal", ".warm-orphans.json", ".lock"} {
 		if err := os.Remove(j.path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}

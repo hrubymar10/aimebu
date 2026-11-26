@@ -1143,10 +1143,12 @@ processes are never on one session.
   time is never touched). For a warm launch using `session_end_report`, the journal also keeps
   its exec token and launcher ID, with no environment values or agent key. Once the server sends
   the launcher definition, the supervisor probes that exact token. Only `ended` or a container
-  state proving it stopped releases the row; another answer or a probe error leaves it for the
-  next sweep. Rows from older journals, whose new columns are null, retain the earlier host
+  state proving it stopped or is absent releases the row; another answer or a probe error leaves it for the
+  next sweep unless Docker also proves that the container is absent. Rows from older journals, whose new columns are null, retain the earlier host
   process cleanup behavior. The harness-docker session watchdog also ends a session whose host
   wrapper vanished; the harness container may still be shared with other agents.
+  If `aimebu supervisor status` shows `warm orphan awaiting proof, age …`, restore the
+  launcher or Docker connection and let the next sweep verify the session; do not delete the journal.
 - **Containers.** `docker exec` passes no signal on, so killing the host side leaves the process in the
   container until harness-docker's session heartbeat sweeps it (about fifteen seconds), and neither the
   wrapper's exit after a kill nor the passing of time proves it gone. A process in a container is
