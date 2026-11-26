@@ -499,9 +499,13 @@ func TestWarmSessionEndFDLauncherFailureIsNotWarmFallback(t *testing.T) {
 	spec.Agent.Variant = "docker"
 	spec.LauncherReportsContainer = true
 	spec.LauncherReportsSessionEnd = true
-	_, err := a.StartWarm(context.Background(), spec)
+	session, err := a.StartWarm(context.Background(), spec)
+	if err == nil {
+		<-session.Exited()
+		_, err = session.Run(spec)
+	}
 	if !errors.Is(err, adapter.ErrWarmLaunch) {
-		t.Fatalf("launcher exit 2 must be a start failure: %v", err)
+		t.Fatalf("launcher exit 2 must be a warm launch failure: %v", err)
 	}
 }
 
