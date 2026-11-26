@@ -1,7 +1,68 @@
-# Releasing aimebu 2.0.0 (draft plan)
+# Releasing aimebu 2.0.0
 
-Status: draft of the 2.0.0 release plan. Everything below is kept in line with the code unless
-marked **open**. Nothing here adds a dependency or changes code.
+## Homebrew releases
+
+The public install path is `brew tap hrubymar10/tap`,
+`brew trust hrubymar10/tap`, `brew install hrubymar10/tap/aimebu`, then
+`brew services start aimebu`. The formula lives in
+`hrubymar10/homebrew-tap`; its template and renderer live in this repository.
+The installed archive contains one binary, including the embedded web sources
+and supervisor command. No Go toolchain or repository checkout is needed on
+the installed machine.
+
+To publish, make an annotated `vMAJOR.MINOR.PATCH` tag, optionally with an
+`-alpha.N`, `-beta.N`, or `-rc.N` suffix, and push it. The tag workflow builds
+four CGo-free archives (macOS and Linux, arm64 and amd64) with the same
+`-X main.version=aimebu <tag>` override used by `bin/aimebu`. It creates a
+GitHub release if none exists, marks alpha and beta tags as prereleases, and
+uploads the archives and `checksums.txt`. For an existing release it replaces
+the assets. The second job downloads those assets, renders the tap formula,
+and commits it to `hrubymar10/homebrew-tap`. It needs a repository secret
+`HOMEBREW_TAP_TOKEN` with write access to that tap. When the secret is absent,
+the job logs that it skipped the tap update and succeeds; the release assets
+remain available for a manual tap update.
+
+The local equivalents are:
+
+```sh
+bash scripts/release-build.sh v2.0.0-alpha.15
+node scripts/render-homebrew.cjs v2.0.0-alpha.15 /tmp/aimebu.rb
+sh scripts/test-lock.sh node scripts/test-standalone.cjs dist/aimebu
+```
+
+Before the last command, extract the matching host archive into `dist/`:
+`tar -xzf dist/aimebu_<version>_<os>_<arch>.tar.gz -C dist`.
+The renderer verifies every archive against
+`checksums.txt` before writing a formula. The release workflow uses only
+commit-pinned official GitHub actions. Validate the formula with `ruby -c`
+and test the service on a real Mac and Linuxbrew host before public use.
+
+Before publishing an upgrade, run the real-binary supervisor swap check with
+the previous and candidate binaries:
+`sh scripts/test-lock.sh sh scripts/upgrade-smoke.sh OLD_BINARY NEW_BINARY SCRATCH_DIR`.
+The tracked script holds a turn and a command across replacement, then checks
+their results, the instance journals, and `doctor`.
+
+The formula runs `opt_bin/"aimebu"` in the foreground under `brew services`.
+It keeps a HEAD build from source as a second route; only that route requires
+Go. Its sole service environment override is Homebrew's
+`PATH: std_service_path_env`, which lets launchd find Homebrew-installed
+harness CLIs. For a CLI installed elsewhere, add its directory to the service
+PATH using Homebrew's per-service environment file, then restart the service.
+That stable path resolves the current Cellar version after `brew upgrade`; run
+`brew services restart aimebu` to make the running server use it. The server
+starts a new detached supervisor from its current executable when the build
+changes, while the previous supervisor drains its active work on its old
+journal. Neither the formula nor the server saves a Cellar binary path as
+installation state. The server's data remains under `~/.aimebu` by default.
+
+The rest of this document is the original release planning record; Homebrew
+instructions above supersede its older clone-first and HEAD-only formula
+proposals.
+
+Status: historical draft of the 2.0.0 release plan. Its Homebrew and build
+proposals are superseded by the section above; other items marked **open**
+still require a release decision.
 
 ## 1. Versioning
 

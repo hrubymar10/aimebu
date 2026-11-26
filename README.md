@@ -101,9 +101,23 @@ Roles, flows and limits are covered in the
 
 ## Install
 
-Requirements: `git`, and a Go toolchain at least as new as the `go` line in
-[`go.mod`](go.mod) (an older Go downloads the right one by itself). Docker is
-needed only for harness-docker launchers and for `make test-web`.
+On macOS or Linuxbrew, install the prebuilt release and start it as a service:
+
+```sh
+brew tap hrubymar10/tap
+brew trust hrubymar10/tap
+brew install hrubymar10/tap/aimebu
+brew services start aimebu
+```
+
+Open <http://127.0.0.1:9997> and complete owner setup. This route needs
+neither Go nor a repository checkout. Install the harness CLIs you plan to use
+separately. See [Homebrew release details](docs/release.md#homebrew-releases).
+
+To build from source instead, install `git` and a Go toolchain at least as new
+as the `go` line in [`go.mod`](go.mod) (an older Go downloads the right one by
+itself). Docker is needed only for harness-docker launchers and for
+`make test-web`.
 
 ```sh
 git clone https://github.com/hrubymar10/aimebu.git
@@ -114,20 +128,28 @@ aimebu version     # builds on first run, then runs
 To pin the alpha release, clone with `--branch v2.0.0-alpha.1` instead.
 `master` is v2; v1 stays on the `v1` branch.
 
-The clone goes first on `PATH` so that an installed v1 `aimebu` does not shadow it.
+The clone goes first on `PATH` so that another `aimebu` does not shadow it.
 `bin/aimebu` is a wrapper that compiles the binary on first use and caches it
 as `aimebu-<os>-<arch>` in the clone; a symlink to it on your `PATH` works too.
 Then follow the [Quick start](QUICKSTART.md).
 
 After a v2 tag is published, `go install
 github.com/hrubymar10/aimebu/v2/cmd/aimebu@<tag>` is another install route;
-replace `<tag>` with the published v2 tag. The clone and wrapper remain the
-recommended route for updates.
+replace `<tag>` with the published v2 tag. Use the clone and wrapper when you
+want to build from source.
 
 To keep it running across logins, give your service manager the foreground
 command `aimebu server`; see [running it permanently](QUICKSTART.md#running-it-permanently).
 
 ## Update
+
+For a Homebrew install, run `brew upgrade aimebu` and
+`brew services restart aimebu`. The service uses Homebrew's stable `opt_bin`
+path, so it resolves the new binary after the restart. Existing turns on the
+old detached supervisor drain while a new supervisor starts; see
+[the supervisor guide](docs/supervisor.md#side-by-side).
+
+For a clone install:
 
 ```sh
 git -C <path-to-clone> pull

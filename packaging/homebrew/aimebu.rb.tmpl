@@ -1,0 +1,84 @@
+class Aimebu < Formula
+  desc "IRC for you and your AI agents — message bus over MCP, HTTP/CLI, and a web UI"
+  homepage "https://github.com/hrubymar10/aimebu"
+  version "@VERSION@"
+  license "MIT"
+  head do
+    url "https://github.com/hrubymar10/aimebu.git", branch: "master"
+    depends_on "go" => :build
+  end
+
+  if OS.mac?
+    if Hardware::CPU.arm?
+      url "@DARWIN_ARM64_URL@"
+      sha256 "@DARWIN_ARM64_SHA256@"
+    else
+      url "@DARWIN_AMD64_URL@"
+      sha256 "@DARWIN_AMD64_SHA256@"
+    end
+  elsif OS.linux?
+    if Hardware::CPU.arm?
+      url "@LINUX_ARM64_URL@"
+      sha256 "@LINUX_ARM64_SHA256@"
+    else
+      url "@LINUX_AMD64_URL@"
+      sha256 "@LINUX_AMD64_SHA256@"
+    end
+  end
+
+  def install
+    if build.head?
+      system "go", "build", "-trimpath", "-ldflags", "-s -w -X 'main.version=aimebu HEAD'",
+             "-o", bin/"aimebu", "./cmd/aimebu"
+    else
+      bin.install "aimebu"
+    end
+  end
+
+  service do
+    run [opt_bin/"aimebu", "server"]
+    keep_alive true
+    working_dir var
+    log_path var/"log/aimebu.log"
+    error_log_path var/"log/aimebu.log"
+    # The old service env was removed; only PATH is needed for harness CLIs under launchd.
+    environment_variables PATH: std_service_path_env
+  end
+
+  def caveats
+    <<~EOS
+      aimebu v2 uses ~/.aimebu and can migrate v1 data there on first start.
+      Back up that directory and follow the migration guide before starting
+      the service: https://github.com/hrubymar10/aimebu/blob/master/docs/migrating-from-v1.md
+      The service starts a detached local supervisor.
+    EOS
+  end
+
+  test do
+    (testpath/"home").mkpath
+    ENV["HOME"] = (testpath/"home").to_s
+    ENV["AIMEBU_CONFIG_DIR"] = (testpath/"config").to_s
+    ENV["AIMEBU_SENTRY_DSN"] = "off"
+    ENV["AIMEBU_USAGES"] = "0"
+    ENV["AIMEBU_PORT"] = free_port.to_s
+    ENV["AIMEBU_OWNER_LOGIN"] = "owner"
+    ENV["AIMEBU_OWNER_PASSWORD"] = "homebrew formula test password"
+    pid = nil
+    begin
+      assert_match "aimebu", shell_output("#{bin}/aimebu version")
+      pid = fork { exec bin/"aimebu", "server" }
+      output = shell_output("curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:#{ENV.fetch("AIMEBU_PORT")}/api/setup/status")
+      assert_match '"open":false', output
+    ensure
+      if pid
+        begin
+          Process.kill("TERM", pid) if Process.waitpid(pid, Process::WNOHANG).nil?
+          Process.wait(pid)
+        rescue Errno::ESRCH, Errno::ECHILD
+          nil
+        end
+      end
+      system bin/"aimebu", "server", "stop", "--with-supervisor"
+    end
+  end
+end
