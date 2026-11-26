@@ -82,6 +82,9 @@ var environment = []envVar{
 	{[]string{"AIMEBU_STUCK_MINUTES"}, []string{"Minutes of silence (1-1440, default 10) before a running turn counts as stuck"}},
 	{[]string{"AIMEBU_DEBUG"}, []string{"Set to log lookups the server could not answer (a worktree's base drift, for now)"}},
 	{[]string{"AIMEBU_DEBUG_PPROF"}, []string{"Serve owner and admin profiling endpoints under /api/debug/pprof/ when set to 1"}},
+	{[]string{"AIMEBU_EVAL"}, []string{
+		"Set to 1 to let `make eval` (the live answer-robustness eval) run; without it the",
+		"runner refuses, because a live run spends subscription quota. See docs/eval.md"}},
 	{[]string{"AIMEBU_BASE_DRIFT_MIN"}, []string{
 		"Commits a room worktree must be behind its base ref before the turn context says so",
 		"(default 5, 0 turns it off)"}},

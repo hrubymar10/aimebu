@@ -18,6 +18,9 @@ type Attempt struct {
 	TokOut  int64   `json:"tokens_out,omitempty"`
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	Millis  int64   `json:"millis,omitempty"`
+	// Candidate is the raw answer the harness reported and Tools the tools the model called, kept so a run can be read afterwards.
+	Candidate string   `json:"candidate,omitempty"`
+	Tools     []string `json:"tools,omitempty"`
 }
 
 // Case is one repetition of one scenario on one model. Attempts[0] is the first try. A harness failure (the CLI crashed, timed out or was

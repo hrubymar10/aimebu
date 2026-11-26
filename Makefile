@@ -1,4 +1,4 @@
-.PHONY: test test-race eval-replay vet fmt fmt-check test-full test-ui test-web gate dev
+.PHONY: test test-race eval-replay eval vet fmt fmt-check test-full test-ui test-web gate dev
 
 # A bare `make` runs the Go tests, as it did before the progress runner.
 .DEFAULT_GOAL := test
@@ -48,6 +48,12 @@ test-race: $(GOTESTPROGRESS) ## Run tests with the race detector
 # package alone, quickly, for CI jobs and for working on a fixture. The paid layer is not here.
 eval-replay: ## Run the free eval layers (replay corpus, mock harnesses, scenario validator, scorer, report)
 	go test -race -count=1 ./internal/eval
+
+# The live eval (docs/eval.md) runs real models through the launchers agents use and spends subscription quota, so it is never part of test-full or the
+# gate, and it refuses to run without AIMEBU_EVAL=1. Without --full it is a smoke (two scenarios, one model, one repetition).
+EVAL_ARGS ?= --config tmp/eval/config.json
+eval: ## Run the live eval (a smoke unless EVAL_ARGS has --full); the caller must export AIMEBU_EVAL=1
+	go run ./internal/eval/cmd/evalrun $(EVAL_ARGS)
 
 vet: ## Run go vet
 	go vet ./...

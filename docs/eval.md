@@ -10,11 +10,11 @@ guessed. The code is `internal/eval`.
 |---|---|---|---|
 | replay | a **recorded** harness stdout stream goes through the real adapter's parser and `answer.Parse` | free | `make eval-replay`, `make test`, the gate |
 | mock | a **canned** model answer or fault (fenced JSON, prose around the JSON, a handoff without an outcome, a crash) is printed by a stand-in harness executable that the real adapter starts | free | same |
-| live | the 22 scenarios in `internal/eval/testdata/live` on real models, through the real harnesses | paid | not built yet (phase 2b) |
+| live | the 22 scenarios in `internal/eval/testdata/live` on real models, through the Docker launchers agents run through | subscription quota | `make eval` (`internal/eval/cmd/evalrun`), never in the gate |
 
 The replay and mock layers need no credential and no network. They are ordinary Go tests (no build tag), so `go test ./...` and the gate run
 them; `make eval-replay` runs the package alone (`go test -race -count=1 ./internal/eval`), for a CI job or while working on a fixture.
-The live runner never belongs in the gate. Nothing in this package reads `~/.claude`, `~/.codex`, `~/.pi` or `~/.aimebu*`: the tests run with
+The live runner never belongs in the gate (`make eval` is not part of `test-full` or `gate`). Nothing in this package reads `~/.claude`, `~/.codex`, `~/.pi` or `~/.aimebu*`: the tests run with
 the temporary `HOME` of `internal/testenv`, and the stand-in harness is a shell script in a temporary directory.
 
 ### How a stream reaches the parser
@@ -88,6 +88,78 @@ A live scenario is `internal/eval/testdata/live/<id>.json`: `input` (`notes` as 
 Add an answer that passes it, and a typical wrong one, to `internal/eval/score_test.go`: the test fails for a scenario with no good answer, so a
 check that always passes or never does is found without a model. Some scenarios are contested on purpose and say so in their title (`s15`: an
 agent waiting on its own `run_command` ends the turn with no message, though the prompt also says never to end a turn silent while work is owed).
+
+## The live layer (`make eval`)
+
+`internal/eval/cmd/evalrun` runs the live scenarios on real models and writes `tmp/eval/<run>/results.json` and `report.md`. It is the only part
+of the eval that spends anything, and it spends **subscription quota**, not API money: it runs the harnesses the way agents run today, through
+their Docker launchers, so the logins stay where they live. Nothing here reads or writes `~/.claude`, `~/.codex`, `~/.pi` or `~/.aimebu*`; the
+launchers do what they do for an agent.
+
+**Switches.** It refuses to run unless `AIMEBU_EVAL=1` is exported. Without `--full` it is a **smoke**: scenarios `s01` and `s15`, the first target,
+one repetition. Run the smoke first. Run `--full` only with the quota switcher on and outside peak hours.
+
+**How a turn is launched.** The runner builds the same `adapter.TurnSpec` as the supervisor: the launcher fields come from
+`supervisor.ApplyLauncher` (`internal/supervisor/launcher_spec.go`), which `handleDeliver` calls too, so there is one copy. It then starts the
+Docker adapter of the tool (`adapter.DockerPreflight` first). Only Docker launchers are accepted. It does not call `adapter.NewMulti`, so no CLI
+is asked for its version.
+
+**The toolbox.** A turn reaches an aimebu toolbox at `/api/agent/mcp`. The runner starts a stand-in on `0.0.0.0` and an ephemeral port (never a fixed
+one, never the real server): it offers the scenario's `allowed_tools`, answers each call with a canned text, and records the calls each turn made
+(the `tool_called` checks read them). Each turn has its own dummy `aak_eval_<turn>` key. A scenario with no tools gets no toolbox. A container
+reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its gateway is another address.
+
+**Sessions and Claude transcripts.** Every case is a first turn in a session of its own (a new UUID for Claude and Pi; the id the harness
+reports for the others), never an agent's session. Its repair turn, when there is one, resumes that session. The checkout of a target is
+`<scratch_dir>/aimebu-eval-<run id>-<target>`, a fresh git repository, and Claude names the folder of a session's transcript after the working
+directory, so every transcript of a run sits in a folder whose name contains `aimebu-eval-<run id>`. The `claude-docker` launcher shares the host's
+Claude home (`claude_home_shared`), so those folders are in `<Claude home>/projects/`: delete the ones matching `*aimebu-eval-*` when you are done with
+a run. The runner does not delete them, because it never touches that home itself.
+
+**Repairs.** A reply the answer parser rejects is sent back: the next turn resumes the session with the system note a held reply gets ("Your
+previous reply was held: ..."). That is what the server does for Claude; for the other harnesses the server runs a correction-mode turn
+instead, which the runner does not reproduce, so their "after repairs" numbers are for the held-reply path. Up to `max_turns_to_valid` turns per
+case (2 in every scenario). A valid answer that fails a check is not repaired: the server cannot see it. The harness's own failures (crash,
+timeout, a provider limit) end the case and are counted apart, outside every rate.
+
+**Quota and cost.** `usages_url` is a running server whose `GET /api/usages` the runner reads (the repo's own usage data, owner-only) with the cookie
+in the environment variable named by `usages_cookie_env`. The run is refused without it. The quota is read before the run, every 10 cases and
+after the run; a weekly window (`weekly*`, `seven_day*`) above `--stop-above` (default 90) percent stops the run, and the report carries the
+before and after share of every window. `--max-usd` (default 30) stops the run when the cost the harnesses report passes it; for a subscription
+that is an equivalent, not a charge. The report keeps the cases finished when a run stops early.
+
+**Config file.** `tmp/eval/config.json` (not committed), for example:
+
+```json
+{
+  "scratch_dir": "/Users/me/eval-scratch",
+  "usages_url": "http://127.0.0.1:9996",
+  "usages_cookie_env": "AIMEBU_EVAL_COOKIE",
+  "targets": [
+    {"name": "claude-sonnet", "tool": "claude", "launcher_id": "lch_claude", "model": "claude-sonnet-5-5"},
+    {"name": "codex-sol", "tool": "codex", "launcher_id": "lch_codex", "model": "gpt-6-sol"},
+    {"name": "glm-pi", "tool": "pi", "launcher_id": "lch_pi", "model": "my-provider/glm-5.3-flash"},
+    {"name": "glm-opencode", "tool": "opencode", "launcher_id": "lch_opencode", "model": "my-provider/glm-5.3-flash"}
+  ],
+  "launchers": [
+    {"id": "lch_claude", "tool": "claude", "command": "claude-docker", "args": [], "env_refs": {}, "enabled": true, "containerized": true,
+     "path_maps": [], "visible_roots": ["/Users/me"], "supports_toolbox": true,
+     "resolved_command": "/usr/local/bin/claude-docker", "version": "x.y.z", "available": true, "features": ["forward_env", "claude_home_shared"]}
+  ]
+}
+```
+
+The scratch directory must be inside a root the launchers mount (their `visible_roots`). To fill a launcher row: the definition fields
+(`id`, `tool`, `command`, `args`, `env_refs`, `containerized`, `agent_server_url`, `path_maps`, `visible_roots`, `supports_toolbox`) are in Settings →
+Agents → Harnesses & models, or the owner's `GET /api/machines/{id}/launchers`; `resolved_command` is the absolute path of the command
+(`command -v claude-docker`); `features` is what the launcher prints for `HARNESS_DOCKER_PRINT_FEATURES=1` (the doctor shows it too). The runner
+reads these from the file only, never from the supervisor's own files. Run it from the repository root:
+
+```sh
+export AIMEBU_EVAL=1 AIMEBU_EVAL_COOKIE='<the owner session cookie>'
+make eval                                          # the smoke on the first target
+make eval EVAL_ARGS="--config tmp/eval/config.json --full --reps 3"
+```
 
 ## What the free layers cannot reach
 
