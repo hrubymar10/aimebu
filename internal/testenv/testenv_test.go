@@ -340,33 +340,46 @@ func TestNoTestWritesAnExecutableWithWriteFile(t *testing.T) {
 	}
 }
 
-// executableWriteFileUses lists the test files under root (as path:line) that write an executable with os.WriteFile. It does not enter a directory whose name
-// starts with a dot (review copies, agent worktrees, .git: none is part of this module) or node_modules.
+// executableWriteFileUses reports tracked test files that write an executable
+// with os.WriteFile. If git is unavailable, it scans the module directory.
 func executableWriteFileUses(root string) []string {
-	exec := regexp.MustCompile(`os\.WriteFile\([^\n]*, 0o?7(00|55)\)`)
+	pattern := regexp.MustCompile(`os\.WriteFile\([^\n]*, 0o?7(00|55)\)`)
 	var found []string
+	check := func(path string) {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return
+		}
+		for number, line := range strings.Split(string(data), "\n") {
+			if pattern.MatchString(line) {
+				rel, _ := filepath.Rel(root, path)
+				found = append(found, fmt.Sprintf("%s:%d", rel, number+1))
+			}
+		}
+	}
+	cmd := exec.Command("git", "ls-files", "--cached", "-z", "--", "*_test.go")
+	cmd.Dir = root
+	cmd.Env = cleanGitEnvironment()
+	if output, err := cmd.Output(); err == nil {
+		for _, rel := range strings.Split(string(output), "\x00") {
+			if strings.HasSuffix(rel, "_test.go") {
+				check(filepath.Join(root, rel))
+			}
+		}
+		return found
+	}
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if entry.IsDir() {
-			if path != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules") {
+			if path != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules" || entry.Name() == "__others") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil
-		}
-		for number, line := range strings.Split(string(data), "\n") {
-			if exec.MatchString(line) {
-				rel, _ := filepath.Rel(root, path)
-				found = append(found, fmt.Sprintf("%s:%d", rel, number+1))
-			}
+		if strings.HasSuffix(path, "_test.go") {
+			check(path)
 		}
 		return nil
 	})
@@ -396,6 +409,42 @@ func TestExecutableWriteScanSkipsDotDirectories(t *testing.T) {
 	}
 	if found := executableWriteFileUses(root); len(found) != 1 || found[0] != filepath.Join("internal", "real", "bad_test.go")+":2" {
 		t.Fatalf("found %v, want the one under internal/", found)
+	}
+}
+
+func TestExecutableWriteScanOnlyChecksTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	init := exec.Command("git", "init", "-q", root)
+	init.Env = cleanGitEnvironment()
+	if output, err := init.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	bad := "package x\nfunc f() { _ = os.Write" + "File(p, b, 0" + "700) }\n"
+	for path, body := range map[string]string{
+		".gitignore":                 "ignored/\n",
+		"ignored/hidden_test.go":     bad,
+		"internal/good/good_test.go": "package good\n",
+		"internal/bad/bad_test.go":   bad,
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if found := executableWriteFileUses(root); len(found) != 0 {
+		t.Fatalf("untracked files were scanned: %v", found)
+	}
+	add := exec.Command("git", "add", "internal/bad/bad_test.go")
+	add.Dir = root
+	add.Env = cleanGitEnvironment()
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+	if found := executableWriteFileUses(root); len(found) != 1 || found[0] != filepath.Join("internal", "bad", "bad_test.go")+":2" {
+		t.Fatalf("found %v, want the tracked test", found)
 	}
 }
 
