@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1177,37 +1176,14 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		if row.ID == "" || !row.Available {
 			return errors.New("launcher unavailable on this machine")
 		}
-		visible, err := launcherCheckout(row.LauncherDefinition, delivery.CheckoutPath)
+		facts, err := ApplyLauncher(&spec, row, delivery.CheckoutPath)
 		if err != nil {
 			return err
 		}
-		spec.LauncherPath = row.ResolvedCommand
-		spec.LauncherArgs = append([]string(nil), row.Args...)
-		spec.LauncherEnvRefs = row.EnvRefs
-		spec.LauncherContainerized = row.Containerized
-		spec.LauncherSharesClaudeHome = row.Containerized && slices.Contains(row.Features, "claude_home_shared")
-		for _, mapping := range row.PathMaps {
-			spec.LauncherPathMaps = append(spec.LauncherPathMaps, adapter.LauncherPathMap{Host: mapping.Host, Visible: mapping.Visible})
+		if row.Containerized && delivery.Agent.Tool == "codex" && delivery.Mode == adapter.ModeNormal && !delivery.ForkSession {
+			c.maybeReprobeCodexHome(row)
 		}
-		if row.Containerized && delivery.Agent.Tool == "codex" {
-			spec.LauncherCodexHome = row.CodexHome
-			if delivery.Mode == adapter.ModeNormal && !delivery.ForkSession {
-				c.maybeReprobeCodexHome(row)
-			}
-		}
-		if visible != delivery.CheckoutPath {
-			spec.VisibleCheckoutPath = visible
-		}
-		spec.AgentServerURL = row.AgentServerURL
-		containerized = row.Containerized
-		feature := "claude_home_shared"
-		if delivery.Agent.Tool == "codex" {
-			feature = "codex_home_shared"
-		}
-		sharesHome = !row.Containerized || slices.Contains(row.Features, feature)
-		launcherConfirmsEnd = slices.Contains(row.Features, containerEndFeature)
-		spec.LauncherReportsContainer = row.Containerized && slices.Contains(row.Features, adapter.FeatureTurnActivity)
-		spec.HarnessVersion = row.Version
+		containerized, sharesHome, launcherConfirmsEnd = facts.Containerized, facts.SharesHome, facts.ConfirmsEnd
 	}
 	if delivery.DockerOnly && !containerized && delivery.Agent.Tool != "fake" {
 		c.retireWarm(delivery.AgentID, "native launcher while docker-only is on")
