@@ -477,16 +477,16 @@ func runSupervisor(ctx context.Context, insecure bool, stderr io.Writer, local b
 		}()
 	}
 	runErr := client.Run(runCtx)
-	if local {
-		drainCtx, cancelDrain := context.WithTimeout(context.Background(), 40*time.Second)
-		if err := client.StopAcceptingAndDrain(drainCtx); err != nil {
-			fmt.Fprintln(stderr, "supervisor drain:", err)
-			if runErr == nil {
-				runErr = err
-			}
+	// A remote supervisor gets the same bounded drain on SIGTERM as a local one: it stops accepting work, lets its running turns finish or
+	// ends them, and journals their exits, so it never leaves a turn the journal still lists as running behind.
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 40*time.Second)
+	if err := client.StopAcceptingAndDrain(drainCtx); err != nil {
+		fmt.Fprintln(stderr, "supervisor drain:", err)
+		if runErr == nil {
+			runErr = err
 		}
-		cancelDrain()
 	}
+	cancelDrain()
 	if runErr == nil {
 		// A supervisor that retired with nothing owed removes its journal: no other instance adopts it.
 		if removed, err := client.FinishRetire(); err != nil {
