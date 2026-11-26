@@ -362,6 +362,25 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => window.__calls.filter(call => call[0] === 'decision').at(-1).slice(1, 3)), ['ul1', 'retry']);
       await page.close();
     }
+    // A pool change: one card with the room-grouped list of agents it would switch (each counted once under its own room, never an id), and the
+    // two decisions, the respawn first and the default. Someone who cannot decide sees no buttons.
+    {
+      const pool = { ...base, id: 'pc1', kind: 'pool_change', question: "A role's default pool changed: 3 running agents use a harness or model the pool no longer lists.", options: ['Respawn on the pool model', 'Keep the current model'],
+        pool_agents: [{ agent_id: 'agt_01', role_label: 'Leader', room_id: 'r1', room_title: 'Home' }, { agent_id: 'agt_02', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }, { agent_id: 'agt_03', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }] };
+      const page = await mount({ list: [pool, { ...pool, id: 'pc2', can_decide: false, pool_agents: [pool.pool_agents[1]] }] });
+      await waitList(page);
+      const card = await page.$eval('[data-inbox-id=pc1]', node => ({ kind: node.querySelector('small').textContent, lines: [...node.querySelectorAll('.inbox-pool-list li')].map(li => li.textContent),
+        buttons: [...node.querySelectorAll('.inbox-decisions button')].map(b => [b.textContent.trim(), b.dataset.choice, b.className, b.title, !!b.querySelector('.icon-mask')]) }));
+      assert.equal(card.kind, 'Pool change');
+      assert.deepEqual(card.lines, ['Home: leader', 'A1: task: 2 workers']);
+      assert.ok(!(await page.$eval('[data-inbox-id=pc1]', node => { const copy = node.cloneNode(true); copy.querySelector('.inbox-raw-holder').remove(); return copy.textContent; })).includes('agt_'), 'no raw agent id is shown');
+      assert.deepEqual(card.buttons, [['Respawn on the pool model', 'respawn', 'btn btn-primary', 'Respawn on the pool model', true], ['Keep the current model', 'keep', 'btn', 'Keep the current model', true]], 'the respawn is the default, first and primary');
+      assert.deepEqual(await page.$eval('[data-inbox-id=pc2]', node => [node.querySelectorAll('.inbox-decisions button').length, node.querySelector('.inbox-pool-list li').textContent]), [0, 'A1: task: worker']);
+      await page.$eval('[data-inbox-id=pc1] [data-choice=respawn]', el => el.click());
+      await page.waitForFunction(() => !document.querySelector('[data-inbox-id=pc1]'));
+      assert.deepEqual(await page.evaluate(() => window.__calls.filter(call => call[0] === 'decision').at(-1).slice(1, 3)), ['pc1', 'respawn']);
+      await page.close();
+    }
     // Dismissing one, and every resolved delivery failure of an archived room at once.
     {
       const failures = [{ ...base, id: 'd1', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'First', held_reason: 'room_closed' }, { ...base, id: 'd2', kind: 'delivery_failed', room_lifecycle: 'closing', question: 'Second', held_reason: 'room_closed' }, { ...base, id: 'd3', kind: 'delivery_failed', room_lifecycle: 'open', question: 'Third', held_reason: 'correction_unavailable', delivery_error: 'invalid_answer: message 0 needs at least two proposed answers' }];

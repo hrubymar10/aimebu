@@ -1195,6 +1195,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 				input.ApprovedBy = req.ApprovedBy
 			}
 			input.Slug = slug
+			input.PoolOrigin = store.PoolOriginExplicit
+			if defaultUsed {
+				input.PoolOrigin = store.PoolOriginPool
+			}
 			input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
 			if session != nil {
 				input.ResumeHandle = session.ID

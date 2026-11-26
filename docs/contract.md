@@ -177,6 +177,20 @@ Projects, rooms, people
   configured pool has nothing to be outside of and keeps the existing
   unavailable-default rule (an explicit choice then needs `reason`). A
   person's own spawn (the room route) is never gated and records no approval.
+  **Pool provenance** (A14-1, migration 143): every agent records where its
+  harness and model came from, `agent.pool_origin`: `pool` (a pick from the
+  role's pool, with the matched `pool_launcher_id` and `pool_model`; also an
+  agent started by team setup or a team-flow change on a choice the pool lists),
+  `explicit` (a person's own choice, or any later harness switch), `approved`
+  (an approved deviation, `approved_by` set) or `unknown` (an agent from before
+  the record, whose launcher and model the pool in force did not list at the
+  migration; never flagged). When a role's pool changes (the role's own
+  `default_agents`, a project's override, team setup, a team-flow change) and at
+  server start, the server finds the agents with `desired=active`, origin
+  `pool`, not switching, whose launcher and model the role's pool in force no
+  longer lists. Leaders and the dispatcher count like any agent. They raise one
+  `pool_change` Inbox item per project (see Inbox): another change before a
+  decision updates that item, and an agent that stopped drops off it.
   In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
@@ -524,6 +538,8 @@ Roles, agents
   full plan as `appendix_pages` with a visual plan.
 - **agent**(id, slug, project_id, role_id, recovery_block bool, tool, variant,
   launcher_id?, model, provider, approved_by? (person's approving message, migration 133),
+  pool_origin[pool|explicit|approved|unknown] (default unknown), pool_launcher_id?, pool_model?,
+  pool_kept_sig? (migration 143),
   machine_id, checkout_id, home_room_id?, key_hash, revoked_at?,
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
@@ -806,10 +822,22 @@ Execution
 Inbox, usage, events, settings
 - **inbox_item**(id, project_id, room_id, message_id?, turn_id?,
   agent_id?, requester_kind, requester_id,
-  kind[question|approval|recovery|delivery_failed|usage_info|usage_limit],
+  kind[question|approval|recovery|delivery_failed|usage_info|usage_limit|pool_change],
   options_json?, state[open|resolved|withdrawn|superseded], rev, answer_message_id?,
   resolved_by?, resolved_at?, created_at, lead_due_at?, recovery_lead_id?) — `assignee` returns in slice 4.
   A worker recovery is assigned to whoever manages the worker when `worker_recovery_to_lead` is on: the agent that spawned it (a lead, or a role that can spawn, such as a flow's dispatcher) while it is active and healthy, otherwise an active project lead. While `lead_due_at` is set it is hidden from the people's Inbox and cannot be decided by a person; a `worker_recovery` note wakes that manager. It may list and decide only its project's assigned recoveries (`list_recoveries`, `resolve_recovery`). The periodic dispatcher sweep clears `lead_due_at` after the configured interval or when the manager becomes unavailable, and emits `inbox_item_created` so the ordinary human card and notification appear. A lead's own recovery goes directly to people. A worker paused by the loop budget (60 turns woken by another agent's message in one room within ten minutes) raises the same kind of item — choices Continue and Abandon, no `turn_id`, reason `turn_budget` — and is routed to its manager the same way, except in the project's home room, where it stays with people. Only a wake caused by another agent's message counts toward that budget: a finished `run_command`, a scheduled or any other system note, and a person's message never do.
+  A `pool_change` item (requester `system`, `requester_id` `pool:<project>`, in the
+  project's home room, at most one open per project) lists the agents a pool
+  change left on a model the pool no longer lists. Only the project's owner and
+  admins who are members see it (an operator does not) and may decide it
+  (`POST /api/inbox/{item}/decision`, 403 for anyone else): `respawn` (the
+  default) switches each listed agent to its role's next pool choice through the
+  harness switch with its handoff, starting each one once no turn of it is
+  running; `keep` leaves them. `keep_agents` names agents to leave as they are
+  under `respawn`. A kept agent is recorded against the pool in force
+  (`pool_kept_sig`) and is flagged again only when that pool changes. The
+  listing carries `pool_agents` (agent, role, room, harness, model, `busy`),
+  read live, so a stopped or switched agent leaves it.
   `usage_alert` is not a stored kind: the inbox listing appends it as a
   virtual row for each open provider usage alert (built in
   `internal/server/inbox.go`, shown to admins), with no table row behind it.

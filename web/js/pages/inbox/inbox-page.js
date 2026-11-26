@@ -5,7 +5,7 @@ import { AnswerControls } from '../../components/answer-controls.js';
 import { renderMarkdown } from '../../markdown.js';
 import { WindowRow } from '../usages/usages-view.js';
 import { staleAge } from '../../usage-alerts.js';
-import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
+import { KIND_LABELS, POOL_CHOICES, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, poolGroups, questionParts, readablePreview, recoveryView, resolvedItems, retryWarning } from './model.js';
 
 // The answer controls are the chat's component too; the wrapper takes no space of its own, and every control is off while the item is being answered.
 function AnswerIsland({ item, store, pending }) {
@@ -70,6 +70,11 @@ function Card({ item, store, rooms, onJump, openUsages }) {
     const summary = html`<p class="inbox-evidence inbox-summary">${view.summary}</p>`;
     if (item.can_decide === false) return wrap(html`${jump}${summary}<p class="inbox-evidence">A project owner or operator must decide this recovery item.</p>${details}`);
     return wrap(html`${jump}${summary}<div class="inbox-decisions">${decisionOptions(item).map(([label, choice]) => button(label, () => store.decide(item, choice), choice === 'abandon' ? 'btn btn-danger' : 'btn'))}</div>${warning && html`<small class="inbox-retry-warning">${warning}</small>`}${details}`);
+  }
+  if (kind === 'pool_change') {
+    const groups = poolGroups(item.pool_agents);
+    return wrap(html`${jump}<div class="inbox-pool-list"><small>Switching will affect:</small><ul>${groups.map(group => html`<li key=${group.room}>${group.room}: ${group.text}</li>`)}</ul></div>
+      ${item.can_decide ? html`<div class="inbox-decisions">${POOL_CHOICES.map(([label, choice, icon, classes]) => html`<button type="button" class=${classes} data-choice=${choice} title=${label} disabled=${pending} onClick=${() => store.decide(item, choice)}><span class=${`icon-mask icon-mask-${icon}`} aria-hidden="true"></span> ${label}</button>`)}</div>` : html`<p class="inbox-evidence">The project owner or an admin must decide this.</p>`}`);
   }
   if (kind === 'usage_limit') {
     const warning = retryWarning(item);

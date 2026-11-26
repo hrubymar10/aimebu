@@ -167,6 +167,9 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 			}
 		}
 	}
+	if err := d.Server.advancePoolRespawns(ctx); err != nil {
+		return 0, err
+	}
 	clearControls, err := d.Server.Store.AdvanceAgentContextClears(ctx)
 	if err != nil {
 		return 0, err

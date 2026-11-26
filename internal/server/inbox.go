@@ -192,11 +192,13 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Choice string `json:"choice"`
 		Rev    int    `json:"rev"`
+		// KeepAgents are the agents of a pool_change item to leave on their current model even when the choice is respawn.
+		KeepAgents []string `json:"keep_agents"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Rev < 0 || req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "continue" && req.Choice != "override" && req.Choice != "restart" && req.Choice != "approve" && req.Choice != "deny" {
+	if req.Rev < 0 || req.Choice != "resume" && req.Choice != "retry" && req.Choice != "abandon" && req.Choice != "continue" && req.Choice != "override" && req.Choice != "restart" && req.Choice != "approve" && req.Choice != "deny" && req.Choice != "respawn" && req.Choice != "keep" {
 		apiError(w, 400, "invalid_request", "invalid recovery choice or revision")
 		return
 	}
@@ -242,6 +244,11 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 		}
 		defer s.lockOwnWorktree(r.Context(), agentID)()
 		decision, reused, err = s.Store.DecideBoundary(r.Context(), r.PathValue("item"), userID(r), key, req.Choice, req.Rev)
+	} else if kind == "pool_change" {
+		decision, reused, err = s.Store.DecidePoolChange(r.Context(), r.PathValue("item"), userID(r), key, req.Choice, req.Rev, req.KeepAgents)
+		if err == nil && !reused {
+			s.wakeDispatch()
+		}
 	} else if kind == "usage_limit" {
 		decision, reused, err = s.Store.DecideUsageLimit(r.Context(), r.PathValue("item"), userID(r), key, req.Choice, req.Rev)
 	} else if kind == "usage_info" {
@@ -252,7 +259,7 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrForbidden):
-			apiError(w, 403, "forbidden", "owner or operator required")
+			apiError(w, 403, "forbidden", "owner or operator required (a pool change: the project owner or an admin)")
 		case errors.Is(err, store.ErrConflict):
 			apiError(w, 409, "conflict", "request key reused with different decision")
 		case errors.Is(err, store.ErrAlreadyResolved):

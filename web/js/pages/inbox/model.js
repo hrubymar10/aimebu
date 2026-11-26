@@ -101,7 +101,7 @@ export function deliveryEvidence(item) {
   return [reason, error].filter(Boolean).join(' ') || 'The reply was held; view the room for context.';
 }
 
-export const KIND_LABELS = { approval: 'Approval', question: 'Question', recovery: 'Recovery', delivery_failed: 'Delivery failed', usage_info: 'Usage notice', usage_limit: 'Usage limit', usage_alert: 'Usage alert' };
+export const KIND_LABELS = { approval: 'Approval', question: 'Question', recovery: 'Recovery', delivery_failed: 'Delivery failed', usage_info: 'Usage notice', usage_limit: 'Usage limit', usage_alert: 'Usage alert', pool_change: 'Pool change' };
 
 const ARCHIVED = ['closed', 'closing'];
 
@@ -127,6 +127,20 @@ export function cardKey(item) {
   if (item.kind === 'recovery' || item.kind === 'delivery_failed') return `${item.id}|${item.rev}|${item.room_lifecycle || ''}`;
   return item.id;
 }
+
+// A pool change's list: each affected agent counted once under its own room, "<room>: leader, 2 workers"; never an agent id.
+export function poolGroups(agents) {
+  const rooms = new Map();
+  for (const agent of agents || []) {
+    const key = agent.room_id || '';
+    if (!rooms.has(key)) rooms.set(key, { room: agent.room_title || 'Room', roles: new Map() });
+    const roles = rooms.get(key).roles, label = (agent.role_label || agent.role_key || 'agent').toLowerCase();
+    roles.set(label, (roles.get(label) || 0) + 1);
+  }
+  return [...rooms.values()].map(({ room, roles }) => ({ room, text: [...roles].map(([label, count]) => (count === 1 ? label : `${count} ${label}s`)).join(', ') }));
+}
+
+export const POOL_CHOICES = [['Respawn on the pool model', 'respawn', 'refresh', 'btn btn-primary'], ['Keep the current model', 'keep', 'check', 'btn']];
 
 export function decisionOptions(item) {
   if (item.kind === 'usage_limit') return (item.options || []).map(label => [label, label.startsWith('Continue:') ? 'continue' : 'abandon']);

@@ -883,6 +883,10 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	// last real activity). It shares the server's lifetime context.
 	service.StartHumanPresence(ctx)
 	service.StartQuotaSwitcher(ctx)
+	// A pool changed while the server was down, or by an older build, may have left agents on a model it no longer lists: raise the Inbox item.
+	if err := service.Store.DetectPoolChanges(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "pool change detection: %v\n", err)
+	}
 	service.StartUpdateCheck(ctx)
 	handler := service.Handler()
 	// With https configured the plain listener sends other machines to it; this machine's own clients (the local supervisor, the command
