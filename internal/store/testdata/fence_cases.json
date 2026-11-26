@@ -1,0 +1,128 @@
+[
+ {
+  "name": "nested item fence, content column 4",
+  "body": "- a\n  - b\n    ```\n    @hidden #hidden\n    ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "fence three columns past a deep item (7 spaces under content column 6)",
+  "body": "- a\n  - b\n    - c\n       ```\n       @hidden #hidden\n       ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "fence under four nested items (8 spaces)",
+  "body": "- a\n  - b\n    - c\n      - d\n        ```\n        @hidden #hidden\n        ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "blank line inside a deep fence keeps the block whole",
+  "body": "- a\n  - b\n    - c\n      - d\n        ```\n        @hidden\n\n        #hidden\n        ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "list-looking line inside a deep fence stays code (8 spaces)",
+  "body": "- a\n  - b\n    - c\n      - d\n        ```\n        - @hidden #hidden\n        ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "list-looking line inside a fence at 7 spaces",
+  "body": "- a\n  - b\n    - c\n       ```\n       - @hidden #hidden\n       ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "ordered item fence",
+  "body": "1. a\n   ```\n   @hidden #hidden\n   ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "longer fence holds shorter inner fences in an item",
+  "body": "- a\n    ````\n    ```\n    @hidden #hidden\n    ````\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "unclosed nested fence is text",
+  "body": "- a\n  - b\n    ```\n    @live #live",
+  "fenced": [],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "fence closer outside the item does not close it",
+  "body": "- a\n  ```\n  @live #live\n- b\n  ```\n",
+  "fenced": [],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "top-level fence",
+  "body": "```\n@hidden #hidden\n```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ }
+]

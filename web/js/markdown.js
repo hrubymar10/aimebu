@@ -145,6 +145,15 @@ const MAX_LIST_DEPTH = 10;
 // Blocks nested inside blocks (a quote or a list item holding blocks) are read to this depth; below it the text is shown as it is.
 const MAX_BLOCK_DEPTH = 8;
 const leadingWidth = line => indentOf(line.match(/^\s*/)[0]);
+// Where an item's text begins on its line (marker and the spaces after it counted), and a line with up to that many columns of indent
+// removed: a fence under an item is read relative to that column, exactly as the server's prose scanner reads it
+// (internal/store/mention_ids.go), so a fence at any depth is code in both. Both are checked against one case table
+// (internal/store/testdata/fence_cases.json).
+const contentColumn = (line, body) => line.slice(0, line.length - body.length).replace(/\t/g, '    ').length;
+const stripColumn = (line, column) => {
+  const expanded = line.replace(/^[ \t]*/, white => white.replace(/\t/g, '    '));
+  return expanded.slice(Math.min(expanded.match(/^ */)[0].length, column));
+};
 // Reads a list starting at lines[start]: every following item line (a single blank line between items is allowed), with deeper
 // indentation nesting a list in the item above, and a change of marker type at the same level starting a new list. Items that
 // begin with [ ] or [x] are task items with a disabled checkbox. Lines indented under an item that are not themselves items
@@ -154,7 +163,7 @@ function readList(lines, start, depth) {
   while (i < lines.length) {
     if (listItem(lines[i])) {
       const m = lines[i].match(LIST_ITEM);
-      const item = { indent: indentOf(m[1]), ordered: !!m[3], number: Number(m[3]), body: m[4], extra: [] };
+      const item = { indent: indentOf(m[1]), column: contentColumn(lines[i], m[4]), ordered: !!m[3], number: Number(m[3]), body: m[4], extra: [] };
       items.push(item); i++;
       // Lines under the item: indented deeper than its marker and not another item. Blank lines count only when more of the item follows.
       let fence = null;
@@ -166,14 +175,14 @@ function readList(lines, start, depth) {
           break;
         }
         if (!fence && (listItem(line) || leadingWidth(line) <= item.indent)) break;
-        const dedented = line.replace(/^ {0,3}/, '');
+        const dedented = stripColumn(line, item.column);
         if (fence) { if (fenceClose(dedented, fence)) fence = null; }
         else {
           const open = fenceOpen(dedented);
           if (open) {
             for (let next = i + 1; next < lines.length; next++) {
               if (lines[next].trim() && leadingWidth(lines[next]) <= item.indent) break;
-              if (fenceClose(lines[next].replace(/^ {0,3}/, ''), open.marker)) { fence = open.marker; break; }
+              if (fenceClose(stripColumn(lines[next], item.column), open.marker)) { fence = open.marker; break; }
             }
           }
         }

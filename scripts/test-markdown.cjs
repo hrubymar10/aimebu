@@ -90,6 +90,17 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
   assert.equal(html('- a\n  ```js\n  never closed'), '<ul><li>a<p>```js</p><p>never closed</p></li></ul>', 'an unclosed fence inside an item is text');
   assert.equal(html('- a\n  ```js\n  never closed\n- b'), '<ul><li>a<p>```js</p><p>never closed</p></li><li>b</li></ul>', 'an unclosed fence does not swallow the next item');
   assert.equal(html('- a\ntext at column 0'), '<ul><li>a</li></ul><p>text at column 0</p>', 'an unindented line ends the list');
+  // The same case table the server's prose scanner is tested with (internal/store/testdata/fence_cases.json): what it calls fenced is
+  // inside a code block here, and what it calls live is outside every code block, at any depth of nesting.
+  const fenceCases = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'internal', 'store', 'testdata', 'fence_cases.json'), 'utf8'));
+  assert.ok(fenceCases.length > 0);
+  for (const tc of fenceCases) {
+    const out = html(tc.body);
+    const code = [...out.matchAll(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g)].map(match => match[1]).join('\n');
+    const prose = out.replace(/<div class="md-codeblock">[\s\S]*?<\/pre><\/div>/g, '');
+    for (const token of tc.fenced) { assert.ok(code.includes(token), `${tc.name}: ${token} is in a code block`); assert.ok(!prose.includes(token), `${tc.name}: ${token} is not outside code`); }
+    for (const token of tc.live) assert.ok(prose.includes(token) && !code.includes(token), `${tc.name}: ${token} is live prose`);
+  }
   // Pathological input: nesting is capped and nothing throws.
   const nesting = text => (text.match(/<ul>/g) || []).length;
   const deep = Array.from({ length: 6000 }, (_, i) => ' '.repeat(i) + '- x').join('\n');
