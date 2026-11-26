@@ -215,6 +215,25 @@ async function main() {
       await page.close();
     }
 
+    // a signed-in person with a remembered room who opens a link: the dialog redeems it, and the address still names the room on screen
+    {
+      const fourth = await owner('/api/projects', { method: 'POST', body: { name: 'Fourth Project', folder: (() => { const dir = path.join(server.tmp, 'fourth'); fs.mkdirSync(dir); return dir; })() } });
+      const join = await owner('/api/invites', { method: 'POST', body: { project_id: fourth.body.id || fourth.body.project?.id, role: 'viewer' } });
+      const page = await signedOut();
+      await page.waitForSelector('#login-view:not([hidden])');
+      await page.type('#login-form [name=login]', 'newcomer'); await page.type('#login-form [name=password]', 'another-long-pass-2');
+      await page.$eval('#login-form', form => form.requestSubmit());
+      await enterApp(page);
+      const room = await page.evaluate(async id => { const rooms = await (await fetch(`/api/projects/${id}/rooms`)).json(); const home = (rooms.rooms || rooms).find(item => item.kind === 'home'); localStorage.setItem('aimebu2.lastRoom', home.id); return home.id; }, projectID);
+      await page.evaluate(token => { location.hash = `invite=${encodeURIComponent(token)}`; location.reload(); }, join.body.token);
+      await page.waitForSelector('.invite-dialog[open]');
+      assert.equal(await page.evaluate(() => location.hash), `#${encodeURIComponent(room)}`, 'the remembered room is opened and addressed before the dialog');
+      await page.$eval('.invite-dialog form', form => form.requestSubmit());
+      await page.waitForFunction(() => !document.querySelector('.invite-dialog').open);
+      assert.equal(await page.evaluate(() => location.hash), `#${encodeURIComponent(room)}`, 'using the link keeps the room in the address');
+      await page.close();
+    }
+
     // a double submit sends one request, in the form, on the card and in the dialog
     {
       const redeemsOf = page => { const posts = []; page.on('request', request => { if (/\/api\/invites\/redeem$/.test(request.url())) posts.push(request.postData()); }); return posts; };
