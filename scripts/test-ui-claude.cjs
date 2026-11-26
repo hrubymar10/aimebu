@@ -13,15 +13,18 @@ async function main() {
   try {
     await login(first);
     // The project the step works in: the scratch git repository, as the smoke creates it through the page.
-    await first.evaluate(async folder => {
+    const actualProjectID = await first.evaluate(async folder => {
       const { csrf_token } = await (await fetch('/api/me')).json();
       const response = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ name: 'UI smoke', folder }) });
       if (!response.ok) throw new Error(`could not create the project: ${response.status} ${await response.text()}`);
+      const project = await response.json();
+      return project.id || project.project?.id;
     }, gitRoot);
-    await first.goto(origin);
+    const homeRoomID = await first.evaluate(async projectID => (await (await fetch(`/api/projects/${projectID}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
+    await first.goto(`${origin}/#${encodeURIComponent(homeRoomID)}`);
+    await first.reload(); // a hash-only navigation stays in the old document, whose room list predates the new project
     await appReady(first);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke', { timeout: 60000 });
-    const actualProjectID = await first.evaluate(async () => (await (await fetch('/api/projects')).json()).find(p => p.name === 'UI smoke').id);
     // Continue a Claude Code session: the Spawn dialog's session button opens a picker of what the machine's supervisor finds in its Claude
     // home (a fixture one here, never the real ~/.claude), by folder or by id; a pick reopens the Spawn dialog for that session.
     {
