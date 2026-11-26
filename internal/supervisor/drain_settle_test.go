@@ -96,3 +96,26 @@ func TestDrainTimeoutWithNoTurnsSkipsGrace(t *testing.T) {
 		t.Fatalf("empty drain waited for grace: %s", elapsed)
 	}
 }
+
+// When the identity read fails at the drain timeout, the drain falls back to the per-id lost-exit write, so legacy rows are still settled.
+func TestDrainTimeoutSettlesLegacyRowsWhenTheIdentityReadFails(t *testing.T) {
+	oldGrace := drainSettleGrace
+	drainSettleGrace = 0
+	t.Cleanup(func() { drainSettleGrace = oldGrace })
+	journal := openTestJournal(t)
+	recordRunningTurn(t, journal, "turn-legacy", 0, 0, "")
+	c := NewClient("machine", "key", "http://unused.invalid", journal, adapter.NewFake())
+	c.active["agent_x"] = "turn-legacy"
+	// The identity read selects pid_start; renaming the column makes it fail while the exit write does not touch it.
+	if _, err := journal.db.Exec(`ALTER TABLE turn_start RENAME COLUMN pid_start TO pid_start_renamed`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.RunningTurnProcesses(context.Background()); err == nil {
+		t.Fatal("the identity read did not fail")
+	}
+	c.settleDrainTimeout()
+	exits, err := journal.PendingExits(context.Background())
+	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-legacy" || exits[0].Exit.ErrorEvent != "supervisor_lost" {
+		t.Fatalf("the failed identity read left the legacy turn unsettled: exits=%+v err=%v", exits, err)
+	}
+}

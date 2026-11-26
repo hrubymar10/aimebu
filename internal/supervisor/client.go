@@ -1945,7 +1945,14 @@ func (c *Client) settleDrainTimeout() {
 	defer cancel()
 	processes, err := c.Journal.RunningTurnProcesses(settleCtx)
 	if err != nil {
+		// The identity read failed, so nothing says which rows are identified: fall back to the per-id lost-exit write the drain always
+		// did. A turn goroutine's own exit that landed first still wins, and a row already ended is not an error.
 		c.report("running turns at the end of the drain could not be checked", err)
+		for _, turnID := range ids {
+			if err := c.exitWrite()(settleCtx, turnID, supervisorLostExit()); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				c.report("a turn running at the end of the drain could not be settled", err)
+			}
+		}
 		return
 	}
 	byID := make(map[string]TurnProcess, len(processes))
