@@ -428,7 +428,7 @@ func (s *Store) PoolRespawnsReady(ctx context.Context) ([]PoolRespawn, error) {
 	var ready []PoolRespawn
 	err := s.Tx(ctx, func(tx *Tx) error {
 		ready = nil
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.agent_id,p.project_id,p.decided_by,a.desired,a.revoked_at IS NOT NULL,r.role_key,COALESCE(a.launcher_id,''),a.model,
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.agent_id,p.project_id,p.decided_by,a.desired,a.revoked_at IS NOT NULL,a.pool_origin,r.role_key,COALESCE(a.launcher_id,''),a.model,
 			EXISTS(SELECT 1 FROM turn t WHERE t.agent_id=a.id AND `+openFlowTurnPredicate+`),
 			EXISTS(SELECT 1 FROM agent_switch s WHERE s.agent_id=a.id AND s.state IN ('draining','starting'))
 			FROM pool_respawn p JOIN agent a ON a.id=p.agent_id JOIN role r ON r.id=a.role_id ORDER BY p.requested_at,p.agent_id`)
@@ -437,13 +437,13 @@ func (s *Store) PoolRespawnsReady(ctx context.Context) ([]PoolRespawn, error) {
 		}
 		type queued struct {
 			PoolRespawn
-			desired, roleKey, launcher, model string
-			revoked, busy, switching          bool
+			desired, roleKey, launcher, model, origin string
+			revoked, busy, switching                  bool
 		}
 		var all []queued
 		for rows.Next() {
 			var q queued
-			if err := rows.Scan(&q.AgentID, &q.ProjectID, &q.DecidedBy, &q.desired, &q.revoked, &q.roleKey, &q.launcher, &q.model, &q.busy, &q.switching); err != nil {
+			if err := rows.Scan(&q.AgentID, &q.ProjectID, &q.DecidedBy, &q.desired, &q.revoked, &q.origin, &q.roleKey, &q.launcher, &q.model, &q.busy, &q.switching); err != nil {
 				rows.Close()
 				return err
 			}
@@ -459,7 +459,9 @@ func (s *Store) PoolRespawnsReady(ctx context.Context) ([]PoolRespawn, error) {
 			if err != nil {
 				return err
 			}
-			if q.revoked || q.desired != "active" || poolHas(pool, q.launcher, q.model) {
+			// An agent a person switched away from the pool (origin no longer "pool") left the queue's reach with its switch: drop it here too,
+			// even when the switch path already deleted the row (an older row, or a switch that began before this pass read the queue).
+			if q.revoked || q.desired != "active" || q.origin != PoolOriginPool || poolHas(pool, q.launcher, q.model) {
 				if _, err := tx.Exec(`DELETE FROM pool_respawn WHERE agent_id=?`, q.AgentID); err != nil {
 					return err
 				}

@@ -858,7 +858,10 @@ Inbox, usage, events, settings
   recorded as its actor (the decision was authorised when made, so the person's
   owner/operator membership check of the switch route is skipped for this path
   only), and each respawn advances the role's rotation cursor as a spawn does,
-  so several agents of a role spread over the pool. A respawn that cannot begin
+  so several agents of a role spread over the pool. An agent
+  switched to an explicit choice (a person's own switch) is taken off the
+  respawn queue when the switch is requested, and the queue's pass drops any
+  queued agent whose origin is no longer `pool`. A respawn that cannot begin
   (machine unavailable, launcher missing, ...) raises the item again, or
   updates the open one, listing the agent with `respawn_error` (`respawn
   failed: <reason>`); the person can respawn again or keep. A kept agent is recorded against the pool in force

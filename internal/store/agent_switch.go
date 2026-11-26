@@ -167,8 +167,15 @@ func (tx *Tx) BeginAgentSwitchToLauncher(id, actorID, roomID, tool, variant, mod
 		return AgentCard{}, err
 	}
 	// A switch is somebody's choice of harness and model, not the pool's: the agent is not flagged when a pool changes (a respawn on the
-	// pool marks itself "pool" again once it has begun).
+	// pool marks itself "pool" again once it has begun). An explicit switch also takes the agent off the respawn queue the pool change may
+	// have queued it on, and brings the project's pool card back in line (the agent may have been its last affected one).
 	if _, err := tx.Exec(`UPDATE agent SET pool_origin='explicit',pool_kept_sig=NULL WHERE id=? AND pool_origin IN ('pool','unknown')`, id); err != nil {
+		return AgentCard{}, err
+	}
+	if _, err := tx.Exec(`DELETE FROM pool_respawn WHERE agent_id=?`, id); err != nil {
+		return AgentCard{}, err
+	}
+	if err := tx.syncPoolChange(projectID); err != nil {
 		return AgentCard{}, err
 	}
 	if _, err := tx.AppendEvent(Event{Kind: "agent_switch_requested", ProjectID: projectID, AgentID: id,

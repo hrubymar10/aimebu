@@ -403,3 +403,57 @@ func TestPoolChangeEventsFireOnEveryTransitionAndAnUnchangedSaveLeavesTheRevAlon
 	}
 	expectEvents("inbox_item_resolved", " AND json_extract(payload_json,'$.choice')='keep'", 1)
 }
+
+func TestPoolRespawnDropsAnAgentSwitchedAwayFromThePool(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	item := f.openItems(t, "usr_owner")[0]
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_owner", "k-explicit", PoolChangeRespawn, int(item.Rev), nil); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := f.s.PoolRespawnsReady(ctx); err != nil || len(ready) != 1 || ready[0].AgentID != f.worker.ID {
+		t.Fatalf("queued: %+v %v", ready, err)
+	}
+	// The person switches the agent to a model the pool does not list.
+	card, err := f.s.AgentCardByID(ctx, f.worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.BeginAgentSwitch(f.worker.ID, "usr_owner", f.room.ID, "claude", "native", "haiku", "anthropic", card.DesiredRev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM pool_respawn WHERE agent_id=?`, f.worker.ID).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("the switch left the respawn queued: %d (%v)", queued, err)
+	}
+	if ready, err := f.s.PoolRespawnsReady(ctx); err != nil || len(ready) != 0 {
+		t.Fatalf("ready after an explicit switch: %+v %v", ready, err)
+	}
+}
+
+// The queue's own pass also drops an agent whose origin is no longer "pool" (an older row, or a switch that began before the pass read it).
+func TestPoolRespawnsReadyDropsAnAgentThatIsNotFromThePool(t *testing.T) {
+	t.Parallel()
+	f := newPoolFixture(t)
+	ctx := context.Background()
+	f.setPool(t, "worker", f.b)
+	item := f.openItems(t, "usr_owner")[0]
+	if _, _, err := f.s.DecidePoolChange(ctx, item.ID, "usr_owner", "k-origin", PoolChangeRespawn, int(item.Rev), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec(`UPDATE agent SET pool_origin='explicit' WHERE id=?`, f.worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := f.s.PoolRespawnsReady(ctx); err != nil || len(ready) != 0 {
+		t.Fatalf("ready for an agent that is not from the pool: %+v %v", ready, err)
+	}
+	var queued int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM pool_respawn WHERE agent_id=?`, f.worker.ID).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("the row stayed: %d (%v)", queued, err)
+	}
+}
