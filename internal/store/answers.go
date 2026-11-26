@@ -21,6 +21,10 @@ type AnswerInput struct {
 	Candidate               []byte
 	Parsed                  *answer.Candidate
 	ParseError              string
+	// AnswerTool, when set, is the supervisor's report on the answer frame of whether this turn was offered the submit_answer tool
+	// (the same test its adapter applied). nil is an answer an older supervisor sent: the turn's column stays NULL and the held-reply
+	// repair note falls back to the machine's last probed harness version.
+	AnswerTool *bool
 }
 
 type AnswerReceipt struct {
@@ -61,6 +65,9 @@ type answerTurn struct {
 	// handoffOutcomeRequired makes a handoff without an outcome invalid: the supervisor the turn was dispatched to reported
 	// supports_handoff_outcome (Admission), so only then did the agent's prompt and response schema offer the field.
 	handoffOutcomeRequired bool
+	// answerTool is what the turn's supervisor reported about the submit_answer tool on the answer frame; NULL before the first
+	// answer, or when the answer came from a supervisor that does not report the fact.
+	answerTool sql.NullInt64
 }
 
 // ApplyAnswer owns the answer's commit and receipt in one server transaction.
@@ -92,6 +99,20 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 		}
 		if turn.mode == "correction" && (turn.parentID == "" || input.AnswerRev != 1) || turn.mode != "correction" && input.AnswerRev != 0 {
 			return ErrInvalidTransition
+		}
+		// The supervisor reports, on the answer frame, whether this turn was offered the submit_answer tool — the same test its
+		// adapter applied before it marked the turn's bus endpoint with answer_tool=1. The turn keeps the fact, so the held-reply
+		// repair note follows what the turn actually had; a frame without the report (an older supervisor's) leaves the column NULL
+		// and the note falls back to the machine's last probed harness version.
+		if input.AnswerTool != nil {
+			value := 0
+			if *input.AnswerTool {
+				value = 1
+			}
+			if _, err := tx.Exec(`UPDATE turn SET answer_tool=? WHERE id=?`, value, turn.id); err != nil {
+				return err
+			}
+			turn.answerTool = sql.NullInt64{Int64: int64(value), Valid: true}
 		}
 		parent := turn
 		if turn.mode == "correction" {
@@ -244,8 +265,8 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 func (tx *Tx) answerTurn(id string) (answerTurn, error) {
 	var turn answerTurn
 	var parent, policy sql.NullString
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.parent_turn_id,t.agent_id,t.session_id,t.room_id,t.mode,t.exec,t.generation,t.attempt,t.terminal_event,a.recovery_block,t.policy_json,t.handoff_outcome_required FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, id).
-		Scan(&turn.id, &parent, &turn.agentID, &turn.sessionID, &turn.roomID, &turn.mode, &turn.exec, &turn.generation, &turn.attempt, &turn.terminal, &turn.blocked, &policy, &turn.handoffOutcomeRequired)
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.parent_turn_id,t.agent_id,t.session_id,t.room_id,t.mode,t.exec,t.generation,t.attempt,t.terminal_event,a.recovery_block,t.policy_json,t.handoff_outcome_required,t.answer_tool FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, id).
+		Scan(&turn.id, &parent, &turn.agentID, &turn.sessionID, &turn.roomID, &turn.mode, &turn.exec, &turn.generation, &turn.attempt, &turn.terminal, &turn.blocked, &policy, &turn.handoffOutcomeRequired, &turn.answerTool)
 	turn.parentID, turn.policyJSON = parent.String, policy.String
 	return turn, err
 }
@@ -590,7 +611,15 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 		return false, err
 	}
 	if tool == "opencode" || tool == "pi" {
-		if tx.answerToolSupported(tool, variant, launcherID, harnesses) {
+		// What the turn actually had wins: the supervisor reports on the answer frame whether its adapter offered the tool for this
+		// turn (the same test that marked the turn's bus endpoint), a launcher turn included. An answer that carries no report — an
+		// older supervisor's, or one sent before the upgrade — falls back to the machine's last probed version, which knows nothing
+		// about a launcher's harness.
+		offered := turn.answerTool.Valid && turn.answerTool.Int64 == 1
+		if !turn.answerTool.Valid {
+			offered = tx.answerToolSupported(tool, variant, launcherID, harnesses)
+		}
+		if offered {
 			body += " End the turn by calling submit_answer. If the tool is unavailable, use this exact answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>."
 		} else {
 			// The turn had no submit_answer tool (an older or unprobed CLI), so naming it would send the agent after a tool it cannot call.
@@ -601,9 +630,10 @@ func (tx *Tx) invalidReplyNote(turn answerTurn, input AnswerInput, detail string
 	return err == nil, err
 }
 
-// answerToolSupported reports whether the agent's turns had the submit_answer tool: the version the machine last probed for its harness is at
-// or above the supported release. The server keeps no probed version for a launcher's harness, so a launcher agent counts as unsupported and keeps
-// the plain-text repair note, which is correct for every version.
+// answerToolSupported is the held-reply note's fallback for an answer whose supervisor did not report whether the turn had the
+// submit_answer tool (an older build): it reads the version the machine last probed for the agent's harness. The server keeps no probed
+// version for a launcher's harness, so a launcher agent counts as unsupported and keeps the plain-text repair note, which is correct for
+// every version; a turn whose supervisor does report the fact is judged by the turn instead.
 func (tx *Tx) answerToolSupported(tool, variant, launcherID, harnesses string) bool {
 	if launcherID != "" {
 		return false

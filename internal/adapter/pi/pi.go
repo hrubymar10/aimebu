@@ -225,7 +225,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
 			tools = append(tools, "codemode")
 		}
-		if adapter.SupportsAnswerTool("pi", spec.HarnessVersion) {
+		if adapter.OffersAnswerTool("pi", spec) {
 			endpoint = adapter.AnswerToolEndpoint(endpoint)
 		}
 		servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": "Bearer ${" + adapter.AgentKeyEnv + "}"}, "exposure": "direct"}
@@ -349,7 +349,7 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
-	if !adapter.SupportsAnswerTool("pi", spec.HarnessVersion) || spec.Mode != "" && spec.Mode != adapter.ModeNormal {
+	if !adapter.OffersAnswerTool("pi", spec) {
 		legacy := turnDeltas
 		legacy.Output = legacyOutput
 		return prompt.ForContext(legacy, prompt.Build(legacy), spec.ContextJSON)

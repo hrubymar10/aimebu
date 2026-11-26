@@ -91,7 +91,7 @@ func TestNativeSessionEventReplaysUntilTerminalReceipt(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].Handle != "thread-1" || events[0].SourceEventID != "thread-source" {
 		t.Fatalf("replay=%+v err=%v", events, err)
 	}
-	if _, err := j.RecordAnswer(ctx, "turn-1", 0, "digest", json.RawMessage(`{"messages":[]}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "turn-1", 0, "digest", json.RawMessage(`{"messages":[]}`), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.RecordExit(ctx, "turn-1", 0, true, false); err != nil {
@@ -162,7 +162,7 @@ func TestJournalDurableStartAndTerminalReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer := json.RawMessage(`{"messages":[]}`)
-	if already, err := j.RecordAnswer(ctx, "turn-1", 0, "digest-1", answer); err != nil || already {
+	if already, err := j.RecordAnswer(ctx, "turn-1", 0, "digest-1", answer, false); err != nil || already {
 		t.Fatalf("answer=%v %v", already, err)
 	}
 	open, err = j.OpenTurns(ctx)
@@ -330,7 +330,7 @@ func TestCorrectionRequestedReceiptBecomesSuperseded(t *testing.T) {
 	if _, err := j.RecordStart(ctx, start); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.RecordAnswer(ctx, start.TurnID, 0, "digest", json.RawMessage(`{"messages":[]}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, start.TurnID, 0, "digest", json.RawMessage(`{"messages":[]}`), false); err != nil {
 		t.Fatal(err)
 	}
 	for _, result := range []string{"correction_requested", "superseded"} {
@@ -367,7 +367,7 @@ func TestAcknowledgedAnswerlessExitLeavesHelloInventory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := j.RecordAnswer(ctx, "turn-answered", 0, "digest", json.RawMessage(`{"messages":[]}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "turn-answered", 0, "digest", json.RawMessage(`{"messages":[]}`), false); err != nil {
 		t.Fatal(err)
 	}
 	open, err := j.OpenTurns(ctx)

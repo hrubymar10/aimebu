@@ -991,7 +991,7 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 			parsed, parseErr = answer.Parse([]byte(frame.Candidate), mode == "diagnostic")
 		}
 		input := store.AnswerInput{TurnID: frame.TurnID, AgentID: frame.AgentID, Generation: frame.Generation,
-			AnswerRev: frame.AnswerRev, Digest: frame.Digest, Candidate: []byte(frame.Candidate)}
+			AnswerRev: frame.AnswerRev, Digest: frame.Digest, Candidate: []byte(frame.Candidate), AnswerTool: frame.AnswerTool}
 		if parseErr != nil {
 			input.ParseError = parseErr.Error()
 		} else {

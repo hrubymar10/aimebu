@@ -13,12 +13,14 @@ func dropPoolProvenance(t *testing.T, s *Store) {
 	}
 }
 
-// dropSupervisorInstances undoes migration 140 (the instance table, the owner columns and their indexes), for a test that replays it.
+// dropSupervisorInstances undoes migration 140 (the instance table, the owner columns and their indexes) and, with dropPoolProvenance,
+// migration 143's tables and columns and migration 145's answer-tool column, for a test that replays them.
 func dropSupervisorInstances(t *testing.T, s *Store) {
 	t.Helper()
 	dropPoolProvenance(t, s)
 	for _, statement := range []string{`DROP INDEX turn_open_journal`, `DROP INDEX command_job_open_journal`,
-		`ALTER TABLE turn DROP COLUMN journal_id`, `ALTER TABLE command_job DROP COLUMN journal_id`, `DROP TABLE supervisor_instance`} {
+		`ALTER TABLE turn DROP COLUMN journal_id`, `ALTER TABLE command_job DROP COLUMN journal_id`, `DROP TABLE supervisor_instance`,
+		`ALTER TABLE turn DROP COLUMN answer_tool`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}

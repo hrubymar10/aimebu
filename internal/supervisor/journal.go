@@ -223,6 +223,12 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	// Whether the turn was offered the submit_answer tool, as the adapter decided for that turn. It rides the answer frame and a replay
+	// of the row sends it again; NULL is a row an older supervisor wrote, which replays with no report.
+	if err := ensureColumn(ctx, db, "answer", "answer_tool", `ALTER TABLE answer ADD COLUMN answer_tool INTEGER`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
 		db.Close()
@@ -593,7 +599,7 @@ func (j *Journal) SettleRefusedExit(ctx context.Context, agentID, turnID string)
 	return generation, true, nil
 }
 
-func (j *Journal) RecordAnswer(ctx context.Context, turnID string, answerRev int, digest string, candidate json.RawMessage) (already bool, err error) {
+func (j *Journal) RecordAnswer(ctx context.Context, turnID string, answerRev int, digest string, candidate json.RawMessage, answerTool bool) (already bool, err error) {
 	tx, err := j.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -610,7 +616,7 @@ func (j *Journal) RecordAnswer(ctx context.Context, turnID string, answerRev int
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO answer(turn_id,answer_rev,digest,candidate,created_at) VALUES (?,?,?,?,?)`, turnID, answerRev, digest, []byte(candidate), timestamp())
+	_, err = tx.ExecContext(ctx, `INSERT INTO answer(turn_id,answer_rev,digest,candidate,answer_tool,created_at) VALUES (?,?,?,?,?,?)`, turnID, answerRev, digest, []byte(candidate), answerTool, timestamp())
 	if err != nil {
 		return false, err
 	}
@@ -741,10 +747,13 @@ type PendingAnswer struct {
 	TurnID, AgentID, Digest string
 	Generation, AnswerRev   int
 	Candidate               json.RawMessage
+	// AnswerTool says whether the turn was offered the submit_answer tool, as the answer frame reports it. nil is a row an older
+	// supervisor wrote, which replays with no report.
+	AnswerTool *bool
 }
 
 func (j *Journal) PendingAnswers(ctx context.Context) ([]PendingAnswer, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT a.turn_id,t.agent_id,t.generation,a.answer_rev,a.digest,a.candidate FROM answer a JOIN turn_start t ON t.turn_id=a.turn_id WHERE a.candidate IS NOT NULL ORDER BY a.created_at,a.turn_id`)
+	rows, err := j.db.QueryContext(ctx, `SELECT a.turn_id,t.agent_id,t.generation,a.answer_rev,a.digest,a.candidate,a.answer_tool FROM answer a JOIN turn_start t ON t.turn_id=a.turn_id WHERE a.candidate IS NOT NULL ORDER BY a.created_at,a.turn_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -752,8 +761,13 @@ func (j *Journal) PendingAnswers(ctx context.Context) ([]PendingAnswer, error) {
 	answers := []PendingAnswer{}
 	for rows.Next() {
 		var answer PendingAnswer
-		if err := rows.Scan(&answer.TurnID, &answer.AgentID, &answer.Generation, &answer.AnswerRev, &answer.Digest, &answer.Candidate); err != nil {
+		var tool sql.NullInt64
+		if err := rows.Scan(&answer.TurnID, &answer.AgentID, &answer.Generation, &answer.AnswerRev, &answer.Digest, &answer.Candidate, &tool); err != nil {
 			return nil, err
+		}
+		if tool.Valid {
+			value := tool.Int64 == 1
+			answer.AnswerTool = &value
 		}
 		answers = append(answers, answer)
 	}

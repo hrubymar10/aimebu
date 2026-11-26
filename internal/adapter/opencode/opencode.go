@@ -164,7 +164,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		if err != nil {
 			return nil, err
 		}
-		if adapter.SupportsAnswerTool("opencode", spec.HarnessVersion) {
+		if adapter.OffersAnswerTool("opencode", spec) {
 			endpoint = adapter.AnswerToolEndpoint(endpoint)
 		}
 		servers := map[string]any{}
@@ -281,7 +281,7 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
-	if !adapter.SupportsAnswerTool("opencode", spec.HarnessVersion) || spec.Mode != "" && spec.Mode != adapter.ModeNormal {
+	if !adapter.OffersAnswerTool("opencode", spec) {
 		legacy := turnDeltas
 		legacy.Output = legacyOutput
 		return prompt.ForContext(legacy, prompt.Build(legacy), spec.ContextJSON)

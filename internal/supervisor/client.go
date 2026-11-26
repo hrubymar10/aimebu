@@ -591,7 +591,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		return err
 	}
 	for _, answer := range pending {
-		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: answer.AgentID, Generation: answer.Generation, TurnID: answer.TurnID, AnswerRev: answer.AnswerRev, Digest: answer.Digest, Candidate: string(answer.Candidate)}); err != nil {
+		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: answer.AgentID, Generation: answer.Generation, TurnID: answer.TurnID, AnswerRev: answer.AnswerRev, Digest: answer.Digest, Candidate: string(answer.Candidate), AnswerTool: answer.AnswerTool}); err != nil {
 			return err
 		}
 	}
@@ -1245,6 +1245,10 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 			spec.HarnessVersion = row.Version
 		}
 	}
+	// Whether this turn is offered the submit_answer tool: the same test the turn's OpenCode or Pi adapter applies before it marks
+	// the turn's bus endpoint with answer_tool=1, named by the tool the adapter is. It rides the turn's answer frame — and the
+	// journal, so a replay sends it too — and the server's held-reply repair note follows it, a launcher turn included.
+	answerTool := adapter.OffersAnswerTool(delivery.Agent.Tool, spec)
 	if delivery.Mode == adapter.ModeNormal {
 		access, err := c.agentToolsAccess(delivery.AgentID)
 		if err != nil {
@@ -1432,7 +1436,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 			// A Docker launcher that found its container being replaced started nothing: the same turn is started again (see containerRestart).
 			restart = func() (adapter.Turn, error) { return c.startTurn(ctx, spec, sinkWriter, cred) }
 		}
-		c.runTurnRestartable(ctx, delivery, turn, restart)
+		c.runTurnRestartable(ctx, delivery, turn, restart, answerTool)
 		if sink != nil {
 			// The adapter closes its event stream only after it has read the harness's stderr to the end, so nothing is written after this.
 			_ = sink.Close()
@@ -1496,12 +1500,14 @@ func turnEventFrame(agentID string, generation int, turnID string, event adapter
 }
 
 func (c *Client) runTurn(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn) {
-	c.runTurnRestartable(ctx, delivery, turn, nil)
+	// No turn spec rides this entry (tests use it), so no harness version is known and the answer frame reports no tool.
+	c.runTurnRestartable(ctx, delivery, turn, nil, false)
 }
 
 // runTurnRestartable runs a turn to its end like runTurn. restart, when it is not nil, starts the turn's process again: it is used for a
-// turn whose launcher found its container being replaced and started nothing (see containerRestart).
-func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn, restart func() (adapter.Turn, error)) {
+// turn whose launcher found its container being replaced and started nothing (see containerRestart). answerTool is what the turn's adapter
+// decided about the submit_answer tool (adapter.OffersAnswerTool on the delivered spec); it rides the turn's answer frame.
+func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Delivery, turn adapter.Turn, restart func() (adapter.Turn, error), answerTool bool) {
 	defer c.turns.Done()
 	// Counted from before release() to after the process frame (deferred, so every return is covered): until then the turn is retire-
 	// blocking work although its agent's admission is already free.
@@ -1581,7 +1587,8 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 			sum := sha256.Sum256(event.Answer)
 			frame.Digest = hex.EncodeToString(sum[:])
 			frame.Candidate = string(event.Answer)
-			if _, err := c.Journal.RecordAnswer(journalCtx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer); err != nil {
+			frame.AnswerTool = &answerTool
+			if _, err := c.Journal.RecordAnswer(journalCtx, delivery.TurnID, frame.AnswerRev, frame.Digest, event.Answer, answerTool); err != nil {
 				abandon(err)
 				return
 			}

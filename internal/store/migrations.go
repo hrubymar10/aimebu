@@ -2291,6 +2291,12 @@ WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND d
   AND id IN ('role_leader_default','role_dispatcher_default','role_advisor_default',
     'role_worker_default','role_reviewer_default','role_researcher_default',
     'role_sec-reviewer_default','role_test-reviewer_default','role_ux-reviewer_default');
+`}, {145, `
+-- Whether the turn was offered the submit_answer tool, as the supervisor that ran it reported on the answer frame: the same test its
+-- adapter applies before it marks the turn's bus endpoint with answer_tool=1, so a launcher turn's fact rides along. The held-reply
+-- repair note follows this, because the machine's last probed harness version says nothing about a launcher's harness. NULL is every
+-- turn answered before this, and every answer an older supervisor sent: the note then falls back to the probed version.
+ALTER TABLE turn ADD COLUMN answer_tool INTEGER CHECK (answer_tool IS NULL OR answer_tool IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

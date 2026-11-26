@@ -198,7 +198,7 @@ func TestJournalFailureKillsAndWaitsForHarness(t *testing.T) {
 			}},
 		{name: "answer", emit: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(`{"messages":[]}`)},
 			inject: func(ctx context.Context, j *Journal, turnID string) error {
-				_, err := j.RecordAnswer(ctx, turnID, 0, "conflicting-digest", json.RawMessage(`{}`))
+				_, err := j.RecordAnswer(ctx, turnID, 0, "conflicting-digest", json.RawMessage(`{}`), false)
 				return err
 			}},
 	}

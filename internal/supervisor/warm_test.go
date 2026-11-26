@@ -444,7 +444,7 @@ func (h *warmHarness) run(agent string, mutate func(*adapter.TurnSpec)) adapter.
 	if h.restartable {
 		restart = func() (adapter.Turn, error) { return h.c.startTurn(ctx, spec, nil, h.cred) }
 	}
-	h.c.runTurnRestartable(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent, CheckoutPath: spec.CheckoutPath}, turn, restart)
+	h.c.runTurnRestartable(ctx, protocol.Delivery{AgentID: agent, TurnID: id, Generation: 1, DesiredRev: 1, Mode: spec.Mode, Agent: spec.Agent, CheckoutPath: spec.CheckoutPath}, turn, restart, adapter.OffersAnswerTool(spec.Agent.Tool, spec))
 	return turn
 }
 

@@ -312,8 +312,12 @@ type Frame struct {
 	Digest         string              `json:"digest,omitempty"`
 	Candidate      string              `json:"candidate,omitempty"`
 	AnswerTooLarge bool                `json:"answer_too_large,omitempty"`
-	Exit           *adapter.ExitInfo   `json:"exit,omitempty"`
-	Result         string              `json:"result,omitempty"`
+	// AnswerTool, on an answer frame, says whether that turn was offered the submit_answer tool: the supervisor sends what its adapter
+	// decided for the turn (adapter.OffersAnswerTool), and the server keeps it on the turn for the held-reply repair note. nil is an
+	// answer from a supervisor that does not report the fact, which the server judges by its fallback.
+	AnswerTool *bool             `json:"answer_tool,omitempty"`
+	Exit       *adapter.ExitInfo `json:"exit,omitempty"`
+	Result     string            `json:"result,omitempty"`
 	// Reason, on a turn_interrupt frame, says in a few words why the turn is cut (for the supervisor's log).
 	Reason  string          `json:"reason,omitempty"`
 	Details json.RawMessage `json:"details,omitempty"`

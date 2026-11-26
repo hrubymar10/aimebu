@@ -1312,6 +1312,16 @@ older supervisor, still running until the swap replaces it or on a remote machin
 updated, gives its agents a schema without the field: their handoffs are committed without an
 outcome and shown without one, and `aimebu doctor` lists the missing flag.
 
+**Answer tool.** The OpenCode and Pi adapters offer the `submit_answer` tool to a normal-mode turn whose probed
+harness version supports it (OpenCode 1.19.6, Pi 1.6.1 or newer) and mark the turn's bus endpoint with
+`answer_tool=1` by one shared test (`adapter.OffersAnswerTool`). The supervisor sends the same test's result on the
+turn's answer frame (`answer_tool`) and journals it with the answer, so a replay after a reconnect sends it too. The
+server keeps the fact on the turn (`turn.answer_tool`) and its held-reply repair note asks for `submit_answer`
+exactly when the turn had the tool — a launcher agent's turn included, whose harness version the server keeps no
+probe of. An answer frame without the field is one an older supervisor sent: the server then falls back to the
+machine's last probed harness version, which knows nothing about a launcher's harness and keeps the schema-only
+note.
+
 The server can also ask a supervisor to **save an attachment** into an agent's workspace. A
 supervisor that announces `supports_attachment_save` in `hello` takes an `attachment_save`
 frame (agent, turn, attachment) when `attachment_get` runs in the server, over the HTTP MCP

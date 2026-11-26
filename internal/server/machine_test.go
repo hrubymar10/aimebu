@@ -309,7 +309,7 @@ func TestSupervisorRestartAfterReceiptWithoutExitRequiresRecovery(t *testing.T) 
 	candidate := []byte(`{"messages":[]}`)
 	sum := sha256.Sum256(candidate)
 	digest := hex.EncodeToString(sum[:])
-	if _, err := journal.RecordAnswer(ctx, turn.ID, 0, digest, candidate); err != nil {
+	if _, err := journal.RecordAnswer(ctx, turn.ID, 0, digest, candidate, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := f.db.HoldAnswer(ctx, store.HeldAnswer{TurnID: turn.ID, AgentID: agent.ID, Generation: 0, AnswerRev: 0, Digest: digest, Candidate: candidate, Reason: "not_validated"}); err != nil {
@@ -867,7 +867,7 @@ func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 	if err := j.RecordExit(ctx, turn.ID, 0, true, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.RecordAnswer(ctx, turn.ID, 0, digest, answer); err != nil {
+	if _, err := j.RecordAnswer(ctx, turn.ID, 0, digest, answer, false); err != nil {
 		t.Fatal(err)
 	}
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, j, adapter.NewFake())

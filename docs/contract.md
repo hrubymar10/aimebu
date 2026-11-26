@@ -1233,7 +1233,12 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   the author also gets a system note "Your previous reply was held: <reason>"
   (`OnlyTargets` the author; a known parser field is named and answer content
   is never echoed). For OpenCode and Pi the note includes the exact
-  `submit_answer` schema as a fallback repair guide. The note is written once
+  `submit_answer` schema as a fallback repair guide, and asks for
+  `submit_answer` exactly when that turn was offered the tool — the fact the
+  turn's `answer` frame reported, kept on the turn (`turn.answer_tool`,
+  migration 145), a launcher turn's included. An answer that carried no
+  report (an older supervisor's) is judged by the machine's last probed
+  harness version instead. The note is written once
   per held receipt (a replay of the same digest returns the stored receipt).
   It wakes the author, so a turn
   that was itself woken by such a note and is held again gets no second note:
@@ -2162,6 +2167,16 @@ it never silently reruns a turn with uncertain effects.
   supervisor sends `answer_too_large:true` with the original digest and no
   candidate when either limit would be exceeded, so the server records a
   receipt with an `answer too large` error instead of dropping the socket.
+  `answer_tool:true|false` says whether that turn was offered the
+  `submit_answer` tool (§4.4): the supervisor sends what its adapter decided
+  for the turn — the same mode-and-probed-version test that marked the turn's
+  bus endpoint with `answer_tool=1` — and journals the fact with the answer,
+  so a replay after a reconnect sends it too. The server keeps the fact on
+  the turn (`turn.answer_tool`, migration 145) and the held-reply repair note
+  follows it. An `answer` without the field is one an older supervisor sent:
+  the server then judges the note by the machine's last probed harness
+  version. Machine frames decode with plain JSON unmarshalling on both sides,
+  so a server that does not know the field ignores it and keeps working.
 - M→S `process{v, agent_id, generation, turn_id,
   exit:{exit_code, terminal_event, cancel_intent, stderr_tail?, error_event?,
   limit_stall?, interrupted?, work_tree?}}`. `work_tree` rides a `limit_stall`

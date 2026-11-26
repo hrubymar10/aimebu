@@ -76,7 +76,7 @@ func TestPruneSettledDropsHeavyDataOfSettledTurnsOnly(t *testing.T) {
 	settle(t, j, ctx, "plain")
 	startTurn(t, j, ctx, "answered", 2)
 	settle(t, j, ctx, "answered")
-	if _, err := j.RecordAnswer(ctx, "answered", 0, "d", json.RawMessage(`{"m":1}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "answered", 0, "d", json.RawMessage(`{"m":1}`), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.RecordReceipt(ctx, protocol.ReceiptBody{TurnID: "answered", Digest: "d", Result: "committed"}); err != nil {
@@ -90,12 +90,12 @@ func TestPruneSettledDropsHeavyDataOfSettledTurnsOnly(t *testing.T) {
 	}
 	startTurn(t, j, ctx, "pending-answer", 2)
 	settle(t, j, ctx, "pending-answer")
-	if _, err := j.RecordAnswer(ctx, "pending-answer", 0, "d", json.RawMessage(`{"m":1}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "pending-answer", 0, "d", json.RawMessage(`{"m":1}`), false); err != nil {
 		t.Fatal(err)
 	}
 	startTurn(t, j, ctx, "awaiting-receipt", 2) // answered, candidate already null by a non-terminal... kept: no terminal receipt
 	settle(t, j, ctx, "awaiting-receipt")
-	if _, err := j.RecordAnswer(ctx, "awaiting-receipt", 0, "d", json.RawMessage(`{"m":1}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "awaiting-receipt", 0, "d", json.RawMessage(`{"m":1}`), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.RecordReceipt(ctx, protocol.ReceiptBody{TurnID: "awaiting-receipt", Digest: "d", Result: "correction_requested"}); err != nil {
