@@ -45,6 +45,22 @@ After 24 hours without
 a server connection and with no active turn or command, it exits by itself.
 Its output is in `supervisor/aimebu.log`.
 
+### Shutdown and the drain
+
+A SIGTERM ends a supervisor the same way whether it is local or remote: it
+stops accepting new work, interrupts its running turns, and waits up to 40
+seconds for their journal writes (an owner restart of the local supervisor is
+the same drain, asked with SIGUSR1). When the wait runs out, the supervisor
+ends what is still running (a kill of the turn's process) and, after a short
+grace, records a `supervisor_lost` exit for every turn the journal still lists
+as running, so it never exits with a turn whose exit it never journaled; the
+exits are replayed to the server by the next connection or drain instance.
+A turn whose exit info cannot be written at all is retried with a short
+bounded backoff; when the write still fails, the supervisor reports it and
+keeps the exit in memory, tries the write again while it runs, and counts the
+unwritten exit as work it still owes, so an instance holding one does not
+retire as if the journal were settled.
+
 ### Side by side
 
 An upgrade starts a new supervisor instance next to the old one; nothing is

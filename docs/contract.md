@@ -1658,9 +1658,16 @@ continue while the server is absent and reconcile over the machine WebSocket
 on reconnect. The detached supervisor exits after 24 hours without a server
 connection when it has no active turn or command. `aimebu supervisor status`
 and `restart` inspect or replace it; `aimebu server stop --with-supervisor`
-stops it explicitly. Restart interrupts active turns and waits up to 40
-seconds for their journal writes. The supervisor's hello includes its build
-version and a digest of the environment that affects turns. Each supervisor
+stops it explicitly. Restart interrupts active turns and waits up to 40 seconds for
+their journal writes. A SIGTERM drains a supervisor the same way whether it is
+local or remote. When the drain's wait runs out, the supervisor ends what is
+still running and records a `supervisor_lost` exit for every turn its journal
+still lists as running before it exits, so it never leaves a running row
+behind. A turn whose exit info cannot be written is retried with a bounded
+backoff; when the write keeps failing, the supervisor reports it, keeps the
+exit in memory and retries the write while it runs, and counts the unwritten
+exit as work a retiring instance still owes. The supervisor's hello includes
+its build version and a digest of the environment that affects turns. Each supervisor
 instance has its own journal and connection, identified by `journal_id`. A
 matching instance takes new work; a mismatched or `drain_only` instance retires.
 The newest matching hello becomes active and the previous active instance

@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -526,6 +527,158 @@ func (t *stubbornTurn) Cancel() error                { return nil }
 func (t *stubbornTurn) Wait() (adapter.ExitInfo, error) {
 	<-t.done
 	return adapter.ExitInfo{}, nil
+}
+
+// exitRetryTurn is a turn whose process ends on its own with the given exit: only its events channel has to be closed by the test.
+type exitRetryTurn struct{ events chan adapter.Event }
+
+func (t *exitRetryTurn) Events() <-chan adapter.Event { return t.events }
+func (t *exitRetryTurn) Cancel() error                { return nil }
+func (t *exitRetryTurn) Wait() (adapter.ExitInfo, error) {
+	return adapter.ExitInfo{ExitCode: 0, TerminalEvent: true}, nil
+}
+
+// runExitRetryTurn runs one turn of a client to its end and returns when the turn goroutine is done.
+func runExitRetryTurn(t *testing.T, client *Client, turnID string, turn *exitRetryTurn) {
+	t.Helper()
+	close(turn.events) // the harness stream ends at once: the turn is only here so its exit write runs
+	client.active["agent"] = turnID
+	client.running["agent"] = turn
+	client.turns.Add(1)
+	go client.runTurn(context.Background(), protocol.Delivery{AgentID: "agent", TurnID: turnID, Mode: adapter.ModeNormal}, turn)
+	client.turns.Wait()
+}
+
+func TestExitWriteIsRetriedBeforeTheExitIsHeld(t *testing.T) {
+	previousAttempts, previousBackoff, previousRetry := exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery
+	exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery = 3, time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() {
+		exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery = previousAttempts, previousBackoff, previousRetry
+	})
+	ctx := context.Background()
+	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, err := journal.RecordStart(ctx, StartRecord{TurnID: "turn-retry", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	failures := make(chan error, 1)
+	client.OnError = func(err error) {
+		select {
+		case failures <- err:
+		default:
+		}
+	}
+	var calls atomic.Int32
+	client.mu.Lock()
+	client.recordExit = func(writeCtx context.Context, turnID string, exit adapter.ExitInfo) error {
+		if calls.Add(1) <= 2 {
+			return errors.New("the journal is busy")
+		}
+		return journal.RecordExitInfo(writeCtx, turnID, exit)
+	}
+	client.mu.Unlock()
+	runExitRetryTurn(t, client, "turn-retry", &exitRetryTurn{events: make(chan adapter.Event)})
+	exits, err := journal.PendingExits(ctx)
+	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-retry" || !exits[0].Exit.TerminalEvent {
+		t.Fatalf("retried exit write did not reach the journal: exits=%+v err=%v", exits, err)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("the exit write was tried %d times, not the two failures plus the successful write", calls.Load())
+	}
+	select {
+	case err := <-failures:
+		if strings.Contains(err.Error(), "the journal is busy") {
+			t.Fatalf("a retried write was reported as a failure: %v", err)
+		}
+	default:
+	}
+}
+
+func TestUnrecordedExitIsHeldReportedAndRetried(t *testing.T) {
+	previousAttempts, previousBackoff, previousRetry := exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery
+	exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery = 2, time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() {
+		exitWriteAttempts, exitWriteBackoff, unrecordedRetryEvery = previousAttempts, previousBackoff, previousRetry
+	})
+	ctx := context.Background()
+	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, err := journal.RecordStart(ctx, StartRecord{TurnID: "turn-held", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	reported := make(chan error, 8)
+	client.OnError = func(err error) { reported <- err }
+	client.mu.Lock()
+	client.recordExit = func(context.Context, string, adapter.ExitInfo) error { return errors.New("the journal is busy") }
+	client.mu.Unlock()
+	runExitRetryTurn(t, client, "turn-held", &exitRetryTurn{events: make(chan adapter.Event)})
+	client.mu.Lock()
+	held := len(client.unrecordedExits)
+	client.mu.Unlock()
+	if held != 1 {
+		t.Fatalf("the exit whose write kept failing is not held in memory (%d)", held)
+	}
+	select {
+	case err := <-reported:
+		if !strings.Contains(err.Error(), "the journal is busy") {
+			select {
+			case again := <-reported:
+				err = fmt.Errorf("%w; then %v", err, again)
+			default:
+			}
+			t.Fatalf("the held exit was not the reported failure: %v", err)
+		}
+	default:
+		t.Fatal("the exit whose journal write kept failing was not reported")
+	}
+	// The background retry writes the exit when the journal takes writes again, and the exit reaches the journal like any other.
+	client.mu.Lock()
+	client.recordExit = journal.RecordExitInfo
+	client.mu.Unlock()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		client.mu.Lock()
+		held = len(client.unrecordedExits)
+		client.mu.Unlock()
+		if held == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background retry did not record the held exit")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	exits, err := journal.PendingExits(ctx)
+	if err != nil || len(exits) != 1 || exits[0].TurnID != "turn-held" || !exits[0].Exit.TerminalEvent {
+		t.Fatalf("the held exit did not reach the journal: exits=%+v err=%v", exits, err)
+	}
+	close(client.unrecordedStop) // no retry outlives the test
+}
+
+func TestRetireOwesCountsUnrecordedExits(t *testing.T) {
+	journal, err := OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	if client.retireOwes() {
+		t.Fatal("a client whose journal owes nothing retires")
+	}
+	client.mu.Lock()
+	client.unrecordedExits["turn-held"] = unrecordedExit{agentID: "agent", turnID: "turn-held"}
+	client.mu.Unlock()
+	if !client.retireOwes() {
+		t.Fatal("an instance holding an exit it could not record does not owe it")
+	}
 }
 
 func TestStopAcceptingAndDrainTimesOutWithTurnID(t *testing.T) {

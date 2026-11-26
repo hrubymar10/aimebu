@@ -25,9 +25,10 @@ func (c *Client) retireOwes() bool {
 	}
 	c.mu.Lock()
 	stopAck := len(c.pendingStopAck) > 0
+	unrecorded := len(c.unrecordedExits) > 0
 	runner := c.commands
 	c.mu.Unlock()
-	if stopAck || c.warmLive.Load() > 0 || c.keepAlivePingsActive() > 0 {
+	if stopAck || unrecorded || c.warmLive.Load() > 0 || c.keepAlivePingsActive() > 0 {
 		return true
 	}
 	if runner != nil {

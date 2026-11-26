@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -32,6 +33,27 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/telemetry"
 	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/v2/internal/worktree"
+)
+
+// unrecordedExit is a turn exit whose journal write failed: enough to write the row again and to report the frame to the server once it is written.
+type unrecordedExit struct {
+	agentID    string
+	generation int
+	turnID     string
+	exit       adapter.ExitInfo
+}
+
+// The journal write of a turn's exit is retried with this backoff before the exit is held for the background retry; both are package variables so tests can shorten them.
+var (
+	exitWriteAttempts    = 5
+	exitWriteBackoff     = 200 * time.Millisecond
+	unrecordedRetryEvery = 5 * time.Second
+)
+
+// The wait a drain timeout gives the turn goroutines it has just killed to journal their own exits, and the bound on the settle writes themselves; tests shorten both.
+var (
+	drainSettleGrace        = 2 * time.Second
+	drainSettleWriteTimeout = 5 * time.Second
 )
 
 type Client struct {
@@ -109,7 +131,17 @@ type Client struct {
 	// refusedSettled holds the exits a terminal refusal (stale_generation, already_terminal) already settled, so the one log line per turn stays one across repeated
 	// refusals of the same turn's frames.
 	refusedSettled map[string]bool
-	turns          sync.WaitGroup
+	// drainSettled holds the turns a drain timeout settled with a supervisor_lost exit, so a turn goroutine that finally wakes and finds its
+	// row written does not report its own write as a failure (the journal already carries an exit).
+	drainSettled map[string]bool
+	// unrecordedExits holds the exits whose journal write kept failing after the bounded retries (see holdUnrecordedExit): a background
+	// retry writes them when the journal takes writes again, and a retiring instance counts them as work it still owes.
+	unrecordedExits map[string]unrecordedExit
+	// unrecordedStop ends the background retries of unrecordedExits; tests close it so no retry outlives them.
+	unrecordedStop chan struct{}
+	// recordExit is the one place a turn's exit reaches the journal; tests replace it to make the write fail.
+	recordExit func(ctx context.Context, turnID string, exit adapter.ExitInfo) error
+	turns      sync.WaitGroup
 	// unreported counts the turns that left admission (c.active) but whose process frame was not sent yet: a supervisor retiring at idle
 	// waits for them too, or it would close the socket between a turn's release and its exit (see runTurnRestartable).
 	unreported atomic.Int64
@@ -170,7 +202,10 @@ type Client struct {
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
-	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn), commands: newCommandRunner()}
+	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn), drainSettled: make(map[string]bool), unrecordedExits: make(map[string]unrecordedExit), unrecordedStop: make(chan struct{}), commands: newCommandRunner()}
+	if journal != nil {
+		client.recordExit = journal.RecordExitInfo
+	}
 	for _, item := range implementation.Catalog() {
 		client.CapabilityReports = append(client.CapabilityReports, protocol.CapabilityReport{Tool: item.Tool, Version: item.Version, Environment: item.Environment, Flags: implementation.Capabilities(item.Version, item.Environment)})
 	}
@@ -1737,8 +1772,14 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 		exit.ErrorEvent = reason
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
-	if err := c.Journal.RecordExitInfo(journalCtx, delivery.TurnID, exit); err != nil {
-		c.report("the exit info of a turn could not be recorded", err)
+	if err := c.writeExitWithRetries(journalCtx, delivery.TurnID, exit); err != nil {
+		// A drain timeout settles a stuck turn's row with supervisor_lost (StopAcceptingAndDrain); when this goroutine finally wakes and
+		// finds its row written, the journal already carries an exit and nothing is lost: end quietly instead of reporting a failure.
+		settled := errors.Is(err, sql.ErrNoRows) && c.drainSettledTurn(delivery.TurnID)
+		if !settled {
+			c.report("the exit info of a turn could not be recorded", err)
+			c.holdUnrecordedExit(delivery, exit)
+		}
 		unrecorded := exit
 		unrecorded.ProcessAlive = c.warmTurnEnded(turn, adapter.ExitInfo{})
 		c.conversationTurnEnd(delivery.TurnID, unrecorded)
@@ -1795,6 +1836,110 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 	if pending {
 		if err := c.sendCurrent(ctx, ack); err != nil {
 			c.report("a stop acknowledgement after a process exit failed", fmt.Errorf("agent %s stop ack after process exit: %w", agentID, err))
+		}
+	}
+}
+
+// writeExitWithRetries writes a turn's exit to the journal, retrying a failed write with a short bounded backoff: a momentary failure (a busy
+// database, a full disk during a rotation) must not lose the exit. When every retry fails, the error goes back to the caller, which reports it
+// and holds the exit for the background retry (holdUnrecordedExit) so the row is written as soon as the journal takes writes again.
+func (c *Client) writeExitWithRetries(ctx context.Context, turnID string, exit adapter.ExitInfo) error {
+	write := c.exitWrite()
+	err := write(ctx, turnID, exit)
+	for attempt := 1; err != nil && attempt < exitWriteAttempts; attempt++ {
+		time.Sleep(exitWriteBackoff * time.Duration(attempt))
+		err = write(ctx, turnID, exit)
+	}
+	return err
+}
+
+// holdUnrecordedExit keeps an exit whose journal write kept failing in memory: a background retry writes the row (and then reports the frame
+// to the server, like the ordinary path would) for as long as this process runs, and retireOwes counts the held exit, so an instance holding
+// one does not retire as if the journal were settled.
+func (c *Client) holdUnrecordedExit(delivery protocol.Delivery, exit adapter.ExitInfo) {
+	record := unrecordedExit{agentID: delivery.AgentID, generation: delivery.Generation, turnID: delivery.TurnID, exit: exit}
+	retryEvery := unrecordedRetryEvery // captured here: tests shorten the variable, and the goroutine must not race with the next one writing it
+	c.mu.Lock()
+	c.unrecordedExits[delivery.TurnID] = record
+	stop := c.unrecordedStop
+	c.mu.Unlock()
+	telemetry.Go(context.Background(), func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(retryEvery):
+			}
+			if writeErr := c.exitWrite()(context.Background(), record.turnID, record.exit); writeErr != nil {
+				continue
+			}
+			c.mu.Lock()
+			_, held := c.unrecordedExits[record.turnID]
+			delete(c.unrecordedExits, record.turnID)
+			c.mu.Unlock()
+			if !held {
+				return
+			}
+			c.reportLocal(fmt.Errorf("the exit of turn %s was recorded after earlier journal write failures", record.turnID))
+			if frameErr := c.sendCurrent(context.Background(), protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: record.agentID, Generation: record.generation, TurnID: record.turnID, Exit: &record.exit}); frameErr != nil {
+				c.unsent(frameErr) // journaled before this send: the reconnect replays it
+			}
+			return
+		}
+	})
+}
+
+// exitWrite is the journal write a turn's exit goes through, read under mu so a test can replace it while the client runs.
+func (c *Client) exitWrite() func(ctx context.Context, turnID string, exit adapter.ExitInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.recordExit
+}
+
+// drainSettledTurn says the drain timeout already wrote an exit for the turn, so a late write of the turn's own goroutine finds its row taken.
+func (c *Client) drainSettledTurn(turnID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.drainSettled[turnID]
+}
+
+// supervisorLostExit is the exit a supervisor records for a turn it cannot wait for any longer: the same ending a drain instance writes for a
+// turn whose holder died (EndDeadTurns), so the server treats the turn as lost by the supervisor that ran it.
+func supervisorLostExit() adapter.ExitInfo {
+	return adapter.ExitInfo{ExitCode: -1, ErrorEvent: "supervisor_lost", ErrorSummary: "the supervisor that ran this turn died"}
+}
+
+// settleDrainTimeout ends the turns a drain could not wait for. It kills what is still running, gives the turn goroutines a short grace to
+// journal their own exits, and then writes a supervisor_lost exit for every turn that is still running, so the supervisor never exits with a
+// turn whose exit it never journaled. The rows are settled with the ordinary exit write, so whichever write lands first (the goroutine's real
+// exit or the lost exit here) wins, and the loser's write finds no running row and changes nothing.
+func (c *Client) settleDrainTimeout() {
+	c.mu.Lock()
+	turns := make([]adapter.Turn, 0, len(c.running))
+	ids := make([]string, 0, len(c.active))
+	for _, turn := range c.running {
+		turns = append(turns, turn)
+	}
+	for _, turnID := range c.active {
+		ids = append(ids, turnID)
+	}
+	for _, turnID := range ids {
+		c.drainSettled[turnID] = true
+	}
+	c.mu.Unlock()
+	for _, turn := range turns {
+		if killer, ok := turn.(interface{ Kill() error }); ok {
+			_ = killer.Kill()
+		} else {
+			_ = turn.Cancel()
+		}
+	}
+	time.Sleep(drainSettleGrace)
+	settleCtx, cancel := context.WithTimeout(context.Background(), drainSettleWriteTimeout)
+	defer cancel()
+	for _, turnID := range ids {
+		if err := c.exitWrite()(settleCtx, turnID, supervisorLostExit()); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			c.report("a turn running at the end of the drain could not be settled", err)
 		}
 	}
 }
@@ -1856,6 +2001,7 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		c.settleDrainTimeout()
 		c.mu.Lock()
 		remaining := make([]string, 0, len(c.active))
 		for agentID, turnID := range c.active {
