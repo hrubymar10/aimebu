@@ -15,6 +15,9 @@ type fenceCase struct {
 	Body   string   `json:"body"`
 	Fenced []string `json:"fenced"`
 	Live   []string `json:"live"`
+	// KnownDivergence marks a case where the scanner and the renderer still differ; the case is recorded as data and skipped, with
+	// this text as the reason.
+	KnownDivergence string `json:"known_divergence"`
 }
 
 func TestFencesUnderListItemsAgreeWithTheRenderer(t *testing.T) {
@@ -31,6 +34,9 @@ func TestFencesUnderListItemsAgreeWithTheRenderer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
+			if tc.KnownDivergence != "" {
+				t.Skip("known divergence: " + tc.KnownDivergence)
+			}
 			var got []string
 			for _, span := range proseMentionSpans(tc.Body) {
 				got = append(got, "@"+span.Token)

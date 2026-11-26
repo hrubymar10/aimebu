@@ -235,5 +235,15 @@
    "@live",
    "#live"
   ]
+ },
+ {
+  "name": "a table row that looks like a fence opener",
+  "body": "| a | b |\n| --- | --- |\n``` | @tablecell\n@after\n```",
+  "fenced": [],
+  "live": [
+   "@tablecell",
+   "@after"
+  ],
+  "known_divergence": "the renderer reads a line with a pipe right after a table as one of its rows, so the scanner's fence here is not a fence on screen; tables are not ported (prose_blocks.go)"
  }
 ]

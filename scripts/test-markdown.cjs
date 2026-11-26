@@ -95,6 +95,7 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
   const fenceCases = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'internal', 'store', 'testdata', 'fence_cases.json'), 'utf8'));
   assert.ok(fenceCases.length > 0);
   for (const tc of fenceCases) {
+    if (tc.known_divergence) { console.log(`skipped (known divergence): ${tc.name}`); continue; }
     const out = html(tc.body);
     const code = [...out.matchAll(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g)].map(match => match[1]).join('\n');
     const prose = out.replace(/<div class="md-codeblock">[\s\S]*?<\/pre><\/div>/g, '');
