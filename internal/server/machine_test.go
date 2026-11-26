@@ -832,6 +832,12 @@ func TestFirstJournalHelloWithOpenTurnIsUncertain(t *testing.T) {
 	}
 }
 
+// replayWait bounds the hello, replay and stop of the supervisor client below.
+// Each is a real websocket, journal and server round trip; under a parallel
+// -race gate on a busy host 3s was not always enough, so a slow run is not a
+// failure (the waits end as soon as the event happens, so a pass costs nothing).
+const replayWait = 20 * time.Second
+
 func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -879,14 +885,14 @@ func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 	go func() { done <- client.RunOnce(runCtx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(replayWait):
 		t.Fatal("receipt replay hello timed out")
 	}
 	pending, err := j.PendingAnswers(ctx)
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("lost receipt not replayed; candidate still pending: %+v %v", pending, err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(replayWait)
 	for {
 		exits, err := j.PendingExits(ctx)
 		if err != nil {
@@ -907,7 +913,7 @@ func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(replayWait):
 		t.Fatal("replay client did not stop")
 	}
 	conn := f.dialMachine(t, nil)
