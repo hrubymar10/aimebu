@@ -2,6 +2,8 @@ package live
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -37,8 +39,11 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 		turnID := fmt.Sprintf("turn_eval_%s_%04d", o.RunID, o.turnCounter)
 		a, handle, usage := o.runTurn(ctx, impl, target, row, checkout, scenario, turnID, notes, turnContext, session, started)
 		a.Millis = usage.millis
-		if usage.cumulative {
-			a.TokIn, a.TokOut, a.CostUSD = nonNegative(a.TokIn-usageIn(previous)), nonNegative(a.TokOut-usageOut(previous)), nonNegativeF(a.CostUSD-usageCost(previous))
+		if usage.tokensCumulative {
+			a.TokIn, a.TokOut = nonNegative(a.TokIn-usageIn(previous)), nonNegative(a.TokOut-usageOut(previous))
+		}
+		if usage.costCumulative {
+			a.CostUSD = nonNegativeF(a.CostUSD - usageCost(previous))
 		}
 		previous = usage.raw
 		o.spentUSD += a.CostUSD
@@ -56,10 +61,13 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 	return c
 }
 
+// turnUsage is what a turn reported beyond the attempt: its time, the raw report, and which of its figures are the session's running totals (a
+// harness may report either one so, as the store reads them: internal/store/usage.go).
 type turnUsage struct {
-	millis     int64
-	cumulative bool
-	raw        adapter.Usage
+	millis           int64
+	costCumulative   bool
+	tokensCumulative bool
+	raw              adapter.Usage
 }
 
 func nonNegative(v int64) int64 {
@@ -92,12 +100,13 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	if o.VisibleHost != "" {
 		spec.AgentServerURL = fmt.Sprintf("http://%s:%d", o.VisibleHost, o.MCP.Port())
 	}
-	key := ""
-	if tools := scenario.Input.AllowedTools; len(tools) > 0 {
-		key = "aak_eval_" + turnID
-		o.MCP.Register(key, tools)
-		spec.AgentTools = &adapter.AgentToolsAccess{AgentID: eval.WorkerID, ServerURL: fmt.Sprintf("http://127.0.0.1:%d", o.MCP.Port()), Key: key, Command: "/usr/bin/aimebu"}
-	}
+	// Every normal turn has agent tools access (the Docker adapters refuse one without it), so a scenario with no tools gets a toolbox that offers
+	// none. The key is random: the stand-in listens on every interface, and a key derived from the turn id could be guessed by a neighbour.
+	key := toolboxKey()
+	o.MCP.Register(key, scenario.Input.AllowedTools)
+	spec.AgentTools = &adapter.AgentToolsAccess{AgentID: eval.WorkerID, ServerURL: fmt.Sprintf("http://127.0.0.1:%d", o.MCP.Port()), Key: key, Command: "/usr/bin/aimebu"}
+	spec.AllowedTools = scenario.Input.AllowedTools
+	spec.Providers = providersFor(target)
 	turnCtx, cancel := context.WithTimeout(ctx, o.TurnTimeout)
 	defer cancel()
 	begin := time.Now()
@@ -124,10 +133,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	}
 	exit, err := turn.Wait()
 	used.millis = time.Since(begin).Milliseconds()
-	var tools []string
-	if key != "" {
-		tools = o.MCP.Calls(key)
-	}
+	tools := o.MCP.Calls(key)
 	a := eval.Attempt{Tools: tools}
 	if usage != nil {
 		if usage.TokensIn != nil {
@@ -139,7 +145,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		if usage.CostEstimate != nil {
 			a.CostUSD = *usage.CostEstimate
 		}
-		used.cumulative = usage.CostCumulative || usage.TokensCumulative
+		used.costCumulative, used.tokensCumulative = usage.CostCumulative, usage.TokensCumulative
 		used.raw = *usage
 	}
 	if err != nil || !hasAnswer {
@@ -192,4 +198,31 @@ func usageCost(u adapter.Usage) float64 {
 		return 0
 	}
 	return *u.CostEstimate
+}
+
+// toolboxKey is a fresh random bearer key for a turn's stand-in toolbox: "aak_" (the prefix the adapters require) and 128 random bits.
+func toolboxKey() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err) // the system's random source failing leaves nothing safe to do
+	}
+	return "aak_" + hex.EncodeToString(b[:])
+}
+
+// providersFor is the provider document an OpenCode turn carries, chosen as the store does (internal/store/harness_provider.go,
+// providersForTurn): the one provider of the target whose "<id>/" prefix the model id has, and none for any other tool or a model with no prefix.
+func providersFor(target Target) []adapter.CustomProvider {
+	if target.Tool != eval.KindOpenCode {
+		return nil
+	}
+	prefix, _, found := strings.Cut(target.Model, "/")
+	if !found {
+		return nil
+	}
+	for _, p := range target.Providers {
+		if p.ID == prefix {
+			return []adapter.CustomProvider{p}
+		}
+	}
+	return nil
 }

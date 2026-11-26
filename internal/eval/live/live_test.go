@@ -3,6 +3,7 @@ package live
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -115,6 +116,10 @@ func (s *stub) Start(_ context.Context, spec adapter.TurnSpec) (adapter.Turn, er
 	s.specs = append(s.specs, spec)
 	n := len(s.specs)
 	s.mu.Unlock()
+	// What the Docker adapters do (adapter.DockerMCPAt): a normal turn without agent tools access cannot start.
+	if spec.Mode == adapter.ModeNormal && spec.AgentTools == nil {
+		return nil, errors.New("normal turn requires agent tools access")
+	}
 	ch := make(chan adapter.Event, 8)
 	for _, e := range s.reply(spec, n) {
 		ch <- e
@@ -133,8 +138,8 @@ func answerEvent(text string) adapter.Event {
 	return adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(text)}
 }
 
-func usageEvent(in, out int64, cost float64, cumulative bool) adapter.Event {
-	return adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: &in, TokensOut: &out, CostEstimate: &cost, CostCumulative: cumulative}}
+func usageEvent(in, out int64, cost float64, costCumulative, tokensCumulative bool) adapter.Event {
+	return adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: &in, TokensOut: &out, CostEstimate: &cost, CostCumulative: costCumulative, TokensCumulative: tokensCumulative}}
 }
 
 func scenarios(t *testing.T, ids ...string) []eval.Scenario {
@@ -175,9 +180,9 @@ func TestRunScoresAndRepairsInTheSameSession(t *testing.T) {
 	good := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"It scores answers.","reply_to":"7001"}]}`
 	st := &stub{reply: func(spec adapter.TurnSpec, n int) []adapter.Event {
 		if n == 1 {
-			return []adapter.Event{usageEvent(100, 10, 0.5, true), answerEvent("Sure! " + good)}
+			return []adapter.Event{usageEvent(100, 10, 0.5, true, false), answerEvent("Sure! " + good)}
 		}
-		return []adapter.Event{usageEvent(160, 30, 0.7, true), answerEvent(good)}
+		return []adapter.Event{usageEvent(160, 30, 0.7, true, false), answerEvent(good)}
 	}}
 	o := newOptions(t, st, "s01-plain-reply")
 	var log bytes.Buffer
@@ -193,8 +198,8 @@ func TestRunScoresAndRepairsInTheSameSession(t *testing.T) {
 	if first.Valid || first.Class != eval.ClassFormat || !second.Valid || !second.Correct || !second.Strict {
 		t.Fatalf("attempts %+v", cases[0].Attempts)
 	}
-	// The repair turn's usage is the session's running total minus the first turn's.
-	if second.TokIn != 60 || second.TokOut != 20 || second.CostUSD < 0.199 || second.CostUSD > 0.201 || o.Spent() < 0.69 || o.Spent() > 0.71 {
+	// Claude's cost is the session's running total and its tokens are the turn's own: only the cost is differenced (store/usage.go).
+	if second.TokIn != 160 || second.TokOut != 30 || second.CostUSD < 0.199 || second.CostUSD > 0.201 || o.Spent() < 0.69 || o.Spent() > 0.71 {
 		t.Fatalf("second attempt %+v spent %v", second, o.Spent())
 	}
 	if len(st.specs) != 2 {
@@ -210,7 +215,7 @@ func TestRunScoresAndRepairsInTheSameSession(t *testing.T) {
 	if !strings.Contains(a.CheckoutPath, "aimebu-eval-r1-claude-x") || a.LauncherPath != "/bin/claude-docker" || !a.LauncherContainerized || a.Agent.Variant != "docker" || a.Agent.LauncherID != "lch_1" {
 		t.Fatalf("spec %+v", a)
 	}
-	if a.AgentServerURL != "" || a.AgentTools == nil || !strings.HasPrefix(a.AgentTools.Key, "aak_eval_") || a.AgentTools.Key == b.AgentTools.Key {
+	if a.AgentServerURL != "" || a.AgentTools == nil || !strings.HasPrefix(a.AgentTools.Key, "aak_") || a.AgentTools.Key == b.AgentTools.Key {
 		t.Fatalf("the toolbox is the stand-in with a key per turn: %q %+v", a.AgentServerURL, a.AgentTools)
 	}
 	if !strings.Contains(string(a.ContextJSON), `"harness":"claude"`) || !strings.Contains(string(a.ContextJSON), `"model":"claude-x"`) {
@@ -252,7 +257,7 @@ func TestRunHarnessFailureEndsTheCaseAndIsNotRepaired(t *testing.T) {
 
 func TestRunStopsOnBudgetAndOnQuota(t *testing.T) {
 	st := &stub{reply: func(adapter.TurnSpec, int) []adapter.Event {
-		return []adapter.Event{usageEvent(1, 1, 1.0, false), answerEvent(`{"messages":[]}`)}
+		return []adapter.Event{usageEvent(1, 1, 1.0, false, false), answerEvent(`{"messages":[]}`)}
 	}}
 	o := newOptions(t, st, "s18-fyi-silence", "s15-waiting-on-command")
 	o.MaxUSD = 1.0
@@ -297,4 +302,183 @@ func TestUUIDIsVersion4(t *testing.T) {
 	if len(id) != 36 || id[14] != '4' || strings.Contains("01234567", string(id[19])) {
 		t.Fatalf("uuid %s", id)
 	}
+}
+
+func TestRunDifferencesTokensAndCostEachUnderItsOwnFlag(t *testing.T) {
+	good := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"x","reply_to":"7001"}]}`
+	for name, c := range map[string]struct {
+		costCum, tokCum bool
+		in, out         int64
+		cost            float64
+	}{
+		"cost only":   {true, false, 160, 30, 0.2},
+		"tokens only": {false, true, 60, 20, 0.7},
+		"both":        {true, true, 60, 20, 0.2},
+		"neither":     {false, false, 160, 30, 0.7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &stub{reply: func(spec adapter.TurnSpec, n int) []adapter.Event {
+				if n == 1 {
+					return []adapter.Event{usageEvent(100, 10, 0.5, c.costCum, c.tokCum), answerEvent("Sure! " + good)}
+				}
+				return []adapter.Event{usageEvent(160, 30, 0.7, c.costCum, c.tokCum), answerEvent(good)}
+			}}
+			o := newOptions(t, st, "s01-plain-reply")
+			cases, err := o.Run(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			second := cases[0].Attempts[1]
+			if second.TokIn != c.in || second.TokOut != c.out || second.CostUSD < c.cost-0.001 || second.CostUSD > c.cost+0.001 {
+				t.Fatalf("second attempt %+v, want tokens %d/%d cost %v", second, c.in, c.out, c.cost)
+			}
+		})
+	}
+}
+
+func TestRunStartsAScenarioWithNoToolsWithAnEmptyToolbox(t *testing.T) {
+	var key string
+	var o *Options
+	st := &stub{reply: func(spec adapter.TurnSpec, n int) []adapter.Event {
+		key = spec.AgentTools.Key
+		return []adapter.Event{answerEvent(`{"messages":[{"room":"` + eval.TaskRoom + `","body":"89 is prime."}]}`)}
+	}}
+	o = newOptions(t, st, "s20-no-tools")
+	cases, err := o.Run(context.Background())
+	if err != nil || len(cases) != 1 || !cases[0].Attempts[0].Correct {
+		t.Fatalf("a normal turn needs agent tools access even with no tools: %+v %v", cases, err)
+	}
+	_, list := rpc(t, o.MCP.Port(), key, `{"id":1,"method":"tools/list"}`)
+	if strings.Contains(list, `"name"`) {
+		t.Fatalf("the toolbox of a no-tools scenario offers nothing: %s", list)
+	}
+}
+
+func TestRunPassesTheScenariosAllowedToolsAndTheTargetsProvidersToTheSpec(t *testing.T) {
+	st := &stub{reply: func(adapter.TurnSpec, int) []adapter.Event { return []adapter.Event{answerEvent(`{"messages":[]}`)} }}
+	o := newOptions(t, st, "s18-fyi-silence")
+	provider := adapter.CustomProvider{ID: "my-provider", Name: "Mine", NPM: adapter.CustomProviderNPM, BaseURL: "https://llm.example/v1", KeyEnv: "MY_LLM_KEY",
+		Models: []adapter.CustomProviderModel{{ID: "glm-5.3-flash", Name: "GLM"}}}
+	other := adapter.CustomProvider{ID: "another", NPM: adapter.CustomProviderNPM, BaseURL: "https://other.example/v1"}
+	o.Targets = []Target{{Name: "glm", Tool: "opencode", LauncherID: "lch_1", Model: "my-provider/glm-5.3-flash", Providers: []adapter.CustomProvider{other, provider}}}
+	o.Launchers[0].Tool = "opencode"
+	if _, err := o.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	spec := st.specs[0]
+	if len(spec.AllowedTools) == 0 || spec.AllowedTools[0] != "react" {
+		t.Fatalf("allowed tools reach the spec as the supervisor sets them: %v", spec.AllowedTools)
+	}
+	if len(spec.Providers) != 1 || spec.Providers[0].ID != "my-provider" || spec.Providers[0].KeyEnv != "MY_LLM_KEY" {
+		t.Fatalf("only the provider the model id names reaches the spec: %+v", spec.Providers)
+	}
+	// A model with no provider prefix, or a tool that is not OpenCode, carries none (store.providersForTurn).
+	o.Targets = []Target{{Name: "claude-x", Tool: "claude", LauncherID: "lch_1", Model: "my-provider/x", Providers: []adapter.CustomProvider{provider}}}
+	o.Launchers[0].Tool = "claude"
+	st.specs = nil
+	if _, err := o.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.specs[0].Providers) != 0 {
+		t.Fatalf("a Claude turn carries no providers: %+v", st.specs[0].Providers)
+	}
+}
+
+func TestToolboxKeysAreRandomPerTurn(t *testing.T) {
+	st := &stub{reply: func(adapter.TurnSpec, int) []adapter.Event { return []adapter.Event{answerEvent(`{"messages":[]}`)} }}
+	o := newOptions(t, st, "s18-fyi-silence", "s15-waiting-on-command")
+	if _, err := o.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a, b := st.specs[0], st.specs[1]
+	for _, spec := range []adapter.TurnSpec{a, b} {
+		key := spec.AgentTools.Key
+		if !strings.HasPrefix(key, "aak_") || strings.Contains(key, spec.TurnID) || strings.Contains(key, "turn_eval") || len(key) < len("aak_")+32 {
+			t.Fatalf("the key of %s must not be derived from the turn id and must carry at least 128 random bits: %s", spec.TurnID, key)
+		}
+	}
+	if a.AgentTools.Key == b.AgentTools.Key {
+		t.Fatal("each turn has its own key")
+	}
+}
+
+func quotaServer(t *testing.T, readings ...float64) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	n := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		v := readings[min(n, len(readings)-1)]
+		n++
+		mu.Unlock()
+		fmt.Fprintf(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":%v}]}]}]}`, v)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
+	spend := func(adapter.TurnSpec, int) []adapter.Event {
+		return []adapter.Event{usageEvent(1, 1, 1.0, false, false), answerEvent(`{"messages":[]}`)}
+	}
+	t.Run("budget cap", func(t *testing.T) {
+		server := quotaServer(t, 10, 12)
+		o := newOptions(t, &stub{reply: spend}, "s18-fyi-silence", "s15-waiting-on-command")
+		o.MaxUSD = 1.0
+		o.Quota = &QuotaSource{URL: server.URL}
+		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "cap") {
+			t.Fatalf("stopped by the cap: %v", err)
+		}
+		if got := o.QuotaAfter["claude/main/weekly"]; got != 12 {
+			t.Fatalf("after reading %v, want the final reading 12", o.QuotaAfter)
+		}
+	})
+	t.Run("quota guard", func(t *testing.T) {
+		server := quotaServer(t, 10, 95)
+		o := newOptions(t, &stub{reply: spend}, "s18-fyi-silence", "s15-waiting-on-command")
+		o.QuotaEvery = 1
+		o.Quota = &QuotaSource{URL: server.URL}
+		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "95%") {
+			t.Fatalf("stopped by the guard: %v", err)
+		}
+		if got := o.QuotaAfter["claude/main/weekly"]; got != 95 {
+			t.Fatalf("after reading %v, want 95", o.QuotaAfter)
+		}
+	})
+	t.Run("cancelled run", func(t *testing.T) {
+		server := quotaServer(t, 10, 11)
+		ctx, cancel := context.WithCancel(context.Background())
+		o := newOptions(t, &stub{reply: func(spec adapter.TurnSpec, n int) []adapter.Event {
+			cancel()
+			return spend(spec, n)
+		}}, "s18-fyi-silence", "s15-waiting-on-command")
+		o.Quota = &QuotaSource{URL: server.URL}
+		if _, err := o.Run(ctx); err == nil || !strings.Contains(err.Error(), "run stopped") {
+			t.Fatalf("stopped by the cancel: %v", err)
+		}
+		if got := o.QuotaAfter["claude/main/weekly"]; got != 11 {
+			t.Fatalf("a cancelled run still reads the quota with a fresh context: %v", o.QuotaAfter)
+		}
+	})
+	t.Run("unreadable quota keeps the last reading", func(t *testing.T) {
+		var calls int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if calls > 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":10}]}]}]}`)
+		}))
+		defer server.Close()
+		o := newOptions(t, &stub{reply: spend}, "s18-fyi-silence", "s15-waiting-on-command")
+		o.QuotaEvery = 1
+		o.Quota = &QuotaSource{URL: server.URL}
+		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "cannot be read") {
+			t.Fatalf("stopped because the quota cannot be read: %v", err)
+		}
+		if got := o.QuotaAfter["claude/main/weekly"]; got != 10 {
+			t.Fatalf("the last successful reading stays as the after column: %v", o.QuotaAfter)
+		}
+	})
 }

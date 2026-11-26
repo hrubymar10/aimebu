@@ -24,6 +24,8 @@ type Target struct {
 	LauncherID string `json:"launcher_id"` // the id of a row of the launchers file
 	Model      string `json:"model"`
 	Provider   string `json:"provider,omitempty"`
+	// Providers are the custom providers the model may need (OpenCode); see providersFor.
+	Providers []adapter.CustomProvider `json:"providers,omitempty"`
 }
 
 // ErrStopped says the run ended early on purpose: the budget, the quota guard or a cancel.
@@ -62,6 +64,26 @@ type Options struct {
 // Run runs every scenario of every target Reps times, with repairs, and returns the cases it finished. When the run is stopped on purpose it
 // returns the cases so far and an error wrapping ErrStopped.
 func (o *Options) Run(ctx context.Context) ([]eval.Case, error) {
+	cases, err := o.run(ctx)
+	o.finalQuota()
+	return cases, err
+}
+
+// finalQuota is the reading the report's after column shows, taken on every way out of a run: after a clean run and after one that was
+// stopped (the budget, the guard, an unreadable quota, a cancel). The run's own context may be cancelled by then, so it has a short one of its
+// own. When the reading fails, the last successful one stands.
+func (o *Options) finalQuota() {
+	if o.Quota == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if usage, err := o.Quota.Fetch(ctx); err == nil {
+		o.QuotaAfter = usage
+	}
+}
+
+func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 	if o.Reps < 1 || len(o.Targets) == 0 || len(o.Scenarios) == 0 || o.MCP == nil || o.NewAdapter == nil {
 		return nil, errors.New("a run needs targets, scenarios, reps >= 1, an MCP stand-in and an adapter source")
 	}
@@ -84,7 +106,7 @@ func (o *Options) Run(ctx context.Context) ([]eval.Case, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading the quota before the run: %w", err)
 		}
-		o.QuotaBefore = usage
+		o.QuotaBefore, o.QuotaAfter = usage, usage
 		if over := usage.OverLimit(o.StopAbovePct); over != "" {
 			return nil, fmt.Errorf("%w before it started: %s", ErrStopped, over)
 		}
@@ -126,6 +148,7 @@ func (o *Options) Run(ctx context.Context) ([]eval.Case, error) {
 					if err != nil {
 						return cases, fmt.Errorf("%w: the quota cannot be read: %v", ErrStopped, err)
 					}
+					o.QuotaAfter = usage
 					if over := usage.OverLimit(o.StopAbovePct); over != "" {
 						return cases, fmt.Errorf("%w: %s", ErrStopped, over)
 					}
@@ -135,11 +158,6 @@ func (o *Options) Run(ctx context.Context) ([]eval.Case, error) {
 				count++
 				fmt.Fprintf(o.log(), "%s %s rep %d: %s\n", target.Name, scenario.ID, rep, summary(c))
 			}
-		}
-	}
-	if o.Quota != nil {
-		if usage, err := o.Quota.Fetch(ctx); err == nil {
-			o.QuotaAfter = usage
 		}
 	}
 	return cases, nil

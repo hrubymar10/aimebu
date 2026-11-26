@@ -107,8 +107,12 @@ is asked for its version.
 
 **The toolbox.** A turn reaches an aimebu toolbox at `/api/agent/mcp`. The runner starts a stand-in on `0.0.0.0` and an ephemeral port (never a fixed
 one, never the real server): it offers the scenario's `allowed_tools`, answers each call with a canned text, and records the calls each turn made
-(the `tool_called` checks read them). Each turn has its own dummy `aak_eval_<turn>` key. A scenario with no tools gets no toolbox. A container
-reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its gateway is another address.
+(the `tool_called` checks read them). Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
+adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the
+scenario's list, as the supervisor sets it. A container reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its
+gateway is another address. The stand-in listens on every interface (`0.0.0.0`), because the Docker bridge gateway address is not the same on every
+setup and a loopback listener is unreachable from a container; the random per-turn key is what keeps another machine on the network from using it,
+and it only ever offers canned replies. Stop a run with nothing else listening on that network if that is not acceptable.
 
 **Sessions and Claude transcripts.** Every case is a first turn in a session of its own (a new UUID for Claude and Pi; the id the harness
 reports for the others), never an agent's session. Its repair turn, when there is one, resumes that session. The checkout of a target is
@@ -125,7 +129,8 @@ timeout, a provider limit) end the case and are counted apart, outside every rat
 
 **Quota and cost.** `usages_url` is a running server whose `GET /api/usages` the runner reads (the repo's own usage data, owner-only) with the cookie
 in the environment variable named by `usages_cookie_env`. The run is refused without it. The quota is read before the run, every 10 cases and
-after the run; a weekly window (`weekly*`, `seven_day*`) above `--stop-above` (default 90) percent stops the run, and the report carries the
+once more on every way out of the run (the end, the budget cap, the guard, an unreadable quota, a cancel), with a short context of its own; when
+that last reading fails, the last successful one stays in the after column; a weekly window (`weekly*`, `seven_day*`) above `--stop-above` (default 90) percent stops the run, and the report carries the
 before and after share of every window. `--max-usd` (default 30) stops the run when the cost the harnesses report passes it; for a subscription
 that is an equivalent, not a charge. The report keeps the cases finished when a run stops early.
 
@@ -140,7 +145,9 @@ that is an equivalent, not a charge. The report keeps the cases finished when a 
     {"name": "claude-sonnet", "tool": "claude", "launcher_id": "lch_claude", "model": "claude-sonnet-5-5"},
     {"name": "codex-sol", "tool": "codex", "launcher_id": "lch_codex", "model": "gpt-6-sol"},
     {"name": "glm-pi", "tool": "pi", "launcher_id": "lch_pi", "model": "my-provider/glm-5.3-flash"},
-    {"name": "glm-opencode", "tool": "opencode", "launcher_id": "lch_opencode", "model": "my-provider/glm-5.3-flash"}
+    {"name": "glm-opencode", "tool": "opencode", "launcher_id": "lch_opencode", "model": "my-provider/glm-5.3-flash",
+     "providers": [{"id": "my-provider", "name": "My provider", "npm": "@ai-sdk/openai-compatible", "base_url": "https://llm.example/v1",
+                    "key_env": "MY_PROVIDER_KEY", "models": [{"id": "glm-5.3-flash", "name": "GLM 5.3 flash"}]}]}
   ],
   "launchers": [
     {"id": "lch_claude", "tool": "claude", "command": "claude-docker", "args": [], "env_refs": {}, "enabled": true, "containerized": true,
@@ -149,6 +156,11 @@ that is an equivalent, not a charge. The report keeps the cases finished when a 
   ]
 }
 ```
+
+A target may carry `providers`, the custom providers its model can need (OpenCode only). As the server does for an agent
+(`providersForTurn`), only the provider whose `<id>/` prefix the model id has reaches the turn, and none for another tool or a model with no
+prefix; OpenCode writes its provider section only when the turn carries one. `key_env` is the name of an environment variable of the machine that
+runs the launcher, never a key. Pi reads its models from its own configuration in the container, so a Pi target needs no `providers`.
 
 The scratch directory must be inside a root the launchers mount (their `visible_roots`). To fill a launcher row: the definition fields
 (`id`, `tool`, `command`, `args`, `env_refs`, `containerized`, `agent_server_url`, `path_maps`, `visible_roots`, `supports_toolbox`) are in Settings →
