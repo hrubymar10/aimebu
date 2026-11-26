@@ -65,8 +65,18 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const answerAll = (extra = {}) => ({ 'GET /api/agent-dms': chats(), 'GET /api/projects': projects, ...Object.fromEntries(Object.entries(rooms()).map(([id, list]) => [`GET /api/projects/${id}/rooms`, list])), ...extra });
-  const mount = async ({ auto = answerAll(), load = true, setup = '', hold = false } = {}) => {
-    const page = await browser.newPage();
+  const mount = async ({ auto = answerAll(), load = true, setup = '', hold = false, touch = null } = {}) => {
+    // touch: [width, height] mounts in its own browser context with touch emulation (an iPad-like coarse pointer that never hovers), so the touch
+    // media queries in v2-only.css apply the way they do on the owner's iPad.
+    const context = touch ? await browser.createBrowserContext() : null;
+    const page = context ? await context.newPage() : await browser.newPage();
+    if (touch) {
+      await page.setViewport({ width: touch[0], height: touch[1], isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+      // CDP touch emulation turns the media queries on ((hover: none) and (pointer: coarse) match, as the touch block at the end of the hover test
+      // relies on); this puppeteer cannot emulate the `hover` media feature directly.
+      const session = await page.createCDPSession();
+      await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    }
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
     await page.evaluateOnNewDocument(hold => { window.__holdFolds = hold; try { localStorage.clear(); } catch {} }, hold);
@@ -388,6 +398,55 @@ async function main() {
       }
     }
     await page.close();
+  }
+
+  // A touch screen (an iPad and a phone-width column) shows the project row's controls without hover, as static content at the right end of the name
+  // line: centred on the name, clear of the name and the badges, ending at the top line's edge, with the menu button visible and tappable. The hover
+  // layout's absolute placement (0d6c7dba) leaked into the touch branch through the row-collapse rules and drew the controls above or beside the name;
+  // measured here on a short name, a long one and the full badge set (A14-13).
+  {
+    const statusRooms = () => rooms().prj_a.map(item => item.id === 'rm_api' ? { ...item, purpose: 'task', finished_unseen: true } : item.id === 'rm_notes' ? { ...item, purpose: 'task', gate: 'paused' } : item.id === 'rm_mute' ? { ...item, purpose: 'task', working: true } : item);
+    const measure = page => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+      row.scrollIntoView({ block: 'center' }); // elementFromPoint only sees points inside the viewport, and a row far down the page has to be brought in for the tap check
+      const box = node => { const rect = node.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; };
+      const actionsNode = row.querySelector('.room-item-actions');
+      const actions = box(actionsNode), line = box(row.querySelector('.room-name-line')), top = box(row.querySelector('.room-item-top'));
+      const name = row.querySelector('.room-item-name');
+      const range = document.createRange(); range.selectNodeContents(name);
+      const text = box(range), nameBox = box(name);
+      const textRight = Math.min(text.right, nameBox.right); // an ellipsised name's range runs past the visible cut
+      const menu = row.querySelector('.project-menu-btn');
+      const menuInfo = menu ? (() => { const r = menu.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height, visible: r.width > 0 && r.height > 0, tapped: !!hit && (hit === menu || menu.contains(hit)) }; })() : null;
+      const badges = [...row.querySelectorAll('.room-item-count, .room-health, .room-item-attention, .room-item-unread, .project-status')].filter(node => !node.hidden && node.getBoundingClientRect().width > 0).map(box);
+      return { position: getComputedStyle(actionsNode).position, transform: getComputedStyle(actionsNode).transform, actions, line, top, text, textRight, badges, hasStatus: !!row.querySelector('.project-status'),
+        menu: menuInfo };
+    });
+    const shots = process.env.AIMEBU_A1413_SHOTS || '';
+    for (const [label, width, height] of [['ipad', 1024, 1366], ['narrow', 390, 844]]) {
+      for (const [variant, auto] of [
+        ['short', answerAll()],
+        ['long', answerAll()],
+        ['badges', answerAll({ 'GET /api/projects/prj_a/rooms': statusRooms() })],
+      ]) {
+        const page = await mount({ auto, touch: [width, height] });
+        assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true, `${label}: the page emulates a touch screen`);
+        if (variant === 'long') await page.evaluate(() => { window.__sidebar.projects.get('prj_a').name = 'Alpha wrapping check with a few more words'; window.__sidebar.rooms.get('rm_ah').title = 'Alpha wrapping check with a few more words'; window.__sidebar.store.touch(); });
+        if (variant === 'badges') await page.evaluate(() => { window.__sidebar.rooms.get('rm_api').attention_count = 1; window.__sidebar.setHealth([{ name: 'ada', room_ids: ['rm_ah'], flags: [{ code: 'stuck' }] }]); });
+        await settle(page);
+        const m = await measure(page);
+        const where = `${label}/${variant}`;
+        assert.deepEqual([m.position, m.transform], ['static', 'none'], `${where}: the actions are unshifted static content on touch: ${JSON.stringify(m)}`);
+        assert.ok(m.actions.top >= m.line.top - 1 && m.actions.bottom <= m.line.bottom + 1, `${where}: the actions sit within the name line: ${JSON.stringify(m)}`);
+        assert.ok(Math.abs((m.actions.top + m.actions.bottom) / 2 - (m.text.top + m.text.bottom) / 2) <= 1.5, `${where}: the actions are centred on the name: ${JSON.stringify(m)}`);
+        assert.ok(m.actions.left >= m.textRight - 0.5, `${where}: the actions clear the name text: ${JSON.stringify(m)}`);
+        if (!m.hasStatus) assert.ok(Math.abs(m.actions.right - m.line.right) <= 1, `${where}: the actions end at the name line's right edge, badges following after the line: ${JSON.stringify(m)}`);
+        else assert.ok(m.actions.right <= m.top.right + 1, `${where}: the actions stay inside the top line: ${JSON.stringify(m)}`);
+        for (const badge of m.badges) assert.ok(!(m.actions.left < badge.right && badge.left < m.actions.right && m.actions.top < badge.bottom && badge.top < m.actions.bottom), `${where}: the actions cover no badge: ${JSON.stringify({ m, badge })}`);
+        assert.ok(m.menu && m.menu.visible && m.menu.tapped && m.menu.width >= 20 && m.menu.height >= 20, `${where}: the menu button is visible, tappable and a sensible target: ${JSON.stringify(m.menu)}`);
+        if (shots) await page.screenshot({ path: path.join(shots, `touch-${label}-${variant}.png`) });
+        await page.close();
+      }
+    }
   }
 
   // A refresh of one project changes its rows in place: the same elements stay, with the focus on one of their buttons and the fold the person
