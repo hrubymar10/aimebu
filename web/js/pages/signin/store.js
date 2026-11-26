@@ -81,7 +81,7 @@ export class SigninStore {
     return this.guarded('dialog', this.dialogError, async ticket => {
       const result = await request('/api/invites/redeem', { method: 'POST', body: { token: this.pending, password } });
       if (!this.current(ticket)) return;
-      this.pending = ''; this.dialogOpen.value = false;
+      this.pending = ''; this.host.dropInviteLink(); this.dialogOpen.value = false;
       if (result.kind === 'reset') this.host.afterReset(); else await this.host.resync();
     });
   }

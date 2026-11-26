@@ -163,7 +163,8 @@ and blocks future sign-in; a project cannot lose its last active owner.
 link is for (the project and role of a join link, or the account a reset link belongs to), so the card says "You are invited to <project> as <role>"
 and asks for a login and password, or says "Choose a new password for <login>" with the account shown read-only, and has one action that redeems
 the link and signs in. A person who already has an account switches to the sign-in card with "I already have an account" and uses the link from
-inside afterwards. A link that cannot be used says so instead of offering fields. `POST /api/invites/redeem` accepts the
+inside afterwards. A successful redemption clears the invitation from the address, whether it happens on the card or in the signed-in dialog.
+A link that cannot be used says so instead of offering fields. `POST /api/invites/redeem` accepts the
 token plus new-account credentials, a new password for a reset, or an existing
 session for a project grant. Successful redemption returns the stored login
 for the follow-up sign-in. Signed-in redemption requires the session's CSRF
