@@ -38,6 +38,7 @@ node scripts/test-spawn-page.cjs
 node scripts/test-room-members-page.cjs
 node scripts/test-sender-profile-page.cjs
 node scripts/test-sidebar-page.cjs
+node scripts/test-start-page.cjs
 node scripts/test-room-menu-page.cjs
 node scripts/test-mobile-tabs-page.cjs
 node scripts/test-scroll-page.cjs

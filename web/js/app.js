@@ -566,11 +566,8 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
     if (synced === 'stale') return null;
     if (synced === 'synced') { /* done */ }
     else if (selected) await selectRoom(selected, undefined, { listed: true });
-    else {
-      const first = sidebar.firstRoom();
-      if (first) await selectRoom(first, undefined, { listed: true });
-      else if (chat.room && !sidebar.rooms.has(chat.room.id)) closeOpenRoom(); // the last project is gone: nothing is left to show
-    }
+    else if (chat.room && !sidebar.rooms.has(chat.room.id)) closeOpenRoom(); // the last project is gone: nothing is left to show
+    // With nothing to restore (no address, and the remembered room gone or never set) no room opens: the empty state says to pick one.
   }
   if (generation !== sessionGeneration) return null;
   sidebar.releaseFolds(); // a room was opened above if there was one: only now may the projects fold (the one holding the open room does not)

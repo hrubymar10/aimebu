@@ -387,8 +387,8 @@ Owner's decision (2026-10-28): continue with the remaining units.
   and `room-unread.js` are gone; the page tests written against them first (`test-sidebar-page.cjs`) run unchanged on the new code.
   The first load is streamed: `/api/projects` draws each project as a placeholder (`pending`) in its final place (the manual and by-name orders need no room;
   the by-latest-activity order waits for every list), each project's rooms replace it as its own list lands in any order (so `rooms` holds them in arrival
-  order and `firstRoom()` walks the projects in server order), and a project the browser has not seen is drawn folded already, without saving it, except the
-  one holding the room the app will open (`expect()`, then `focusRoom()`: the address, the last room, else the first room), so opening that room changes
+  order), and a project the browser has not seen is drawn folded already, without saving it, except the one holding the room the app will open (`expect()`,
+  then `focusRoom()`: the address, then the last room; with nothing to restore the app opens no room and holds no project open), so opening that room changes
   nothing that was drawn. `scripts/perf-sidebar-paint.cjs` measures it.
   Under a project's home row `treeOf` puts the system rooms first (`systemRank` in `model.js`: general, routing, other flow rooms, read from `kind`, `purpose` and
   `team_flow_room_key`, never the title), and gives the home view a `divider` index where the rest begin; `Group` draws a `.room-divider` (`role=separator`) there.

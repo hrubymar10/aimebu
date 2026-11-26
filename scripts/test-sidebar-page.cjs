@@ -289,12 +289,13 @@ async function main() {
     assert.equal(await page.$('[data-room-id=rm_chat]'), null, 'the chats between agents are not drawn before their own list is in');
     await answer(page, dms, 200, chats());
     await page.evaluate(() => window.__loading); await settle(page);
-    assert.deepEqual(await page.evaluate(() => [[...window.__sidebar.rooms.keys()][0], window.__sidebar.firstRoom().id]), ['rm_bh', 'rm_ah'], 'the lists landed in the other order, yet a start with nothing to restore opens the first project\'s first room');
-    // The app then opens a room, the folds are released, and what was drawn is what stays: no reflow at that moment.
-    const drawn = await tops(page), shapes = await places();
-    await page.evaluate(() => window.__sidebar.setActive(window.__sidebar.firstRoom().id)); await settle(page);
-    assert.deepEqual(await tops(page), drawn, 'opening the first room changes nothing that was drawn');
-    assert.deepEqual(await places(), shapes);
+    assert.deepEqual(await page.evaluate(() => [...window.__sidebar.rooms.keys()][0]), 'rm_bh', 'the lists landed in the other order, so nothing here depends on their arrival order');
+    // With nothing to restore no room is held open, so both projects were drawn folded; the person's own selection then releases the provisional
+    // folds: the project holding the room they opened unfolds, the rest stays as drawn, and nothing above or below the list moves.
+    const drawn = await tops(page);
+    await page.evaluate(() => window.__sidebar.setActive('rm_ah')); await settle(page);
+    assert.deepEqual((await tops(page)).slice(-2), drawn.slice(-2), 'opening a room moves nothing below the list');
+    assert.deepEqual(await places(), [['rooms', 'rm_ah', false], ['rooms', 'rm_bh', true]], 'the opened room\'s project unfolds, the other stays folded');
     await page.close();
   }
   // The room the app means to open keeps its project open while the rest are drawn folded.
@@ -304,17 +305,21 @@ async function main() {
     assert.deepEqual(await page.$$eval('#projects > .room-group', nodes => nodes.map(node => [node.dataset.roomId, node.classList.contains('collapsed')])), [['rm_ah', false], ['rm_bh', true]], 'the project holding the expected room is open, the others folded');
     await page.close();
   }
-  // A start with nothing to restore opens the first room of the first project, so that project is the one drawn open; with a stale address the
-  // fallback is the remembered room's project. Either way, selecting what the app opens changes nothing that was drawn.
-  for (const [label, ids, open, setActive] of [['nothing to restore', [], ['rm_ah', false, 'rm_bh', true], 'rm_ah'], ['a stale address falls back to the remembered room', ['rm_gone', 'rm_bg'], ['rm_ah', true, 'rm_bh', false], 'rm_bg']]) {
+  // With nothing to restore no room is held open, so every project is drawn folded; with a stale address the remembered room is still expected, and
+  // its project is the one drawn open. The person's own selection releases the provisional folds: the project holding the room they opened unfolds
+  // (it was only drawn folded), the rest stays, and nothing below the list moves.
+  for (const [label, ids, open, setActive, after] of [
+    ['nothing to restore', [], ['rm_ah', true, 'rm_bh', true], 'rm_ah', ['rm_ah', false, 'rm_bh', true]],
+    ['a stale address falls back to the remembered room', ['rm_gone', 'rm_bg'], ['rm_ah', true, 'rm_bh', false], 'rm_bg', ['rm_ah', true, 'rm_bh', false]],
+  ]) {
     const page = await mount({ auto: answerAll(), load: false, hold: true });
     await page.evaluate(ids => { window.__sidebar.expect(ids); window.__loading = window.__sidebar.load(); }, ids); await page.evaluate(() => window.__loading); await settle(page);
     const fold = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => [node.dataset.roomId, node.classList.contains('collapsed')]).flat());
-    assert.deepEqual(await fold(), open, `${label}: the project that will open is drawn open, the others folded`);
-    const drawn = await tops(page), shapes = await fold();
+    assert.deepEqual(await fold(), open, `${label}: the projects as drawn before a room opens`);
+    const drawn = await tops(page);
     await page.evaluate(room => window.__sidebar.setActive(room), setActive); await settle(page);
-    assert.deepEqual(await fold(), shapes, `${label}: opening the room does not fold or unfold anything`);
-    assert.deepEqual(await tops(page), drawn);
+    assert.deepEqual(await fold(), after, `${label}: the folds after the room opens`);
+    assert.deepEqual((await tops(page)).slice(-2), drawn.slice(-2), `${label}: opening a room moves nothing below the list`);
     await page.close();
   }
   // With every row's last message shown, a project row has a preview line, and so does its placeholder: nothing moves when its rooms land.
@@ -697,11 +702,11 @@ async function main() {
   }
 
   // A cold load draws the list before the app has opened a room: no project folds until it has, and the project holding that room (at any depth)
-  // does not fold when it does; with no room to open the projects fold at once.
+  // does not fold when it does; with no room to open no project is held open, so every project is drawn folded.
   {
     const page = await mount({ hold: true });
     const state = () => page.evaluate(() => ['rm_ah', 'rm_bh'].map(id => document.querySelector(`[data-room-id=${id}]`).classList.contains('collapsed')));
-    assert.deepEqual(await state(), [false, true], 'while the app has not said which room it opens, the projects are drawn as they will be folded (nothing is saved yet), the first room\'s project open');
+    assert.deepEqual(await state(), [true, true], 'while the app has not said which room it opens, every project is drawn as it will be folded (nothing is saved yet)');
     assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.rooms.collapsed')), null, 'and nothing is remembered as folded');
     await page.evaluate(() => window.__sidebar.setActive('rm_api'));
     assert.deepEqual(await state(), [false, true], 'the project holding the room that opened stays open, the other folds');

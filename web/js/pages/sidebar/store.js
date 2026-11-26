@@ -56,23 +56,12 @@ export class SidebarStore {
     this.touching = true;
     queueMicrotask(() => { this.touching = false; if (this.owns(generation)) this.touch(); });
   }
-  // The room a start with nothing to restore opens: the first room of the first project, in the server's project order. The lists land in whatever
-  // order the network gives them, so the first room in `rooms` is not it.
-  firstRoom() {
-    for (const project of this.projects.values()) for (const room of this.rooms.values()) if (room.project_id === project.id) return room;
-    return [...this.rooms.values()][0];
-  }
   // The rooms the app will try to open, in its order (the one in the address, then the last one). The project holding the first of them that exists is
-  // not drawn folded while the lists arrive; when none of them exists, or there is none to try, the app opens the first room, and that is the one.
+  // not drawn folded while the lists arrive; when none of them exists, or there is none to try, the app opens no room, and nothing is held open.
   expect(...ids) { this.expected = ids.flat().filter(Boolean); }
   focusRoom() {
     for (const id of this.expected) if (this.rooms.has(id)) return id;
     if (this.expected.length && this.pending.size) return ''; // one of them may still be in a list that has not landed
-    // The first room, once every project before it has said what it has: a project still waiting could hold the first one.
-    for (const project of this.projects.values()) {
-      if (this.pending.has(project.id)) return '';
-      for (const room of this.rooms.values()) if (room.project_id === project.id) return room.id;
-    }
     return '';
   }
   owns(generation) { return this.alive && generation === this.generation; }

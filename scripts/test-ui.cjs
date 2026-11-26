@@ -2916,6 +2916,9 @@ async function main() {
           Notification.requestPermission = async () => { window.__permissionAsks = (window.__permissionAsks || 0) + 1; permission = 'granted'; return permission; };
         });
         await login(page, `${origin}/?mock_inbox=1`);
+        // A fresh phone sign-in starts on the Rooms list; open a room so the chat's notification bar can be measured and clicked.
+        await domClick(page, '#projects > .room-group[data-room-id] > .room-item .room-item-name');
+        await page.waitForFunction(() => document.querySelector('#app-view').classList.contains('chat-open'));
         return { context, page };
       };
       const barState = page => page.evaluate(() => {
@@ -2959,10 +2962,10 @@ async function main() {
     await mock.setViewport({ width: 390, height: 780 });
     await login(mock, `${origin}/?mock_inbox=1`);
     await mock.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '2');
-    // A phone login lands on a room, not the Inbox (the badge still says there is something waiting).
-    assert.deepEqual(await mock.evaluate(() => ({ inbox: !document.querySelector('#inbox-view').hidden, chat: !document.querySelector('.chat').hidden })), { inbox: false, chat: true }, 'a phone login must land on a room');
-    assert.notEqual(await mock.$eval('#room-title', el => el.textContent), 'Choose a room', 'the phone landed on no room');
-    assert.equal(await mock.evaluate(() => localStorage.getItem('aimebu2.lastRoom') === decodeURIComponent(location.hash.slice(1)) && !!localStorage.getItem('aimebu2.lastRoom')), true, 'the room being shown is remembered for the next login');
+    // With nothing to restore, a phone login shows the Rooms list; the Inbox badge still says there is something waiting.
+    assert.deepEqual(await mock.evaluate(() => ({ inbox: !document.querySelector('#inbox-view').hidden, rooms: !!document.querySelector('.sidebar').getClientRects().length, chat: !!document.querySelector('.chat').getClientRects().length, selected: !!document.querySelector('.room-item.active') })), { inbox: false, rooms: true, chat: false, selected: false }, 'a phone login starts on the Rooms list without selecting one');
+    assert.equal(await mock.$eval('#room-title', el => el.textContent), 'Choose a room', 'no room is open on the phone');
+    assert.equal(await mock.evaluate(() => localStorage.getItem('aimebu2.lastRoom')), null, 'the clean login remembers no room');
     await mock.click('#inbox-toggle');
     assert.equal(await mock.$eval('#inbox-view', el => !el.hidden), true, 'the Inbox button did not open the inbox');
     assert.equal(await mock.$eval('.inbox-group h2', el => el.textContent), 'UI smoke / Nested task');
@@ -3406,6 +3409,9 @@ async function main() {
     });
     await login(settingsPage, `${origin}/?mock_usages=1&mock_project_settings=1`);
     await settingsPage.waitForSelector('.room-filter');
+    // The phone usages sheet sits below the chat header, so this layout test needs an open room after a clean sign-in.
+    await domClick(settingsPage, '#projects > .room-group[data-room-id] > .room-item .room-item-name');
+    await settingsPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('chat-open'));
     await domClick(settingsPage, '#usages-toggle');
     await settingsPage.waitForSelector('#usages-popover:not([hidden]) .usages-b-tile[data-provider="codex"] .usages-b-profile');
     assert.equal(await settingsPage.$eval('#usages-toggle', el => el.getAttribute('aria-expanded')), 'true');
@@ -4128,6 +4134,9 @@ async function main() {
     await agentPage.evaluateOnNewDocument(disableRandomUUID);
     await agentPage.setViewport({ width: 1100, height: 720 });
     await login(agentPage, `${origin}/?mock_agents=1&mock_inbox=1&mock_held=1`);
+    // Composer and agent-panel checks need a room after a clean sign-in.
+    await domClick(agentPage, '#projects > .room-group[data-room-id] > .room-item .room-item-name');
+    await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('chat-open'));
     // Agent profile (v1): opening a member replaces the list with that agent; to act on another one, close it first.
     const agentAct = async (id, cls) => {
       const open = await agentPage.$eval('#agents-panel', (panel, agent) => panel.classList.contains('profile-open') && !panel.querySelector(`[data-agent-id="${agent}"].expanded`), id);
@@ -9265,7 +9274,8 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
           return response;
         };
       });
-      await login(expiryPage);
+      // Expiry markers use the populated task room from this smoke; a clean browser would open no room.
+      await login(expiryPage, `${origin}/#${encodeURIComponent(roomID)}`);
       const expiryState = () => expiryPage.evaluate(() => {
         const order = [...document.querySelectorAll('#messages > article.chat-msg')].map(item => item.dataset.messageId);
         return { old: window.__oldIDs, order, expired: [...document.querySelectorAll('#messages > article.chat-msg-expired')].map(item => item.dataset.messageId),

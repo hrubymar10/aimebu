@@ -50,7 +50,6 @@ export class Sidebar {
   reset() { this.store.reset(); }
   load() { return this.store.load(); }
   expect(...ids) { this.store.expect(...ids); }
-  firstRoom() { return this.store.firstRoom(); }
   addProject(project) { return this.store.addProject(project); }
   refreshProject(id, options) { return this.store.refreshProject(id, options); }
   markRead(room) { return this.store.markRead(room); }
