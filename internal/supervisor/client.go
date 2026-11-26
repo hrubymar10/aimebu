@@ -131,9 +131,6 @@ type Client struct {
 	// refusedSettled holds the exits a terminal refusal (stale_generation, already_terminal) already settled, so the one log line per turn stays one across repeated
 	// refusals of the same turn's frames.
 	refusedSettled map[string]bool
-	// drainSettled holds the turns a drain timeout settled with a supervisor_lost exit, so a turn goroutine that finally wakes and finds its
-	// row written does not report its own write as a failure (the journal already carries an exit).
-	drainSettled map[string]bool
 	// unrecordedExits holds the exits whose journal write kept failing after the bounded retries (see holdUnrecordedExit): a background
 	// retry writes them when the journal takes writes again, and a retiring instance counts them as work it still owes.
 	unrecordedExits map[string]unrecordedExit
@@ -202,7 +199,7 @@ type Client struct {
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
-	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn), drainSettled: make(map[string]bool), unrecordedExits: make(map[string]unrecordedExit), unrecordedStop: make(chan struct{}), commands: newCommandRunner()}
+	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn), unrecordedExits: make(map[string]unrecordedExit), unrecordedStop: make(chan struct{}), commands: newCommandRunner()}
 	if journal != nil {
 		client.recordExit = journal.RecordExitInfo
 	}
@@ -1773,9 +1770,10 @@ func (c *Client) runTurnRestartable(ctx context.Context, delivery protocol.Deliv
 		exit.StderrTail = strings.TrimSpace(exit.StderrTail + "\n" + reason)
 	}
 	if err := c.writeExitWithRetries(journalCtx, delivery.TurnID, exit); err != nil {
-		// A drain timeout settles a stuck turn's row with supervisor_lost (StopAcceptingAndDrain); when this goroutine finally wakes and
-		// finds its row written, the journal already carries an exit and nothing is lost: end quietly instead of reporting a failure.
-		settled := errors.Is(err, sql.ErrNoRows) && c.drainSettledTurn(delivery.TurnID)
+		// A row that is no longer running was settled by someone else (a drain timeout, a dead-turn settle, a refused-exit settle): the
+		// journal already carries an exit and nothing is lost, so end quietly instead of reporting a failure or holding an exit no retry
+		// can write.
+		settled := errors.Is(err, sql.ErrNoRows)
 		if !settled {
 			c.report("the exit info of a turn could not be recorded", err)
 			c.holdUnrecordedExit(delivery, exit)
@@ -1846,7 +1844,8 @@ func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
 func (c *Client) writeExitWithRetries(ctx context.Context, turnID string, exit adapter.ExitInfo) error {
 	write := c.exitWrite()
 	err := write(ctx, turnID, exit)
-	for attempt := 1; err != nil && attempt < exitWriteAttempts; attempt++ {
+	// An ErrNoRows row is settled (a drain timeout, a dead-turn settle, a refused-exit settle wrote its exit); no retry changes that.
+	for attempt := 1; err != nil && !errors.Is(err, sql.ErrNoRows) && attempt < exitWriteAttempts; attempt++ {
 		time.Sleep(exitWriteBackoff * time.Duration(attempt))
 		err = write(ctx, turnID, exit)
 	}
@@ -1871,6 +1870,14 @@ func (c *Client) holdUnrecordedExit(delivery protocol.Delivery, exit adapter.Exi
 			case <-time.After(retryEvery):
 			}
 			if writeErr := c.exitWrite()(context.Background(), record.turnID, record.exit); writeErr != nil {
+				if errors.Is(writeErr, sql.ErrNoRows) {
+					// The row was settled while the exit was held (a drain timeout, a dead-turn settle): the journal already carries an
+					// exit, so stop retrying and let the instance retire.
+					c.mu.Lock()
+					delete(c.unrecordedExits, record.turnID)
+					c.mu.Unlock()
+					return
+				}
 				continue
 			}
 			c.mu.Lock()
@@ -1896,13 +1903,6 @@ func (c *Client) exitWrite() func(ctx context.Context, turnID string, exit adapt
 	return c.recordExit
 }
 
-// drainSettledTurn says the drain timeout already wrote an exit for the turn, so a late write of the turn's own goroutine finds its row taken.
-func (c *Client) drainSettledTurn(turnID string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.drainSettled[turnID]
-}
-
 // supervisorLostExit is the exit a supervisor records for a turn it cannot wait for any longer: the same ending a drain instance writes for a
 // turn whose holder died (EndDeadTurns), so the server treats the turn as lost by the supervisor that ran it.
 func supervisorLostExit() adapter.ExitInfo {
@@ -1922,9 +1922,6 @@ func (c *Client) settleDrainTimeout() {
 	}
 	for _, turnID := range c.active {
 		ids = append(ids, turnID)
-	}
-	for _, turnID := range ids {
-		c.drainSettled[turnID] = true
 	}
 	c.mu.Unlock()
 	for _, turn := range turns {

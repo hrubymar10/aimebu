@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"database/sql"
+
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
@@ -679,6 +681,95 @@ func TestRetireOwesCountsUnrecordedExits(t *testing.T) {
 	if !client.retireOwes() {
 		t.Fatal("an instance holding an exit it could not record does not owe it")
 	}
+}
+
+// TestExitWriteErrNoRowsMeansAlreadySettled: an exit whose journal write answers sql.ErrNoRows finds its row settled by another path (a
+// dead-turn settle, a refused-exit settle, a drain timeout), so it is written once, held nowhere, reported nowhere, and the instance can retire.
+func TestExitWriteErrNoRowsMeansAlreadySettled(t *testing.T) {
+	ctx := context.Background()
+	journal, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, err := journal.RecordStart(ctx, StartRecord{TurnID: "turn-settled", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	// Another path settles the row first, the way a dead-turn settle or a refused-exit settle does; the settle reports its exit and the
+	// server acknowledges it, so the journal is left owing nothing but the row is no longer running.
+	if err := journal.RecordExitInfo(ctx, "turn-settled", supervisorLostExit()); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.AcknowledgeExit(ctx, "turn-settled"); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	reported := make(chan error, 8)
+	client.OnError = func(err error) { reported <- err }
+	var calls atomic.Int32
+	client.mu.Lock()
+	client.recordExit = func(writeCtx context.Context, turnID string, exit adapter.ExitInfo) error {
+		calls.Add(1)
+		return journal.RecordExitInfo(writeCtx, turnID, exit)
+	}
+	client.mu.Unlock()
+	runExitRetryTurn(t, client, "turn-settled", &exitRetryTurn{events: make(chan adapter.Event)})
+	client.mu.Lock()
+	held := len(client.unrecordedExits)
+	client.mu.Unlock()
+	if held != 0 {
+		t.Fatalf("an exit whose row was settled by another path is held in memory (%d)", held)
+	}
+	if client.retireOwes() {
+		t.Fatal("an instance whose only unwritten exit was settled by another path still owes work")
+	}
+	select {
+	case err := <-reported:
+		t.Fatalf("a settled row was reported as a failed exit write: %v", err)
+	default:
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("the exit write ran %d times on an already settled row, not once without retries", n)
+	}
+}
+
+// TestHeldExitStopsWhenItsRowIsSettledByAnotherPath: a held exit whose background retry answers sql.ErrNoRows stops instead of retrying for
+// the life of the process, so the instance can retire.
+func TestHeldExitStopsWhenItsRowIsSettledByAnotherPath(t *testing.T) {
+	previousRetry := unrecordedRetryEvery
+	unrecordedRetryEvery = 5 * time.Millisecond
+	t.Cleanup(func() { unrecordedRetryEvery = previousRetry })
+	journal, err := OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	reported := make(chan error, 8)
+	client.OnError = func(err error) { reported <- err }
+	client.mu.Lock()
+	client.recordExit = func(context.Context, string, adapter.ExitInfo) error { return sql.ErrNoRows }
+	client.mu.Unlock()
+	client.holdUnrecordedExit(protocol.Delivery{AgentID: "agent", TurnID: "turn-held-settled"}, adapter.ExitInfo{ExitCode: 0, TerminalEvent: true})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		client.mu.Lock()
+		held := len(client.unrecordedExits)
+		client.mu.Unlock()
+		if held == 0 && !client.retireOwes() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a held exit whose row was settled by another path is still retried (held=%d owes=%v)", held, client.retireOwes())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case err := <-reported:
+		t.Fatalf("a held exit whose row was settled by another path was reported again: %v", err)
+	default:
+	}
+	close(client.unrecordedStop) // no retry outlives the test
 }
 
 func TestStopAcceptingAndDrainTimesOutWithTurnID(t *testing.T) {
