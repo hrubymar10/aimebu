@@ -612,7 +612,7 @@ func TestDrainThatMadeProgressIsDrainedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.RecordAnswer(ctx, "turn_stale", 1, "digest", json.RawMessage(`{"answer":true}`)); err != nil {
+	if _, err := j.RecordAnswer(ctx, "turn_stale", 1, "digest", json.RawMessage(`{"answer":true}`), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := j.Close(); err != nil {
