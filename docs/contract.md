@@ -834,7 +834,14 @@ Inbox, usage, events, settings
   default) switches each listed agent to its role's next pool choice through the
   harness switch with its handoff, starting each one once no turn of it is
   running; `keep` leaves them. `keep_agents` names agents to leave as they are
-  under `respawn`. A kept agent is recorded against the pool in force
+  under `respawn`. The switch runs on the server's behalf with the decider
+  recorded as its actor (the decision was authorised when made, so the person's
+  owner/operator membership check of the switch route is skipped for this path
+  only), and each respawn advances the role's rotation cursor as a spawn does,
+  so several agents of a role spread over the pool. A respawn that cannot begin
+  (machine unavailable, launcher missing, ...) raises the item again, or
+  updates the open one, listing the agent with `respawn_error` (`respawn
+  failed: <reason>`); the person can respawn again or keep. A kept agent is recorded against the pool in force
   (`pool_kept_sig`) and is flagged again only when that pool changes. The
   listing carries `pool_agents` (agent, role, room, harness, model, `busy`),
   read live, so a stopped or switched agent leaves it.

@@ -47,6 +47,8 @@ type PoolAgent struct {
 	LauncherID string `json:"launcher_id,omitempty"`
 	// Busy says a turn of the agent is running: a respawn waits for it to finish.
 	Busy bool `json:"busy,omitempty"`
+	// RespawnError is why the last respawn of this agent could not begin, in words ("respawn failed: ..."); empty when none failed.
+	RespawnError string `json:"respawn_error,omitempty"`
 }
 
 type poolQuerier interface {
@@ -181,12 +183,35 @@ func (tx *Tx) syncPoolChange(projectID string) error {
 		_, err := tx.Exec(`UPDATE inbox_item SET state='withdrawn',rev=rev+1,resolved_at=? WHERE id=?`, timestamp(), itemID)
 		return err
 	}
-	ask, err := json.Marshal(inboxAsk{Text: poolChangeText(len(affected)), Options: PoolChangeOptions})
-	if err != nil {
+	next := inboxAsk{Text: poolChangeText(len(affected)), Options: PoolChangeOptions}
+	if exists {
+		var options string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(options_json,'') FROM inbox_item WHERE id=?`, itemID).Scan(&options); err != nil {
+			return err
+		}
+		var old inboxAsk
+		if options != "" {
+			if err := json.Unmarshal([]byte(options), &old); err != nil {
+				return err
+			}
+		}
+		for _, a := range affected {
+			if reason, ok := old.RespawnFailures[a.AgentID]; ok {
+				if next.RespawnFailures == nil {
+					next.RespawnFailures = map[string]string{}
+				}
+				next.RespawnFailures[a.AgentID] = reason
+			}
+		}
+		encoded, err := json.Marshal(next)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID)
 		return err
 	}
-	if exists {
-		_, err := tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(ask), itemID)
+	ask, err := json.Marshal(next)
+	if err != nil {
 		return err
 	}
 	var homeID string
@@ -441,4 +466,44 @@ func (s *Store) PoolRespawnsQueued(ctx context.Context) (bool, error) {
 	var queued bool
 	err := s.readDB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pool_respawn)`).Scan(&queued)
 	return queued, err
+}
+
+// FailPoolRespawn takes an agent off the respawn queue because its switch could not begin, and says why where the person will see it: the
+// project's pool_change item is raised again (or updated, when one is open) listing the agent with "respawn failed: <reason>", so the
+// person can try the respawn again or keep the model. The agent itself is untouched.
+func (s *Store) FailPoolRespawn(ctx context.Context, agentID, reason string) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		var projectID string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, agentID).Scan(&projectID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM pool_respawn WHERE agent_id=?`, agentID); err != nil {
+			return err
+		}
+		if err := tx.syncPoolChange(projectID); err != nil {
+			return err
+		}
+		var itemID, options string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,COALESCE(options_json,'') FROM inbox_item WHERE kind='pool_change' AND project_id=? AND state='open'`, projectID).Scan(&itemID, &options)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // the agent no longer qualifies (it stopped or is in the pool): nothing to show
+		}
+		if err != nil {
+			return err
+		}
+		var ask inboxAsk
+		if err := json.Unmarshal([]byte(options), &ask); err != nil {
+			return err
+		}
+		if ask.RespawnFailures == nil {
+			ask.RespawnFailures = map[string]string{}
+		}
+		ask.RespawnFailures[agentID] = "respawn failed: " + reason
+		encoded, err := json.Marshal(ask)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE inbox_item SET options_json=?,rev=rev+1 WHERE id=?`, string(encoded), itemID)
+		return err
+	})
 }

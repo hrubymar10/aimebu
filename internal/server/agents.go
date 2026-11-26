@@ -1749,6 +1749,9 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		if active {
 			return "", store.ErrTeamFlowMigrationActive
 		}
+		if r.Context().Value(serverSwitchKey{}) != nil {
+			tx.TrustSwitchActor()
+		}
 		card, err := tx.BeginAgentSwitchWithContinuity(id, userID(r), req.RoomID, req.Tool, req.Variant, req.Model, provider, targetID, path, launcherID, req.Rev)
 		if err != nil {
 			return "", err

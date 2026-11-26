@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,12 +11,18 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 // advancePoolRespawns starts the respawns an owner or admin asked for on a pool_change item. Each queued agent has no turn running (the
 // store hands over only those), and is switched to its role's next pool choice through the same route as a person's harness switch, so a
-// leader or any agent gets the switch's handoff and keeps its room. A respawn that cannot begin is logged and dropped from the queue: the
-// agent stays as it is, and the next pool change or server start raises the item again.
+// leader or any agent gets the switch's handoff and keeps its room. The decision was authorised when it was made, so the switch runs on the
+// server's behalf (serverSwitchKey) with the decider recorded as its actor, and skips the membership check of the person's own route. Each
+// respawn takes the role's next pool entry and advances the rotation cursor as a spawn does, so several agents of a role spread over the
+// pool. A respawn that cannot begin is not lost: FailPoolRespawn raises the item again with the reason, and the agent stays as it is.
+// serverSwitchKey marks a switch request the server makes for an authorised decision (see respawnOnPool).
+type serverSwitchKey struct{}
+
 func (s *Server) advancePoolRespawns(ctx context.Context) error {
 	if queued, err := s.Store.PoolRespawnsQueued(ctx); err != nil || !queued {
 		return err
@@ -27,6 +34,10 @@ func (s *Server) advancePoolRespawns(ctx context.Context) error {
 	for _, item := range ready {
 		if err := s.respawnOnPool(ctx, item.AgentID, item.ProjectID, item.DecidedBy); err != nil {
 			log.Printf("pool respawn %s: %v", item.AgentID, err)
+			if err := s.Store.FailPoolRespawn(ctx, item.AgentID, err.Error()); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := s.Store.FinishPoolRespawn(ctx, item.AgentID); err != nil {
 			return err
@@ -55,16 +66,32 @@ func (s *Server) respawnOnPool(ctx context.Context, agentID, projectID, actorID 
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(auth.ContextWithUserID(ctx, actorID), http.MethodPost, "/api/agents/"+agentID+"/switch", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.WithValue(auth.ContextWithUserID(ctx, actorID), serverSwitchKey{}, true), http.MethodPost, "/api/agents/"+agentID+"/switch", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.SetPathValue("id", agentID)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", fmt.Sprintf("pool-respawn:%s:%d", agentID, card.DesiredRev))
 	rec := httptest.NewRecorder()
 	s.agentSwitch(rec, req)
 	if rec.Code != http.StatusOK && rec.Code != http.StatusAccepted {
-		return fmt.Errorf("switch refused (%d): %s", rec.Code, bytes.TrimSpace(rec.Body.Bytes()))
+		var refused struct {
+			Code    string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(rec.Body.Bytes(), &refused) == nil && refused.Message != "" {
+			return fmt.Errorf("%s (%s)", refused.Message, refused.Code)
+		}
+		return fmt.Errorf("the switch was refused (%d)", rec.Code)
+	}
+	if selection.Defaults.PickMode == "in_turn" {
+		err := s.Store.Tx(ctx, func(tx *store.Tx) error {
+			return tx.AdvanceRoleSpawnCursor(projectID, selection.Defaults.RoleID, selection.Defaults.NextPosition, selection.Steps)
+		})
+		if err != nil && !errors.Is(err, store.ErrRoleSpawnCursorChanged) {
+			return err
+		}
 	}
 	return s.Store.MarkPoolOrigin(ctx, agentID, selection.Request.LauncherID, selection.Request.Model)
 }

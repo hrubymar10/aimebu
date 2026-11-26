@@ -80,6 +80,10 @@ func (s *Store) agentSwitch(ctx context.Context, id string) (*AgentSwitch, error
 	return &item, nil
 }
 
+// TrustSwitchActor makes the transaction's harness switches skip the owner/operator membership check. Only the server's own continuation of
+// an already authorised decision (a pool respawn) may call it; the person's switch route never does.
+func (tx *Tx) TrustSwitchActor() { tx.switchTrusted = true }
+
 func (tx *Tx) BeginAgentSwitch(id, actorID, roomID, tool, variant, model, provider string, rev int64) (AgentCard, error) {
 	return tx.BeginAgentSwitchTo(id, actorID, roomID, tool, variant, model, provider, "", "", rev)
 }
@@ -98,8 +102,10 @@ func (tx *Tx) BeginAgentSwitchToLauncher(id, actorID, roomID, tool, variant, mod
 	if err != nil {
 		return AgentCard{}, err
 	}
-	if err := tx.authorizeSpawnActor(projectID, "user", actorID, false); err != nil {
-		return AgentCard{}, err
+	if !tx.switchTrusted {
+		if err := tx.authorizeSpawnActor(projectID, "user", actorID, false); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	if rev != oldRev {
 		return AgentCard{}, ErrStaleRev

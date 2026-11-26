@@ -366,7 +366,7 @@ async function main() {
     // two decisions, the respawn first and the default. Someone who cannot decide sees no buttons.
     {
       const pool = { ...base, id: 'pc1', kind: 'pool_change', question: "A role's default pool changed: 3 running agents use a harness or model the pool no longer lists.", options: ['Respawn on the pool model', 'Keep the current model'],
-        pool_agents: [{ agent_id: 'agt_01', role_label: 'Leader', room_id: 'r1', room_title: 'Home' }, { agent_id: 'agt_02', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }, { agent_id: 'agt_03', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }] };
+        pool_agents: [{ agent_id: 'agt_01', slug: 'lead', role_label: 'Leader', room_id: 'r1', room_title: 'Home', respawn_error: 'respawn failed: machine_unavailable' }, { agent_id: 'agt_02', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }, { agent_id: 'agt_03', role_label: 'Worker', room_id: 'r9', room_title: 'A1: task' }] };
       const page = await mount({ list: [pool, { ...pool, id: 'pc2', can_decide: false, pool_agents: [pool.pool_agents[1]] }] });
       await waitList(page);
       const card = await page.$eval('[data-inbox-id=pc1]', node => ({ kind: node.querySelector('small').textContent, lines: [...node.querySelectorAll('.inbox-pool-list li')].map(li => li.textContent),
@@ -374,6 +374,7 @@ async function main() {
       assert.equal(card.kind, 'Pool change');
       assert.deepEqual(card.lines, ['Home: leader', 'A1: task: 2 workers']);
       assert.ok(!(await page.$eval('[data-inbox-id=pc1]', node => { const copy = node.cloneNode(true); copy.querySelector('.inbox-raw-holder').remove(); return copy.textContent; })).includes('agt_'), 'no raw agent id is shown');
+      assert.equal(await page.$eval('[data-inbox-id=pc1] .pool-failed', el => el.textContent), 'lead: respawn failed: machine_unavailable', 'a failed respawn is shown with its reason');
       assert.deepEqual(card.buttons, [['Respawn on the pool model', 'respawn', 'btn btn-primary', 'Respawn on the pool model', true], ['Keep the current model', 'keep', 'btn', 'Keep the current model', true]], 'the respawn is the default, first and primary');
       assert.deepEqual(await page.$eval('[data-inbox-id=pc2]', node => [node.querySelectorAll('.inbox-decisions button').length, node.querySelector('.inbox-pool-list li').textContent]), [0, 'A1: task: worker']);
       await page.$eval('[data-inbox-id=pc1] [data-choice=respawn]', el => el.click());

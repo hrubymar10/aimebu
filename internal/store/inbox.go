@@ -69,6 +69,8 @@ type inboxAsk struct {
 	// TargetRooms lists the rooms the held reply of a delivery_failed item meant to reach (see deliveryFailedInbox). A later committed reply
 	// that reaches one of them settles the item, even when the card itself was raised in the turn's room.
 	TargetRooms []string `json:"target_rooms,omitempty"`
+	// RespawnFailures says, per agent of a pool_change item, why its last respawn could not begin.
+	RespawnFailures map[string]string `json:"respawn_failures,omitempty"`
 }
 
 // inboxFromSQL and inboxVisibleSQL say which items a person can access (two ? placeholders: the user, twice). They are shared by the full
@@ -94,7 +96,7 @@ const inboxWhereSQL = `WHERE i.state='open' AND i.lead_due_at IS NULL AND i.kind
 const inboxCountWhereSQL = inboxWhereSQL + ` AND NOT ` + inboxHiddenSQL
 const inboxSupersededWhereSQL = `WHERE (i.state='superseded' OR i.state='withdrawn' AND ` + reanswerableListSQL + `) AND i.lead_due_at IS NULL AND i.kind IN ('question','approval') AND i.requester_kind='agent'` + inboxVisibleSQL
 const inboxVisibleSQL = `
-		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
+		AND (member.role IN ('owner','operator') OR i.kind='pool_change' OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
 		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
 		AND (i.kind!='pool_change' OR member.role='owner' OR EXISTS (SELECT 1 FROM user u WHERE u.id=member.user_id AND u.disabled_at IS NULL
 			AND (u.admin=1 OR u.id=(SELECT id FROM user ORDER BY created_at,id LIMIT 1))))
@@ -156,6 +158,7 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 	}
 	defer rows.Close()
 	entries := []InboxEntry{}
+	var failures map[int]map[string]string
 	for rows.Next() {
 		var item InboxEntry
 		var options, fallback, report, memberRole, roomKind string
@@ -164,7 +167,7 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester, &item.NoteID, &item.Seen, &item.InboxHidden); err != nil {
 			return nil, err
 		}
-		item.CanDecide = memberRole == "owner" || memberRole == "operator" && !item.BoundaryPending || roomKind == "dm" && (item.Kind == "question" || item.Kind == "delivery_failed" || item.Kind == "approval" && !item.BoundaryPending)
+		item.CanDecide = memberRole == "owner" || item.Kind == "pool_change" || memberRole == "operator" && !item.BoundaryPending || roomKind == "dm" && (item.Kind == "question" || item.Kind == "delivery_failed" || item.Kind == "approval" && !item.BoundaryPending)
 		if json.Valid([]byte(report)) {
 			item.DiagnosticReport = json.RawMessage(report)
 		}
@@ -194,6 +197,12 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 			item.Options = []string{}
 		}
 		item.FreeText = ask.FreeText
+		if len(ask.RespawnFailures) > 0 {
+			if failures == nil {
+				failures = map[int]map[string]string{}
+			}
+			failures[len(entries)] = ask.RespawnFailures
+		}
 		entries = append(entries, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -205,6 +214,9 @@ func (s *Store) inboxEntriesForUser(ctx context.Context, userID, where string) (
 			list, err := s.PoolAffected(ctx, entries[i].ProjectID)
 			if err != nil {
 				return nil, err
+			}
+			for j := range list {
+				list[j].RespawnError = failures[i][list[j].AgentID]
 			}
 			entries[i].PoolAgents = list
 		}

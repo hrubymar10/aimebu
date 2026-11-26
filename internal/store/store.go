@@ -261,6 +261,8 @@ type Tx struct {
 	ctx      context.Context
 	maxDepth int
 	wrote    bool
+	// switchTrusted skips the owner/operator check of a harness switch: the server begins it on the strength of a decision already authorised.
+	switchTrusted bool
 }
 
 // Context carries the active transaction marker for fail-fast Store calls.

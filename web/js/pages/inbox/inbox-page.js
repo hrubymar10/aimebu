@@ -73,7 +73,7 @@ function Card({ item, store, rooms, onJump, openUsages }) {
   }
   if (kind === 'pool_change') {
     const groups = poolGroups(item.pool_agents);
-    return wrap(html`${jump}<div class="inbox-pool-list"><small>Switching will affect:</small><ul>${groups.map(group => html`<li key=${group.room}>${group.room}: ${group.text}</li>`)}</ul></div>
+    return wrap(html`${jump}<div class="inbox-pool-list"><small>Switching will affect:</small><ul>${groups.map(group => html`<li key=${group.room}>${group.room}: ${group.text}</li>`)}</ul>${(item.pool_agents || []).filter(agent => agent.respawn_error).map(agent => html`<p class="inbox-evidence pool-failed" key=${agent.slug}>${agent.slug}: ${agent.respawn_error}</p>`)}</div>
       ${item.can_decide ? html`<div class="inbox-decisions">${POOL_CHOICES.map(([label, choice, icon, classes]) => html`<button type="button" class=${classes} data-choice=${choice} title=${label} disabled=${pending} onClick=${() => store.decide(item, choice)}><span class=${`icon-mask icon-mask-${icon}`} aria-hidden="true"></span> ${label}</button>`)}</div>` : html`<p class="inbox-evidence">The project owner or an admin must decide this.</p>`}`);
   }
   if (kind === 'usage_limit') {
