@@ -337,7 +337,20 @@ hide_full_access_warning = true
 	}
 }
 
+// resetWarmDockerUnknown clears the process-global once-per-agent state so a
+// test passes under -count>1; it restores nothing because each test starts clean.
+func resetWarmDockerUnknown(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		warmDockerUnknownSaid.Range(func(k, _ any) bool { warmDockerUnknownSaid.Delete(k); return true })
+		telemetry.ResetCaptured()
+	}
+	clear()
+	t.Cleanup(clear)
+}
+
 func TestWarmDockerUnknownKeyWarnsOncePerAgent(t *testing.T) {
+	resetWarmDockerUnknown(t)
 	home := t.TempDir()
 	path := filepath.Join(home, "config.toml")
 	if err := os.WriteFile(path, []byte("new_cosmetic_setting = true\n"), 0600); err != nil {
@@ -361,6 +374,7 @@ func TestWarmDockerUnknownKeyWarnsOncePerAgent(t *testing.T) {
 }
 
 func TestWarmDockerUnknownKeyReportsOneWarning(t *testing.T) {
+	resetWarmDockerUnknown(t)
 	transport := &dockerWarningTransport{}
 	reporter, err := telemetry.Init(telemetry.Config{DSN: "https://public@example.invalid/1", Environment: "test"}, transport)
 	if err != nil {
