@@ -130,7 +130,11 @@ type Input struct {
 	Profiles []Obs
 	// Active is the active profile of the tool, "" when none.
 	Active string
-	Now    time.Time
+	// ManualChoice is the latest CLI or web selection, shared through the
+	// switcher tree with the server's quota runner.
+	ManualChoiceProfile string
+	ManualChoiceAt      time.Time
+	Now                 time.Time
 	// Migrated says the tool runs the token-copy model, where a switch refreshes the
 	// incoming profile under the account lock and the near-refresh hold is not needed.
 	Migrated bool
@@ -279,7 +283,11 @@ func Decide(in Input) Result {
 	if !in.Migrated && (nearRefresh(obs[in.Active], now) || nearRefresh(obs[want], now)) {
 		return finish(ActionHold, ReasonNearRefresh)
 	}
-	if state.LastSwitchAt != nil && cfg.MinDwellMinutes > 0 && now.Sub(*state.LastSwitchAt) < time.Duration(cfg.MinDwellMinutes)*time.Minute {
+	lastSwitch := state.LastSwitchAt
+	if in.ManualChoiceProfile == in.Active && !in.ManualChoiceAt.IsZero() && (lastSwitch == nil || in.ManualChoiceAt.After(*lastSwitch)) {
+		lastSwitch = &in.ManualChoiceAt
+	}
+	if lastSwitch != nil && cfg.MinDwellMinutes > 0 && now.Sub(*lastSwitch) < time.Duration(cfg.MinDwellMinutes)*time.Minute {
 		return finish(ActionHold, ReasonSwitchedRecent)
 	}
 	reason := ReasonHigherUsable

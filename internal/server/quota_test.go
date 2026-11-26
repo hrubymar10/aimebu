@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -48,9 +49,10 @@ func quotaEnv(t *testing.T) (f *fixture, m *switcher.Manager, live string) {
 }
 
 type quotaFakeSource struct {
-	mu    sync.Mutex
-	obs   quota.Observation
-	names []string // the profiles that exist; A and B when empty
+	mu     sync.Mutex
+	obs    quota.Observation
+	names  []string // the profiles that exist; A and B when empty
+	choice func() (switcher.ManualChoice, error)
 }
 
 func (s *quotaFakeSource) set(o quota.Observation) { s.mu.Lock(); s.obs = o; s.mu.Unlock() }
@@ -59,6 +61,13 @@ func (s *quotaFakeSource) Observe(context.Context, string) (quota.Observation, e
 	defer s.mu.Unlock()
 	o := s.obs
 	o.Profiles = append([]quota.Obs(nil), o.Profiles...)
+	if s.choice != nil {
+		choice, err := s.choice()
+		if err != nil {
+			return quota.Observation{}, err
+		}
+		o.ManualChoiceProfile, o.ManualChoiceAt = choice.Profile, choice.At
+	}
 	return o, nil
 }
 func (s *quotaFakeSource) Profiles(context.Context, string) ([]string, error) {
@@ -255,7 +264,15 @@ func TestAQuotaSwitchGoesThroughTheRealSwitcherAndIsRecordedAndAnnounced(t *test
 	quotaConfig(t, runner, nil)
 	// A is exhausted, B is fine: the order is A, B (defaults) so B is wanted.
 	src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
+	var logged strings.Builder
+	priorLog := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(priorLog)
 	runner.Evaluate(context.Background())
+	log.SetOutput(priorLog)
+	if got := logged.String(); !strings.Contains(got, "automatic switch") || !strings.Contains(got, quota.ReasonOverLimit) {
+		t.Fatalf("automatic switch log = %q", got)
+	}
 
 	if got := activeProfile(t, m); got != "B" {
 		t.Fatalf("active = %s, want B", got)
@@ -271,12 +288,128 @@ func TestAQuotaSwitchGoesThroughTheRealSwitcherAndIsRecordedAndAnnounced(t *test
 	if o.Tools["claude"].State.LastSwitchAt == nil {
 		t.Fatal("the switch time was not persisted")
 	}
+	if choice, err := m.ManualChoice(switcher.ToolClaude); err != nil || choice.Profile != "A" {
+		t.Fatalf("automatic switch changed the manual choice: %+v, %v", choice, err)
+	}
 	var announced bool
 	for _, event := range systemEvents(t, f) {
-		announced = announced || (event.Kind == "quota_switch" && strings.Contains(event.PayloadJSON, `"to":"B"`) && strings.Contains(event.PayloadJSON, `"from":"A"`))
+		announced = announced || (event.Kind == "quota_switch" && strings.Contains(event.PayloadJSON, `"to":"B"`) && strings.Contains(event.PayloadJSON, `"from":"A"`) && strings.Contains(event.PayloadJSON, quota.ReasonOverLimit))
 	}
 	if !announced {
 		t.Fatalf("the owner's feed lacks the switch event: %+v", systemEvents(t, f))
+	}
+}
+
+func TestImportedProfileHoldsItsManualChoiceOnTheNextQuotaPass(t *testing.T) {
+	f, m, live := quotaEnv(t)
+	src := &quotaFakeSource{names: []string{"A", "B", "C"}, choice: func() (switcher.ManualChoice, error) {
+		return m.ManualChoice(switcher.ToolClaude)
+	}}
+	runner, now := runnerOver(t, f, src)
+	quotaConfig(t, runner, func(c *quota.Config) { c.MinDwellMinutes = 5 })
+	full := startupClaudeCreds("tok_cccc", "ref_cccc", time.Now().Add(6*time.Hour))
+	if err := os.WriteFile(live, []byte(full), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Import(switcher.ToolClaude, "C"); err != nil {
+		t.Fatal(err)
+	}
+	if observed, err := (quotaSource{f.srv}).Observe(context.Background(), switcher.ToolClaude); err != nil || observed.ManualChoiceProfile != "C" {
+		t.Fatalf("quota source did not read the imported choice: %+v, %v", observed, err)
+	}
+	src.set(quota.Observation{Active: "C", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 10, 10), qobs("B", 10, 10), qobs("C", 10, 10)}})
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "C" {
+		t.Fatalf("imported profile switched away on the next pass: %s", got)
+	}
+	for _, event := range systemEvents(t, f) {
+		if event.Kind == "quota_switch" {
+			t.Fatalf("manual import caused automatic switch event: %+v", event)
+		}
+	}
+	*now = now.Add(6 * time.Minute)
+	runner.Evaluate(context.Background())
+	if got := activeProfile(t, m); got != "A" {
+		t.Fatalf("preferred profile did not resume after dwell: %s", got)
+	}
+}
+
+func TestInvalidManualChoiceDoesNotBlockQuotaSwitch(t *testing.T) {
+	cases := map[string]string{
+		"garbage JSON":         "not-json",
+		"invalid profile name": `{"profile":"bad/name","at":"2026-11-26T10:00:00Z"}`,
+		"zero time":            `{"profile":"A","at":"0001-01-01T00:00:00Z"}`,
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			f, m, _ := quotaEnv(t)
+			marker := filepath.Join(os.Getenv("AIMEBU_CONFIG_DIR"), "switcher", "manual-choice-claude.json")
+			if err := os.WriteFile(marker, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			src := &quotaFakeSource{choice: func() (switcher.ManualChoice, error) {
+				observed, err := (quotaSource{f.srv}).Observe(context.Background(), switcher.ToolClaude)
+				return switcher.ManualChoice{Profile: observed.ManualChoiceProfile, At: observed.ManualChoiceAt}, err
+			}}
+			runner, _ := runnerOver(t, f, src)
+			quotaConfig(t, runner, func(c *quota.Config) { c.MinDwellMinutes = 5 })
+			src.set(quota.Observation{Active: "A", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
+			var logged strings.Builder
+			priorLog := log.Writer()
+			log.SetOutput(&logged)
+			defer log.SetOutput(priorLog)
+			runner.Evaluate(context.Background())
+			if got := activeProfile(t, m); got != "B" {
+				t.Fatalf("invalid marker blocked quota switch: active = %s", got)
+			}
+			src.set(quota.Observation{Active: "B", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 99, 99), qobs("B", 10, 10)}})
+			for range 3 {
+				runner.Evaluate(context.Background())
+			}
+			if count := strings.Count(logged.String(), "ignoring manual choice marker"); count != 1 {
+				t.Fatalf("manual choice marker error logged %d times, want one: %s", count, logged.String())
+			}
+		})
+	}
+}
+
+func TestManualWebSwitchUsesDwellAndZeroDisablesIt(t *testing.T) {
+	for _, dwell := range []int{5, 0} {
+		t.Run(fmt.Sprint(dwell), func(t *testing.T) {
+			f, m, _ := quotaEnv(t)
+			if err := m.Add(switcher.ToolClaude, "C"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(m.StoredCredPath(switcher.ToolClaude, "C"), []byte(startupClaudeCreds("tok_cccc", "ref_cccc", time.Now().Add(6*time.Hour))), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			src := &quotaFakeSource{names: []string{"A", "B", "C"}, choice: func() (switcher.ManualChoice, error) {
+				return m.ManualChoice(switcher.ToolClaude)
+			}}
+			runner, now := runnerOver(t, f, src)
+			quotaConfig(t, runner, func(c *quota.Config) { c.MinDwellMinutes = dwell })
+			resp := f.request("POST", "/api/switcher/claude/use", map[string]string{"name": "C"}, true)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("manual web switch status = %d", resp.StatusCode)
+			}
+			src.set(quota.Observation{Active: "C", Migrated: true, SwitcherEnabled: true, Ready: true, Profiles: []quota.Obs{qobs("A", 10, 10), qobs("B", 10, 10), qobs("C", 10, 10)}})
+			runner.Evaluate(context.Background())
+			want := "C"
+			if dwell == 0 {
+				want = "A"
+			}
+			if got := activeProfile(t, m); got != want {
+				t.Fatalf("active before dwell = %s, want %s", got, want)
+			}
+			if dwell > 0 {
+				*now = now.Add(6 * time.Minute)
+				runner.Evaluate(context.Background())
+				if got := activeProfile(t, m); got != "A" {
+					t.Fatalf("preferred profile after dwell = %s", got)
+				}
+			}
+		})
 	}
 }
 

@@ -84,6 +84,13 @@ func (q quotaSource) Observe(ctx context.Context, tool string) (quota.Observatio
 		maxAge = 10 * time.Minute
 	}
 	obs := quota.Observation{SwitcherEnabled: response.SwitcherEnabled, Migrated: q.s.Switcher.TokenCopiesFor(tool), MaxAge: maxAge}
+	choice, err := q.s.Switcher.ManualChoice(tool)
+	if err != nil {
+		q.s.noteQuotaChoiceError(tool, err)
+	} else {
+		q.s.noteQuotaChoiceError(tool, nil)
+		obs.ManualChoiceProfile, obs.ManualChoiceAt = choice.Profile, choice.At
+	}
 	var parked map[string]string
 	if tr := q.s.currentRefresher(); tr != nil && tr.Enabled() {
 		parked = tr.AccountStates()
@@ -124,6 +131,26 @@ func (q quotaSource) Observe(ctx context.Context, tool string) (quota.Observatio
 		obs.Ready = len(obs.Profiles) > 0
 	}
 	return obs, nil
+}
+
+// A corrupt marker cannot stop quota switching. Its error is logged once until
+// it changes or recovers, rather than on every observation pass.
+func (s *Server) noteQuotaChoiceError(tool string, err error) {
+	s.quotaChoiceMu.Lock()
+	defer s.quotaChoiceMu.Unlock()
+	if err == nil {
+		delete(s.quotaChoiceErrors, tool)
+		return
+	}
+	message := err.Error()
+	if s.quotaChoiceErrors[tool] == message {
+		return
+	}
+	if s.quotaChoiceErrors == nil {
+		s.quotaChoiceErrors = make(map[string]string)
+	}
+	s.quotaChoiceErrors[tool] = message
+	log.Printf("quota: %s: ignoring manual choice marker: %v", tool, err)
 }
 
 // hostToolLimited says a provider limit is in force for an agent of tool on the host machine (see Store.ToolProviderLimited). A failed read counts
@@ -201,7 +228,7 @@ type quotaActuator struct {
 }
 
 func (a quotaActuator) Switch(ctx context.Context, tool, from, to string) (bool, string, error) {
-	_, changed, err := a.s.Switcher.SwitchGuarded(tool, to, switcher.SwitchGuard{ExpectedActive: from})
+	_, changed, err := a.s.Switcher.SwitchGuarded(tool, to, switcher.SwitchGuard{ExpectedActive: from, Automatic: true})
 	switch {
 	case err == nil:
 		if changed {

@@ -115,7 +115,7 @@ function Tool({ store, tool, label }) {
         <${SettingsRow} label="Warm-up (seconds)" desc="How long every usable profile must report fresh usage before the server acts on it. 0 to 600." id=${`quota-${tool}-warmup`}>
           <${NumberField} value=${draft.warmup_seconds} label=${`${label} warm-up in seconds`} range=${RANGES.warmup_seconds} onInput=${value => typing('warmup_seconds', value)} />
         <//>
-        <${SettingsRow} label="Minimum time between switches (minutes)" desc="After an automatic switch the server waits this long before another one. This also delays a switch away from an exhausted account right after a switch. 0 to 120." id=${`quota-${tool}-dwell`}>
+        <${SettingsRow} label="Minimum time between switches (minutes)" desc="After any switch or import, wait this long before switching automatically, even if the active account is exhausted. 0 disables the wait; maximum 120." id=${`quota-${tool}-dwell`}>
           <${NumberField} value=${draft.min_dwell_minutes} label=${`${label} minimum minutes between switches`} range=${RANGES.min_dwell_minutes} onInput=${value => typing('min_dwell_minutes', value)} />
         <//>
       <//>

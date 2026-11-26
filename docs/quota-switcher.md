@@ -74,9 +74,13 @@ A profile is usable when all of these hold:
    tool instead refreshes the incoming profile under its account lock. Both the
    outgoing and incoming account locks are held through the switch, so an
    in-progress token refresh or warm-up on either side cannot race the swap.
-9. The last automatic switch of the tool was less than the minimum dwell ago
-   (5 minutes by default): hold. This applies even when the active profile is
-   exhausted; the dwell is the guard against two profiles flapping.
+9. The last switch of the tool, automatic or manually chosen, was less than the
+   minimum dwell ago (5 minutes by default): hold. An import that selects a
+   profile starts the same timer. This applies even when the active profile is
+   exhausted; zero minutes disables the wait. Manual choices are recorded in
+   the switcher tree so CLI choices and server restarts are covered. A marker
+   left behind after its profile is removed is ignored when that profile is
+   no longer active. An unreadable marker is logged once and treated as no hold.
 10. Switch. The reason says why: "a higher-priority profile is usable again", "the
     active profile is over its limit or unusable", or "the active profile is not in
     the order". The last one is the rule for an active profile the owner never listed
@@ -133,8 +137,9 @@ and its System event commit together, so one cannot be stored without the other.
 - While a switch is in flight (it can wait on the account lock or an incoming refresh,
   up to a few minutes) reading the settings keeps working, but saving them waits for
   the switch to end, so the settings page can take that long to say "Saved".
-- A successful switch announces `quota_switch` in the owner's system events and
-  refreshes the usage snapshot like a web switch.
+- A successful automatic switch writes one server log line with its reason,
+  announces `quota_switch` in the owner's system events and refreshes the usage
+  snapshot like a web switch.
 
 ## The after-reset order
 
@@ -156,7 +161,7 @@ Per tool (stored in the server database, so plain `aimebu prune` keeps it and
 | `protected` | profiles never switched from or to |
 | `after_reset` | `{profile, drop_points, profiles}` or `null`; enabling with fewer than two `after_reset.profiles` is refused |
 | `warmup_seconds` | continuous ok time before a profile counts (default 60) |
-| `min_dwell_minutes` | minimum between automatic switches (default 5) |
+| `min_dwell_minutes` | minimum after any switch or import before an automatic switch (default 5; zero disables the wait) |
 
 With nothing saved, a tool shows a default pre-filled from the profiles that exist
 (in listing order) with the thresholds of the original rules: Claude 95/95 for every

@@ -1646,6 +1646,7 @@ the journal, for debugging (retention 14 d): see "Agent output" in
   after cutover. Account scope
   is host-machine-wide per tool across projects. Remote machines have no
   switcher profile set in this slice.
+  A manual switch or import that selects a profile starts the quota switcher's minimum dwell timer (`min_dwell_minutes`, default five minutes, zero disables it), including when the CLI performs it; the hold survives a server restart. When the dwell ends, the preferred order applies again. Every automatic switch records its reason in the server log and raises a `quota_switch` owner event.
 - Host-machine switching requires owner and shows the agents using the tool.
   **A switch never waits for agents**, neither the web switch nor the automatic
   one, and neither does the removal of the active profile: running turns keep

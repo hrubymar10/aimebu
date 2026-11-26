@@ -103,6 +103,10 @@ type Server struct {
 	// atomic pointer: taking refresherMu there would invert the order StartTokenCopies uses (refresherMu,
 	// then the reader's lock).
 	quota atomic.Pointer[quota.Runner]
+	// quotaChoiceErrors suppresses repeated logs for an unreadable manual-choice
+	// marker while the quota runner observes it on every pass.
+	quotaChoiceMu     sync.Mutex
+	quotaChoiceErrors map[string]string
 	// guard is the limit guard, started with the quota switcher and read the same way.
 	guard atomic.Pointer[quota.Guard]
 	// TokenAutoRefreshAvailable says whether the refresh executor can run; nil means

@@ -250,7 +250,7 @@ func (m *Manager) Import(tool, name string) error {
 
 	// Mark this profile active in state.json.
 	state.Active[tool] = name
-	if err := m.saveState(state); err != nil {
+	if err := m.saveStateWithChoice(state, tool, name, false); err != nil {
 		m.rollbackImport(tool, name, previous, livePath)
 		return fmt.Errorf("import: update state: %w", err)
 	}
@@ -337,6 +337,11 @@ func (m *Manager) Rename(tool, oldName, newName string) error {
 		state.Active[tool] = newName
 		if err := m.saveState(state); err != nil {
 			return err
+		}
+		if choice, choiceErr := m.ManualChoice(tool); choiceErr == nil && choice.Profile == oldName {
+			if writeErr := m.writeManualChoice(tool, ManualChoice{Profile: newName, At: choice.At}); writeErr != nil {
+				log.Printf("switcher: %s/%s: move manual choice after rename: %v", tool, newName, writeErr)
+			}
 		}
 		// The active profile has no switch-away time; entries left under either
 		// name by earlier profiles must not be inherited by it later.

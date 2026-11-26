@@ -353,7 +353,7 @@ func (m *Manager) importTokenCopies(tool, name, livePath string, liveData []byte
 		return fmt.Errorf("%w: stored credentials failed validation: %s", ErrInvalidCredentials, err)
 	}
 	state.Active[tool] = name
-	if err := m.saveState(state); err != nil {
+	if err := m.saveStateWithChoice(state, tool, name, false); err != nil {
 		undo()
 		return fmt.Errorf("import: update state: %w", err)
 	}

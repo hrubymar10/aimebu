@@ -70,6 +70,9 @@ type SwitchGuard struct {
 	// ExpectedActive, when set, must still be the active profile of the tool; otherwise
 	// the switch is refused with ErrActiveChanged.
 	ExpectedActive string
+	// Automatic skips the manual-choice dwell marker. Only the quota actuator
+	// sets it; CLI and web switches use the default manual choice.
+	Automatic bool
 }
 
 // SwitchGuarded is Switch with its guard conditions checked under the lock.
@@ -263,7 +266,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 			// below would be wrong. Nothing has been changed; retry.
 			return "", false, ErrMigrationRaced
 		}
-		return m.switchTokenCopies(tool, name, activeProfile)
+		return m.switchTokenCopies(tool, name, activeProfile, guard.Automatic)
 	}
 
 	livePath, err := m.liveCredPath(tool)
@@ -408,7 +411,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 		}
 		// Empty target: state first, then clear live (the account login goes, MCP logins stay).
 		state.Active[tool] = name
-		if stateErr := m.saveState(state); stateErr != nil {
+		if stateErr := m.saveStateWithChoice(state, tool, name, guard.Automatic); stateErr != nil {
 			return "", false, fmt.Errorf("update state: %w", stateErr)
 		}
 		if removeErr := clearLiveLogin(tool, livePath, preLive); removeErr != nil {
@@ -458,7 +461,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard, force 
 	}
 
 	state.Active[tool] = name
-	if stateErr := m.saveState(state); stateErr != nil {
+	if stateErr := m.saveStateWithChoice(state, tool, name, guard.Automatic); stateErr != nil {
 		// Restore succeeded so live now holds the target's creds; state save
 		// failed, so roll back to the pre-switch live state. For non-absent that's
 		// the captured liveData; for liveAbsent the pre-state was no live file at

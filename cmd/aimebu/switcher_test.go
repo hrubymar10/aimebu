@@ -345,6 +345,52 @@ func TestSwitcherCLIRenameRemoveAndHints(t *testing.T) {
 	}
 }
 
+func TestSwitcherCLIRenameActiveKeepsLogin(t *testing.T) {
+	home, call := switcherEnv(t)
+	if _, errs, code := call("", "enable"); code != 0 {
+		t.Fatalf("enable: %s", errs)
+	}
+	writeCodexLogin(t, home, "tok_aaaa")
+	if _, errs, code := call("", "import", "codex", "main"); code != 0 {
+		t.Fatalf("import: %s", errs)
+	}
+	live := filepath.Join(home, ".codex", "auth.json")
+	before, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errs, code := call("", "rename", "codex", "main", "primary"); code != 0 {
+		t.Fatalf("rename: %s", errs)
+	}
+	state, err := os.ReadFile(filepath.Join(home, ".aimebu2", "switcher", "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Active map[string]string `json:"active"`
+	}
+	if err := json.Unmarshal(state, &saved); err != nil || saved.Active["codex"] != "primary" {
+		t.Fatalf("state after rename: %s; error: %v", state, err)
+	}
+	marker, err := os.ReadFile(filepath.Join(home, ".aimebu2", "switcher", "manual-choice-codex.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var choice struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.Unmarshal(marker, &choice); err != nil || choice.Profile != "primary" {
+		t.Fatalf("manual choice after rename: %s; error: %v", marker, err)
+	}
+	after, err := os.ReadFile(live)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("live login after rename: %s; error: %v", after, err)
+	}
+	if listed, errs, code := call("", "list"); code != 0 || !strings.Contains(listed, "primary") || !strings.Contains(listed, "*") {
+		t.Fatalf("list after rename: code=%d out=%q err=%q", code, listed, errs)
+	}
+}
+
 // migrate-copies converts a link-based tree, and the very same CLI process
 // family can then switch: the manager the CLI builds must carry the fan-out
 // hooks (a nil hook would fail every switch after migration).

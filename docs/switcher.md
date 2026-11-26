@@ -80,6 +80,12 @@ already exists is refused with 409. The profile directory also carries a
 private opaque `usage-alert-id` file when needed for usage alerts; it moves on
 rename and is deleted with the profile, so a reused name gets a new identity.
 
+An explicit import or manual switch records the selected profile and time in
+`switcher/manual-choice-<tool>.json`. The automatic quota switcher respects its
+configured minimum dwell before it can switch away, including when the choice
+was made through the CLI or the server restarted. Renaming the selected profile
+keeps that time under the new name. A zero-minute dwell disables this wait.
+
 Removing a profile first records a tombstone in `switcher/removed.json`: the
 tool, profile name, removal time and the SHA-256 hash of its refresh token,
 never the token. The last 50 are kept, the file is mode 0600 and

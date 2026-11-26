@@ -361,7 +361,7 @@ func (m *Manager) refreshIncomingIfDue(tool, name string) error {
 // switchTokenCopies is Switch for the token-copy model. The caller holds the
 // target account lock and the switcher flock, and has verified that the switcher
 // is enabled, that the target profile exists and differs from the active one.
-func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active string, switched bool, err error) {
+func (m *Manager) switchTokenCopies(tool, name, activeProfile string, automatic bool) (active string, switched bool, err error) {
 	if m.copyHooks.FanOutActive == nil {
 		return "", false, errors.New("switch refused: token-copy fan-out is not wired")
 	}
@@ -411,7 +411,7 @@ func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active st
 		// and a pointer at the new empty profile), then clear the live file so the
 		// CLI asks for a fresh login, which the reconciler imports into it.
 		state.Active[tool] = name
-		if stateErr := m.saveState(state); stateErr != nil {
+		if stateErr := m.saveStateWithChoice(state, tool, name, automatic); stateErr != nil {
 			return "", false, fmt.Errorf("update state: %w", stateErr)
 		}
 		var rmErr error
@@ -441,7 +441,7 @@ func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active st
 		return "", false, fmt.Errorf("rewrite live credentials: %w", fanErr)
 	}
 	state.Active[tool] = name
-	if stateErr := m.saveState(state); stateErr != nil {
+	if stateErr := m.saveStateWithChoice(state, tool, name, automatic); stateErr != nil {
 		if len(outgoing) > 0 {
 			_ = m.copyHooks.FanOutActive(tool, outgoing) // best-effort rollback
 		}

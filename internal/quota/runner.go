@@ -26,8 +26,10 @@ type Persistence interface {
 // from the usage snapshot, the switcher and the token refresher.
 type Observation struct {
 	// Profiles are the readings of every profile. The runner fills in OKFor.
-	Profiles []Obs
-	Active   string
+	Profiles            []Obs
+	Active              string
+	ManualChoiceProfile string
+	ManualChoiceAt      time.Time
 	// Migrated: the tool runs the token-copy model.
 	Migrated bool
 	// SwitcherEnabled: the account switcher is on at all.
@@ -498,7 +500,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		return nil
 	}
 
-	res := Decide(Input{Tool: tool, Config: cfg, State: state.State, Profiles: obs.Profiles, Active: obs.Active, Now: now, Migrated: obs.Migrated})
+	res := Decide(Input{Tool: tool, Config: cfg, State: state.State, Profiles: obs.Profiles, Active: obs.Active, ManualChoiceProfile: obs.ManualChoiceProfile, ManualChoiceAt: obs.ManualChoiceAt, Now: now, Migrated: obs.Migrated})
 	d := res.Decision
 	next := persisted{State: res.State, RecentSwitches: state.RecentSwitches}
 	if state.ResetLatchedAt == nil && res.State.ResetLatchedAt != nil && cfg.AfterReset != nil {
@@ -592,6 +594,7 @@ func (r *Runner) evaluateTool(ctx context.Context, tool string) error {
 		at := now
 		next.LastSwitchAt = &at
 		next.RecentSwitches = append(next.RecentSwitches, now)
+		log.Printf("quota: %s: automatic switch %s -> %s: %s", tool, from, to, d.Reason)
 		r.event("quota_switch", map[string]string{"tool": tool, "from": from, "to": to, "reason": d.Reason})
 		finish(d, next)
 	}
