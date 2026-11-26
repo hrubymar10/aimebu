@@ -1149,23 +1149,35 @@ processes are never on one session.
   therefore kept warm **only when its launcher advertises `stop_on_signal`** (listed by
   `HARNESS_DOCKER_PRINT_FEATURES=1 claude-docker --version`, so it is in the launcher's features), and
   its end is confirmed only two ways: the clean one (input closed, the CLI exits, `docker exec`
-  returns, the wrapper's session cleanup runs and it exits 0), or, with that capability, a
+  returns, the wrapper's session cleanup runs and it exits 0, even if TERM arrived during cleanup), or, with that capability, a
   terminate: the wrapper traps TERM, ends the session in the container, waits for it and only then
-  exits 128+signal, so exactly 143 after our SIGTERM. Any other status, a kill, or no capability
-  is *unconfirmed*. The supervisor retries the end periodically, backing off as the retries fail, twice as long
-  each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once (at most one such wake per stuck process every 30 seconds), so a process that has recovered is confirmed without waiting out the backoff; only the first failure reports the uncertainty (the release says so once more), so a slot
+  exits 128+signal, so exactly 143 after our SIGTERM. A launcher advertising `session_end_report`
+  also confirms an individual session when its private fd 3 closes after
+  carrying exactly one matching `HARNESS_DOCKER_SESSION_END=<exec ID> <how>` line, with
+  `how` equal to `exited`,
+  `stopped`, `killed` or `cancelled`. A live supervisor can also accept its
+  `HARNESS_DOCKER_PROBE` answer `ended` for that exact token. Other probe answers
+  and probe errors prove nothing. The private fd is kept out of Docker children;
+  a same-uid process inside a sandbox may still write through `/proc` to a
+  sandboxed launcher, so such a launcher needs its sandbox boundary trusted.
+  This probe is not used when recovering a
+  journaled warm process after supervisor restart: that path still kills its
+  recorded host process group and forgets the record. Any other status, a kill, or no capability
+  is *unconfirmed*. The first uncertain end is logged locally with its exit code, TERM/KILL flags and elapsed time. A delivery that waits on the quarantine emits one warning. The supervisor retries the end periodically, backing off as the retries fail, twice as long
+  each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once (at most one such wake per stuck process every 30 seconds), so a process that has recovered is confirmed without waiting out the backoff; only the first failure logs the uncertainty (the release says so once more), so a slot
   nothing can settle neither spins nor fills the log. While the
   host wrapper is alive, no replacement starts on the session and stop ack and key drop wait. If the
   wrapper has been reaped but its container end remains unconfirmed, the session stays quarantined
   for two minutes while kill is retried; a timer at the quarantine's end wakes the watcher, so it is released at that
   deadline and not at the next backoff step. The supervisor then
   reports the uncertainty once and releases the session; the harness's session heartbeat cleans up a
-  process left in the container. The release report is a warning, and there is none at all when the
+  process left in the container. The release report is local only, and there is none at all when the
   end that stuck the slot was a planned one (the agent was stopped, or the supervisor is stopping):
   that quarantine is the stop's own path.
   A launcher
   without the capability runs its agents cold on every turn, as before. A process in a container is
-  always closed first (input, then SIGTERM with about eight seconds for the wrapper's own cleanup, only
+  always closed first (input, then SIGTERM to the launcher PID with up to twenty-five seconds for a legacy launcher, or fifteen seconds with
+  `session_end_report`, for its own cleanup, only
   then SIGKILL). A running container gets the faster in-container wrapper only after
   `harness-docker-ctrl rebuild`; until then the terminate takes about two seconds.
 - **A process is gone once its container is.** An end the launcher did not confirm is still confirmed, at
@@ -1348,7 +1360,7 @@ process the way a stop does (a cancel, a kill after 30 seconds) and reports the 
 `interrupted` with the reason `the turn was interrupted on request`, never as a cancel; the
 agent stays active and its next delivery is admitted as usual. An answer that was in first
 wins, and so does a stop of the agent that follows. A process in a container whose launcher
-confirms the end of its session is told to terminate and given 8 seconds; when the end in the
+confirms the end of its session is told to terminate and given up to twenty-five seconds, or fifteen seconds when `session_end_report` is advertised; when the end in the
 container is not confirmed, the supervisor holds the agent's slot (it reports the exit, and
 admits another turn, only after the same 150-second quarantine an unconfirmed keep-alive ping
 gets, or at once when the agent is stopped or the supervisor shuts down), so that a new turn

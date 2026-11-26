@@ -415,6 +415,19 @@ Codex additionally requires the owner to enable `codex_warm_enabled`.
   named before its `docker exec` (never a name), and says when a launcher that was asked
   ended without naming one, which means it started nothing in a container. The supervisor
   uses both to confirm an end the launcher did not (see `docs/supervisor.md`, Containers).
+  On close, the adapter sends TERM to the launcher PID after the input grace,
+  allowing its Docker client to finish while the launcher verifies the session
+  end. It waits up to twenty-five seconds for a legacy launcher's retries before the
+  last-resort process-group KILL. When `session_end_report` is advertised, it sets
+  `HARNESS_DOCKER_SESSION_END_FD=3` and `HARNESS_DOCKER_STOP_GRACE=2` on the
+  launcher, passes a private pipe as fd 3, and accepts a matching
+  `HARNESS_DOCKER_SESSION_END=<exec ID> <how>` line from that pipe only
+  (`exited`, `stopped`, `killed`, `cancelled`) after the pipe reaches EOF.
+  The same text on stderr proves nothing. It uses a fifteen-second TERM
+  backstop. Missing, mismatched and unknown reports leave the end unconfirmed.
+  A zero launcher exit after synchronous EOF
+  cleanup remains confirmation even if TERM arrived during that cleanup;
+  exit 143 confirms the launcher's TERM path. Other outcomes remain unknown.
 - **Which result is the turn's.** Claude Code runs queries of its own in the session: when
   a background task (a `run_in_background` command) ends, or a resumed session finds one
   that outlived its previous process (a deploy, the warm window's end), it reports it in a

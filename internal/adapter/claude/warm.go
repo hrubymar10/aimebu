@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -77,10 +78,26 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	cmd := l.command(ctx)
 	containerized := a.variant() == "docker" || spec.LauncherContainerized
 	var container *adapter.ContainerIdentity
+	var endRead, endWrite *os.File
+	defer func() {
+		if endRead != nil {
+			_ = endRead.Close()
+		}
+		if endWrite != nil {
+			_ = endWrite.Close()
+		}
+	}()
 	if containerized && spec.LauncherReportsContainer {
 		// Asked of the process only, not of the fingerprint: what the launcher prints about itself changes nothing the harness is started with.
 		container = &adapter.ContainerIdentity{}
 		cmd.Env = append(cmd.Env[:len(cmd.Env):len(cmd.Env)], adapter.DockerReportExecIDEnv+"=1")
+		if spec.LauncherReportsSessionEnd {
+			cmd.Env = append(cmd.Env, adapter.DockerStopGraceEnv+"=2")
+			endRead, endWrite, err = container.AttachEndReport(cmd)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -97,9 +114,29 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	if endWrite != nil {
+		_ = endWrite.Close()
+		endWrite = nil
+		go container.ReadEndReport(endRead)
+		endRead = nil
+	}
 	w := &warmSession{fp: l.fingerprint(), cmd: cmd, stdin: stdin, exited: make(chan struct{}), capture: adapter.JoinWriters(spec.StderrSink, a.stderrCapture), containerized: containerized, container: container, onBackground: spec.OnBackgroundResult}
 	w.lastOutput.Store(time.Now().UnixNano())
 	go w.run(stdout, stderr)
+	if spec.LauncherReportsSessionEnd {
+		// An invalid fd is rejected at launcher startup. Surface that as a
+		// launch failure instead of allowing a cold retry of the same launcher.
+		select {
+		case <-w.exited:
+			w.mu.Lock()
+			code := w.exitCode
+			w.mu.Unlock()
+			if code == 2 {
+				return nil, fmt.Errorf("%w: session end fd was rejected", adapter.ErrWarmLaunch)
+			}
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 	return w, nil
 }
 
@@ -244,7 +281,11 @@ func (w *warmSession) Run(spec adapter.TurnSpec) (adapter.Turn, error) {
 	}
 	w.mu.Lock()
 	if w.dead {
+		launchFailed := w.container.ReportEnabled() && w.exitCode == 2
 		w.mu.Unlock()
+		if launchFailed {
+			return nil, fmt.Errorf("%w: session end fd was rejected", adapter.ErrWarmLaunch)
+		}
 		return nil, adapter.ErrWarmGone
 	}
 	if w.cur != nil {
@@ -371,13 +412,15 @@ var ErrContainerSideUnconfirmed = errors.New("the process in the container is no
 // What confirms the end of a containerized session. Two ends do. The clean one: the input is closed, the CLI exits, `docker exec` returns and the
 // wrapper's own session cleanup runs before it exits with status 0. And, for a launcher that advertises it (supervisor.containerEndFeature,
 // harness-docker's `stop_on_signal`), a terminate: the wrapper traps TERM, ends the session in the container, waits for it, and only then exits
-// with 128+signal, so exactly 143 after our SIGTERM means the container side is gone. Anything else (another status, a kill, a wrapper that was
+// with 128+signal, so exactly 143 after our SIGTERM means the container side is gone. A zero exit also confirms it even when TERM arrived during
+// synchronous cleanup after docker exec ended: launch.sh leaves that exit code unchanged and returns only after run_session_cleanup. Anything
+// else (another status, a kill, a wrapper that was
 // killed) proves nothing about the container, since `docker exec` passes no signal on, and time proves nothing either.
 var containerTermConfirmedStatus = 143
 
-// containerTermGrace is how long a containerized wrapper that was asked to terminate is given before it is killed: its own cleanup waits up to
-// five seconds for the session in the container.
-var containerTermGrace = 8 * time.Second
+// containerTermGrace is replaceable by tests; the production bound is shared with Codex.
+var containerTermGrace = adapter.ContainerLauncherTermGrace
+var containerReportedTermGrace = adapter.ContainerReportedTermGrace
 
 // Close ends the process the clean way: its input is closed, so the CLI exits and, in a container, `docker exec` returns and the wrapper
 // cleans its session up before it exits; if it has not ended after grace it is told to terminate (the wrapper cleans up on that too), and
@@ -386,22 +429,39 @@ var containerTermGrace = 8 * time.Second
 // ErrContainerSideUnconfirmed otherwise.
 func (w *warmSession) Close(grace time.Duration) error {
 	_ = w.stdin.Close()
-	if !w.waitExit(grace) {
+	if !w.waitEnd(grace) {
 		w.mu.Lock()
 		w.termSent = true
 		w.mu.Unlock()
-		if pid := w.Pid(); pid > 0 {
+		if w.containerized {
+			if !w.reap.Reaped() {
+				_ = w.cmd.Process.Signal(syscall.SIGTERM)
+			}
+		} else if pid := w.Pid(); pid > 0 {
 			_ = adapter.SignalGroup(pid, syscall.SIGTERM, w.reap.Reaped)
 		}
 		wait := grace
-		if w.containerized && containerTermGrace > wait {
-			wait = containerTermGrace
+		if w.container.Ended() != nil {
+			wait = max(wait, containerReportedTermGrace)
+		} else if w.containerized {
+			wait = max(wait, containerTermGrace)
 		}
-		if !w.waitExit(wait) {
+		if !w.waitEnd(wait) {
 			return w.Kill()
 		}
 	}
 	return w.endConfirmed()
+}
+
+func (w *warmSession) waitEnd(d time.Duration) bool {
+	select {
+	case <-w.exited:
+		return true
+	case <-w.container.Ended():
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 func (w *warmSession) waitExit(d time.Duration) bool {
@@ -419,19 +479,38 @@ func (w *warmSession) endConfirmed() error {
 	if !w.containerized {
 		return nil
 	}
+	if w.reap.Reaped() {
+		w.container.WaitEndReport(time.Second)
+	}
+	if w.container.EndConfirmed() {
+		return nil
+	}
 	w.mu.Lock()
 	code, killed, term := w.exitCode, w.hardKilled, w.termSent
 	w.mu.Unlock()
 	switch {
 	case killed:
 		return ErrContainerSideUnconfirmed
-	case !term && code == 0:
+	case code == 0:
 		return nil // closed its input and exited cleanly: the wrapper's cleanup ran
 	case term && code == containerTermConfirmedStatus:
 		return nil
 	}
 	return ErrContainerSideUnconfirmed
 }
+
+// EndEvidence is local diagnostic detail for an unconfirmed warm end.
+func (w *warmSession) EndEvidence() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.reap.Reaped() {
+		return fmt.Sprintf("exit=unknown term_sent=%t kill_sent=%t", w.termSent, w.hardKilled)
+	}
+	return fmt.Sprintf("exit=%d term_sent=%t kill_sent=%t", w.exitCode, w.termSent, w.hardKilled)
+}
+
+func (w *warmSession) ContainerToken() string { return w.container.Token() }
+func (w *warmSession) EndReportEnabled() bool { return w.container.ReportEnabled() }
 
 // Kill ends the process group at once. For a session in a container that is only the host side, so it is never confirmed.
 func (w *warmSession) Kill() error {

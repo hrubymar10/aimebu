@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -71,5 +73,86 @@ func TestContainerIdentityNeverGuesses(t *testing.T) {
 	_ = filter.Close()
 	if id, never := none.Container(); id != "" || never || plain.String() != "HARNESS_DOCKER_EXEC_ID=0123456789ab:1\n" {
 		t.Fatalf("a launcher that was not asked: id %q never started %t output %q", id, never, plain.String())
+	}
+}
+
+// Only the private fd supplies proof; a matching record on stderr is ignored.
+func TestContainerIdentityRequiresMatchingSessionEndEvidence(t *testing.T) {
+	token := testContainerID + ":42-7-99"
+	cases := []struct {
+		name, line, stderrLine string
+		feature, confirmed     bool
+	}{
+		{"exited", token + " exited", "", true, true},
+		{"stopped", token + " stopped", "", true, true},
+		{"killed", token + " killed", "", true, true},
+		{"cancelled", token + " cancelled", "", true, true},
+		{"unknown how", token + " unknown", "", true, false},
+		{"wrong token", testContainerID + ":another stopped", "", true, false},
+		{"two lines", token + " stopped\n" + token + " stopped", "", true, false},
+		{"stderr forgery", "", token + " stopped", true, false},
+		{"no line", "", "", true, false},
+		{"feature absent", token + " stopped", "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			identity := &ContainerIdentity{}
+			if tc.feature {
+				identity.EnableEndReport()
+			}
+			var out strings.Builder
+			filter := identity.Filter(&out)
+			stream := DockerExecIDPrefix + token + "\n"
+			if tc.stderrLine != "" {
+				stream += DockerSessionEndPrefix + tc.stderrLine + "\n"
+			}
+			for _, char := range []byte(stream) {
+				_, _ = filter.Write([]byte{char})
+			}
+			_ = filter.Close()
+			if tc.feature {
+				read, write, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan struct{})
+				go func() { identity.ReadEndReport(read); close(done) }()
+				if tc.line != "" {
+					_, _ = write.WriteString(DockerSessionEndPrefix + tc.line + "\n")
+				}
+				_ = write.Close()
+				<-done
+			}
+			if identity.EndConfirmed() != tc.confirmed {
+				t.Fatalf("confirmed=%t, want %t", identity.EndConfirmed(), tc.confirmed)
+			}
+			if identity.Token() != token {
+				t.Fatalf("token=%q", identity.Token())
+			}
+		})
+	}
+}
+
+func TestContainerIdentityAcceptsFDReportBeforeStderrIdentity(t *testing.T) {
+	identity := &ContainerIdentity{}
+	identity.EnableEndReport()
+	token := testContainerID + ":42-7-99"
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { identity.ReadEndReport(read); close(done) }()
+	_, _ = write.WriteString(DockerSessionEndPrefix + token + " stopped\n")
+	_ = write.Close()
+	<-done
+	if identity.EndConfirmed() {
+		t.Fatal("identity has not arrived on stderr")
+	}
+	filter := identity.Filter(io.Discard)
+	_, _ = filter.Write([]byte(DockerExecIDPrefix + token + "\n"))
+	_ = filter.Close()
+	if !identity.EndConfirmed() {
+		t.Fatal("matching report and identity must confirm despite read order")
 	}
 }

@@ -3,6 +3,9 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +14,41 @@ import (
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 )
+
+func TestWarmSessionEndProbeRequiresFeatureAndPositiveAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer  string
+		feature, gone bool
+	}{
+		{"ended", "ended", true, true},
+		{"starting", "starting", true, false},
+		{"probe failure", "fail", true, false},
+		{"feature absent", "ended", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "launcher")
+			asked := filepath.Join(root, "asked")
+			body := fmt.Sprintf("#!/bin/sh\nprintf called >> %q\nif [ %q = fail ]; then exit 1; fi\nprintf '%%s\\n' %q\n", asked, tc.answer, tc.answer)
+			if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			session := &warmFakeSession{exited: make(chan struct{}), container: containerOne,
+				endToken: containerOne + ":42-7-99", endFeature: tc.feature}
+			session.end()
+			entry := &warmEntry{session: session, containerized: true, endProbeCommand: path, endProbeDir: root}
+			client := &Client{ContainerState: func(string) (string, error) { return "running", nil }}
+			_, gone := client.warmContainerGone(entry)
+			if gone != tc.gone {
+				t.Fatalf("gone=%t, want %t", gone, tc.gone)
+			}
+			_, err := os.Stat(asked)
+			if (err == nil) != tc.feature {
+				t.Fatalf("probe called=%t, feature=%t", err == nil, tc.feature)
+			}
+		})
+	}
+}
 
 const (
 	containerOne = "1111111111111111111111111111111111111111111111111111111111111111"

@@ -52,6 +52,7 @@ func ApplyLauncher(spec *adapter.TurnSpec, row protocol.LauncherRow, checkout st
 		feature = "codex_home_shared"
 	}
 	spec.LauncherReportsContainer = row.Containerized && slices.Contains(row.Features, adapter.FeatureTurnActivity)
+	spec.LauncherReportsSessionEnd = spec.LauncherReportsContainer && slices.Contains(row.Features, adapter.FeatureSessionEndReport)
 	spec.HarnessVersion = row.Version
 	return LauncherFacts{
 		Containerized: row.Containerized,

@@ -182,7 +182,12 @@ type warmFakeSession struct {
 	// container and neverStarted are what the session says of its launcher's container (adapter.ContainerSession); "" and false: nothing.
 	container    string
 	neverStarted bool
+	endToken     string
+	endFeature   bool
 }
+
+func (s *warmFakeSession) ContainerToken() string { return s.endToken }
+func (s *warmFakeSession) EndReportEnabled() bool { return s.endFeature }
 
 // Container implements adapter.ContainerSession. A launcher that started nothing is only known as such once it has ended.
 func (s *warmFakeSession) Container() (string, bool) {
@@ -976,6 +981,19 @@ func TestWarmFailuresFallBackToCold(t *testing.T) {
 		if session.Alive() {
 			t.Fatal("a process that could not take the turn was left running")
 		}
+	}
+}
+
+func TestWarmLauncherInterfaceFailureDoesNotFallBack(t *testing.T) {
+	h := newWarmHarness(t)
+	h.spawn("agt_a")
+	h.f.startErr = fmt.Errorf("%w: fd rejected", adapter.ErrWarmLaunch)
+	spec := adapter.TurnSpec{TurnID: "turn-a", Agent: adapter.AgentSpec{ID: "agt_a", Tool: "claude", Model: "haiku"}, Mode: adapter.ModeNormal}
+	if _, err := h.c.startTurn(context.Background(), spec, nil, h.cred); !errors.Is(err, adapter.ErrWarmLaunch) {
+		t.Fatalf("launcher interface failure: %v", err)
+	}
+	if h.f.cold != 0 {
+		t.Fatalf("cold fallback started %d processes", h.f.cold)
 	}
 }
 
@@ -2438,9 +2456,9 @@ func TestWarmQuarantineReleaseAfterAStopDuringATurnIsNotReported(t *testing.T) {
 	}
 }
 
-// The known Docker path (the host side ended, the launcher never confirmed the container side) is a degraded state the quarantine settles by itself: a
-// warning. A process that is still alive and cannot be killed stays an error.
-func TestWarmUnconfirmedContainerEndIsAWarningButAliveIsAnError(t *testing.T) {
+// An initial unknown end is local only; a delivery waiting on its quarantine
+// emits one warning. An alive process past quarantine remains an error.
+func TestWarmUnconfirmedContainerEndReportsOnlyWhenDeliveryWaits(t *testing.T) {
 	telemetry.ResetCaptured()
 	transport := startReporting(t)
 	old := warmRetryEvery
@@ -2455,13 +2473,23 @@ func TestWarmUnconfirmedContainerEndIsAWarningButAliveIsAnError(t *testing.T) {
 	}
 	telemetry.Current().Flush(time.Second)
 	got := transport.sent()
-	if len(got) != 1 || got[0].Level != sentry.LevelWarning || got[0].Exception[0].Value != "a warm process is not confirmed gone" {
-		t.Fatalf("the Docker path must be one warning: %+v", got)
+	if len(got) != 0 {
+		t.Fatalf("initial quarantine must stay local: %+v", got)
+	}
+	h.c.warmStuckWait, h.c.warmStuckPoll = 100*time.Millisecond, 10*time.Millisecond
+	if err := h.c.waitWarmStuck(context.Background(), "agt_a"); !errors.Is(err, errWarmUnconfirmed) {
+		t.Fatalf("waiting delivery: %v", err)
+	}
+	telemetry.Current().Flush(time.Second)
+	got = transport.sent()
+	if len(got) != 1 || got[0].Level != sentry.LevelWarning || got[0].Exception[0].Value != "a delivery waits for warm process quarantine" {
+		t.Fatalf("waiting delivery must be one warning: %+v", got)
 	}
 	h.f.sessions[0].lingers.Store(false)
 	eventually(t, "released", func() bool { return h.c.warmLive.Load() == 0 })
 
 	telemetry.ResetCaptured()
+	transport = startReporting(t)
 	h.spawn("agt_b")
 	h.run("agt_b", nil)
 	alive := h.f.sessions[len(h.f.sessions)-1]
@@ -2475,8 +2503,8 @@ func TestWarmUnconfirmedContainerEndIsAWarningButAliveIsAnError(t *testing.T) {
 	}()
 	telemetry.Current().Flush(time.Second)
 	got = transport.sent()
-	if len(got) != 2 || got[1].Level != sentry.LevelError {
-		t.Fatalf("an alive, unkillable process stays an error: %+v", got)
+	if len(got) != 0 {
+		t.Fatalf("an alive process before quarantine stays local: %+v", got)
 	}
 }
 

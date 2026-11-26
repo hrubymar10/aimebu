@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,58 @@ func warmHelperScript(t *testing.T, mode string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestWarmContainerEndEvidenceAfterTerm(t *testing.T) {
+	w := &codexWarmSession{containerized: true, termSent: true, exitCode: 0}
+	if err := w.confirmed(); err != nil {
+		t.Fatalf("launcher completed EOF cleanup after TERM: %v", err)
+	}
+	w.exitCode = 125
+	if err := w.confirmed(); err == nil {
+		t.Fatal("unknown launcher outcome released the session")
+	}
+	w.exitCode = 143
+	if err := w.confirmed(); err != nil {
+		t.Fatalf("verified TERM path: %v", err)
+	}
+}
+
+func TestWarmContainerEndReportOverridesLauncherStatus(t *testing.T) {
+	identity := &adapter.ContainerIdentity{}
+	identity.EnableEndReport()
+	filter := identity.Filter(io.Discard)
+	token := strings.Repeat("a", 64) + ":42-7-99"
+	_, _ = filter.Write([]byte(adapter.DockerExecIDPrefix + token + "\n"))
+	_ = filter.Close()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { identity.ReadEndReport(read); close(done) }()
+	_, _ = write.WriteString(adapter.DockerSessionEndPrefix + token + " killed\n")
+	_ = write.Close()
+	<-done
+	w := &codexWarmSession{containerized: true, container: identity, termSent: true, exitCode: 125}
+	if err := w.confirmed(); err != nil {
+		t.Fatalf("matching end report: %v", err)
+	}
+}
+
+func TestWarmSessionEndFDLauncherFailureIsNotWarmFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex-docker")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\n[ \"$HARNESS_DOCKER_SESSION_END_FD\" = 3 ] || exit 9\nexit 2\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a, spec := warmSpec(t, path)
+	spec.LauncherContainerized = true
+	spec.LauncherReportsContainer = true
+	spec.LauncherReportsSessionEnd = true
+	_, err := a.StartWarm(context.Background(), spec)
+	if !errors.Is(err, adapter.ErrWarmLaunch) {
+		t.Fatalf("launcher exit 2 must be a start failure: %v", err)
+	}
 }
 
 func TestCodexWarmHelper(t *testing.T) {

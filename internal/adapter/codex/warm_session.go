@@ -48,6 +48,9 @@ type codexWarmSession struct {
 	defaultEffort              string // model/list's cold default, set before the session is returned
 }
 
+var containerTermGrace = adapter.ContainerLauncherTermGrace
+var containerReportedTermGrace = adapter.ContainerReportedTermGrace
+
 func (w *codexWarmSession) modelDefaultEffort(ctx context.Context, model string) (string, error) {
 	params := map[string]any{"includeHidden": true}
 	for page := 0; page < 10; page++ {
@@ -321,32 +324,67 @@ func (w *codexWarmSession) confirmed() error {
 	if !w.containerized {
 		return nil
 	}
+	if w.reap.Reaped() {
+		w.container.WaitEndReport(time.Second)
+	}
+	if w.container.EndConfirmed() {
+		return nil
+	}
 	w.mu.Lock()
 	code, killed, term := w.exitCode, w.hardKilled, w.termSent
 	w.mu.Unlock()
-	if !killed && ((!term && code == 0) || (term && code == 143)) {
+	// launch.sh preserves a zero docker exec exit through synchronous cleanup,
+	// including when TERM arrives during that cleanup; its 143 path verifies stop.
+	if !killed && (code == 0 || (term && code == 143)) {
 		return nil
 	}
 	return errors.New("Codex process in container is not confirmed gone")
 }
+func (w *codexWarmSession) EndEvidence() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.reap.Reaped() {
+		return fmt.Sprintf("exit=unknown term_sent=%t kill_sent=%t", w.termSent, w.hardKilled)
+	}
+	return fmt.Sprintf("exit=%d term_sent=%t kill_sent=%t", w.exitCode, w.termSent, w.hardKilled)
+}
+func (w *codexWarmSession) ContainerToken() string { return w.container.Token() }
+func (w *codexWarmSession) EndReportEnabled() bool { return w.container.ReportEnabled() }
 func (w *codexWarmSession) Close(grace time.Duration) error {
 	_ = w.stdin.Close()
-	if !w.waitExit(grace) {
+	if !w.waitEnd(grace) {
 		w.mu.Lock()
 		w.termSent = true
 		w.mu.Unlock()
-		if pid := w.Pid(); pid > 0 {
+		if w.containerized {
+			if !w.reap.Reaped() {
+				_ = w.cmd.Process.Signal(syscall.SIGTERM)
+			}
+		} else if pid := w.Pid(); pid > 0 {
 			_ = adapter.SignalGroup(pid, syscall.SIGTERM, w.reap.Reaped)
 		}
 		wait := grace
-		if w.containerized && wait < 8*time.Second {
-			wait = 8 * time.Second
+		if w.container.Ended() != nil {
+			wait = max(wait, containerReportedTermGrace)
+		} else if w.containerized {
+			wait = max(wait, containerTermGrace)
 		}
-		if !w.waitExit(wait) {
+		if !w.waitEnd(wait) {
 			return w.Kill()
 		}
 	}
 	return w.confirmed()
+}
+
+func (w *codexWarmSession) waitEnd(d time.Duration) bool {
+	select {
+	case <-w.exited:
+		return true
+	case <-w.container.Ended():
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 func (w *codexWarmSession) Kill() error {
 	w.mu.Lock()

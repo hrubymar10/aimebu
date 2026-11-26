@@ -43,6 +43,17 @@ type WarmSession interface {
 	Kill() error
 }
 
+// ContainerLauncherTermGrace covers the legacy launcher signal path in
+// harness-docker/bin/lib/launch.sh:448-485: three attempts of five seconds
+// HUP plus two seconds KILL verification, 0.25-second retry pauses, and the
+// final one-second Docker client wait. The session_end_report path uses a
+// two-second HUP grace and has its own shorter bound.
+const ContainerLauncherTermGrace = 25 * time.Second
+
+// ContainerReportedTermGrace bounds the session_end_report path after TERM:
+// with HARNESS_DOCKER_STOP_GRACE=2 the maintainer's worst case is about 13.5s.
+const ContainerReportedTermGrace = 15 * time.Second
+
 // ErrNoWarm says a spec is not served by a warm process.
 var ErrNoWarm = errors.New("no warm mode for this turn")
 
@@ -51,3 +62,7 @@ var ErrWarmBusy = errors.New("a turn is already running in this warm session")
 
 // ErrWarmGone is returned by Run when the session's process has ended.
 var ErrWarmGone = errors.New("the warm session's process has ended")
+
+// ErrWarmLaunch means a selected Docker launcher's reported interface failed
+// at startup. The supervisor reports a start failure rather than falling cold.
+var ErrWarmLaunch = errors.New("warm Docker launcher failed to start")

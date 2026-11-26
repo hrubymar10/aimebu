@@ -140,6 +140,22 @@ func (c *Client) warmContainerGone(entry *warmEntry) (why string, gone bool) {
 	if id == "" {
 		return "", false
 	}
+	if entry.endProbeCommand != "" {
+		if proof, ok := entry.session.(interface {
+			ContainerToken() string
+			EndReportEnabled() bool
+		}); ok && proof.EndReportEnabled() {
+			token := proof.ContainerToken()
+			if token != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), warmContainerQueryLimit)
+				answer, err := adapter.ProbeDockerActivity(ctx, entry.endProbeCommand, entry.endProbeArgs, entry.endProbeDir, entry.endProbeEnv, token, time.Time{})
+				cancel()
+				if err == nil && answer == "ended" {
+					return "its launcher confirmed the exec session ended", true
+				}
+			}
+		}
+	}
 	state, err := c.containerState(id)
 	if err != nil {
 		if entry.containerCheckFailed.CompareAndSwap(false, true) {

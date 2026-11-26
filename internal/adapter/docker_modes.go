@@ -30,13 +30,18 @@ const (
 	// DockerReportExecIDEnv asks a launcher with turn_activity to print its exec ID line on stderr; without it nothing is printed.
 	DockerReportExecIDEnv = "HARNESS_DOCKER_REPORT_EXEC_ID"
 	// DockerExecIDPrefix starts the line that carries the exec ID.
-	DockerExecIDPrefix = "HARNESS_DOCKER_EXEC_ID="
+	DockerExecIDPrefix      = "HARNESS_DOCKER_EXEC_ID="
+	FeatureSessionEndReport = "session_end_report"
+	DockerStopGraceEnv      = "HARNESS_DOCKER_STOP_GRACE"
+	DockerSessionEndPrefix  = "HARNESS_DOCKER_SESSION_END="
+	DockerSessionEndFDEnv   = "HARNESS_DOCKER_SESSION_END_FD"
 )
 
 // dockerControlEnv are the launcher's mode switches: aimebu sets them itself where it means to, and never takes one from an owner's
 // environment reference (one would turn a turn into a command, or a command into a probe).
 var dockerControlEnv = map[string]bool{"HARNESS_DOCKER_RUN_COMMAND": true, "HARNESS_DOCKER_CWD": true, "HARNESS_DOCKER_EXIT_MARKER": true,
 	"HARNESS_DOCKER_TIMEOUT_SECONDS": true, "HARNESS_DOCKER_PROBE": true, "HARNESS_DOCKER_SINCE": true, DockerReportExecIDEnv: true,
+	DockerStopGraceEnv: true, DockerSessionEndFDEnv: true,
 	"HARNESS_DOCKER_FORWARD_ENV": true, "HARNESS_DOCKER_PRINT_FEATURES": true, AgentKeyEnv: true}
 
 // DockerControlEnvName says whether a variable is one of the launcher's mode switches (or the agent key), which an owner's environment
@@ -226,7 +231,7 @@ func ProbeDockerActivity(ctx context.Context, command string, args []string, dir
 	}
 	answer := strings.TrimSpace(string(out))
 	switch answer {
-	case "busy", "idle", "starting":
+	case "busy", "idle", "starting", "ended":
 		return answer, nil
 	}
 	return "", fmt.Errorf("Docker activity probe: unexpected answer %q", SanitizeStderr(answer))
@@ -241,6 +246,7 @@ const execIDScanLimit = 64 << 10
 type ExecIDFilter struct {
 	dst      io.Writer
 	activity *DockerActivity
+	identity *ContainerIdentity
 	buf      []byte
 	scanned  int
 	done     bool
@@ -274,13 +280,28 @@ func (f *ExecIDFilter) Write(p []byte) (int, error) {
 			break
 		}
 		line := f.buf[:end+1]
-		if value, found := bytes.CutPrefix(bytes.TrimRight(line, "\r\n"), []byte(DockerExecIDPrefix)); found && ValidDockerExecID(string(value)) {
-			f.activity.setToken(string(value))
-			f.done = true
+		kind, token, _ := parseDockerReportLine(bytes.TrimRight(line, "\r\n"))
+		if kind == "exec" {
+			f.activity.setToken(token)
+			if f.identity != nil {
+				container, _, _ := strings.Cut(token, ":")
+				f.identity.mu.Lock()
+				f.identity.token = token
+				f.identity.confirmEndLocked()
+				if ValidDockerContainerID(container) {
+					f.identity.id = container
+				}
+				f.done = true
+				f.identity.mu.Unlock()
+			} else {
+				f.done = true
+			}
+		} else if kind == "end" && f.identity != nil {
+			// Stderr is shared with docker exec; only the private fd is proof.
 		} else {
 			_, _ = f.dst.Write(line)
 			f.scanned += len(line)
-			f.done = f.scanned >= execIDScanLimit
+			f.done = f.scanned >= execIDScanLimit && (f.identity == nil || f.identity.Token() == "")
 		}
 		f.buf = append(f.buf[:0], f.buf[end+1:]...)
 	}
@@ -291,9 +312,25 @@ func (f *ExecIDFilter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// parseDockerReportLine is the single parser for the launcher's exec identity
+// and session end records. Unrecognized records are passed through unchanged.
+func parseDockerReportLine(line []byte) (kind, token, how string) {
+	if value, ok := bytes.CutPrefix(line, []byte(DockerExecIDPrefix)); ok && ValidDockerExecID(string(value)) {
+		return "exec", string(value), ""
+	}
+	if value, ok := bytes.CutPrefix(line, []byte(DockerSessionEndPrefix)); ok {
+		parts := bytes.Fields(value)
+		if len(parts) == 2 && ValidDockerExecID(string(parts[0])) {
+			return "end", string(parts[0]), string(parts[1])
+		}
+		return "end", "", ""
+	}
+	return "", "", ""
+}
+
 // Close writes out what is still held (a last line without a newline).
 func (f *ExecIDFilter) Close() error {
-	if len(f.buf) > 0 {
+	if len(f.buf) > 0 && !bytes.HasPrefix(f.buf, []byte(DockerSessionEndPrefix)) {
 		_, _ = f.dst.Write(f.buf)
 		f.buf = nil
 	}

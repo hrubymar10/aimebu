@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -421,6 +422,107 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWarmContainerCleanupExitZeroAfterTerm(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	ready := filepath.Join(root, "ready")
+	childHit := filepath.Join(root, "child-hit")
+	finished := filepath.Join(root, "finished")
+	script := fmt.Sprintf("#!/bin/sh\ntrap ':' TERM\ncat >/dev/null\nsh -c 'trap \"echo hit > %s\" TERM; : > %s; sleep 0.3; : > %s' &\nchild=$!\nwhile [ ! -e %s ]; do wait \"$child\" || :; sleep 0.01; done\nexit 0\n", childHit, ready, finished, finished)
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker", AllowNative: true}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	session, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The child begins only after EOF; wait until cleanup has started before TERM.
+	result := make(chan error, 1)
+	go func() { result <- session.Close(100 * time.Millisecond) }()
+	waitReady(t, ready)
+	if err := <-result; err != nil {
+		t.Fatalf("clean exit after TERM: %v", err)
+	}
+	if _, err := os.Stat(childHit); err == nil {
+		t.Fatal("TERM reached the launcher child")
+	}
+}
+
+func TestWarmContainerTermGraceCoversLauncherRetries(t *testing.T) {
+	if adapter.ContainerLauncherTermGrace < 23*time.Second {
+		t.Fatalf("launcher retry path needs at least 23 seconds, got %v", adapter.ContainerLauncherTermGrace)
+	}
+}
+
+func TestWarmContainerSessionEndReportOverridesLauncherStatus(t *testing.T) {
+	for _, how := range []string{"exited", "stopped", "killed", "cancelled"} {
+		t.Run(how, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "claude")
+			ready := filepath.Join(root, "ready")
+			token := strings.Repeat("a", 64) + ":42-7-99"
+			script := fmt.Sprintf("#!/bin/sh\n[ \"$HARNESS_DOCKER_REPORT_EXEC_ID\" = 1 ] || exit 2\n[ \"$HARNESS_DOCKER_SESSION_END_FD\" = 3 ] || exit 3\n[ \"$HARNESS_DOCKER_STOP_GRACE\" = 2 ] || exit 4\nprintf 'HARNESS_DOCKER_EXEC_ID=%%s\\n' %q >&2\ntrap 'printf \"HARNESS_DOCKER_SESSION_END=%%s %s\\n\" %q >&3; sleep 0.4; exit 125' TERM\n: > %q\ncat >/dev/null\nwhile :; do sleep 0.1; done\n", token, how, token, ready)
+			if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			a := &Adapter{Command: path, Variant: "docker", AllowNative: true}
+			spec := warmSpec(t, "t1")
+			spec.Agent.Variant = "docker"
+			spec.LauncherReportsContainer = true
+			spec.LauncherReportsSessionEnd = true
+			session, err := a.StartWarm(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitReady(t, ready)
+			if err := session.Close(100 * time.Millisecond); err != nil {
+				t.Fatalf("session end report: %v", err)
+			}
+			<-session.Exited()
+		})
+	}
+}
+
+func TestWarmSessionEndFDLauncherFailureIsNotWarmFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude")
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\n[ \"$HARNESS_DOCKER_SESSION_END_FD\" = 3 ] || exit 9\nexit 2\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker", AllowNative: true}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	spec.LauncherReportsContainer = true
+	spec.LauncherReportsSessionEnd = true
+	_, err := a.StartWarm(context.Background(), spec)
+	if !errors.Is(err, adapter.ErrWarmLaunch) {
+		t.Fatalf("launcher exit 2 must be a start failure: %v", err)
+	}
+}
+
+func TestWarmLegacyLauncherTwentySecondTermPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	ready := filepath.Join(root, "ready")
+	script := fmt.Sprintf("#!/bin/sh\n[ -z \"${HARNESS_DOCKER_SESSION_END_FD+x}\" ] || exit 2\ntrap 'sleep 20; exit 143' TERM\n: > %q\ncat >/dev/null\nwhile :; do sleep 0.1; done\n", ready)
+	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker", AllowNative: true}
+	spec := warmSpec(t, "t1")
+	spec.Agent.Variant = "docker"
+	session, err := a.StartWarm(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitReady(t, ready)
+	if err := session.Close(100 * time.Millisecond); err != nil {
+		t.Fatalf("20-second verified TERM path: %v", err)
 	}
 }
 

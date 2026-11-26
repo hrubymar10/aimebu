@@ -106,6 +106,10 @@ type warmEntry struct {
 	started             time.Time
 	stderr              *swapWriter
 	containerized       bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
+	endProbeCommand     string
+	endProbeArgs        []string
+	endProbeDir         string
+	endProbeEnv         []string
 	timer               *time.Timer
 	idleAt              time.Time
 	idleGen             int           // which idle window the timer belongs to: a timer of an earlier window, fired late, must not end the process of this one
@@ -113,6 +117,7 @@ type warmEntry struct {
 	retire              bool          // an end was asked for while it ran a turn: it ends when the turn does
 	gone                atomic.Bool   // its end was confirmed and counted (warmLive), once
 	unconfirmedReported atomic.Bool   // retries must not report the same uncertain end repeatedly
+	waitReported        atomic.Bool   // a delivery waiting on this quarantine reports once
 	// containerSeen says Docker has shown the container the launcher started the process in (see sightContainer); containerCheckFailed that a
 	// question about it failed and was reported.
 	containerSeen        atomic.Bool
@@ -264,6 +269,7 @@ func (c *Client) endWarm(entry *warmEntry, reason string, grace time.Duration) b
 // tryEndWarm only touches the session. A background retry can run it without
 // holding the slot lock and then check that it still owns the stuck entry.
 func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration) bool {
+	started := time.Now()
 	if entry.containerized && grace == 0 {
 		// `docker exec` does not pass a signal on, so a kill of the host side leaves the process in the container for up to about fifteen seconds:
 		// a process in a container is always closed first (its input is closed, `docker exec` returns and the wrapper cleans its session up).
@@ -285,13 +291,13 @@ func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration
 			}
 			if entry.unconfirmedReported.CompareAndSwap(false, true) {
 				werr := fmt.Errorf("agent %s: its warm process is not confirmed gone (%s): %w", entry.agentID, reason, err)
-				if entry.containerized && !entry.session.Alive() {
-					// The known Docker path: the host side ended and the launcher never confirmed the process in the container. The quarantine
-					// handles it and releases it by itself, so it is a warning; a process that is still alive stays an error.
-					c.degraded("a warm process is not confirmed gone", werr)
-				} else {
-					c.report("a warm process is not confirmed gone", werr)
+				// An unknown outcome enters quarantine. Only a delivery that waits on
+				// it reports a warning; a process alive after quarantine reports an error.
+				evidence := "exit=unknown term_sent=unknown kill_sent=unknown"
+				if source, ok := entry.session.(interface{ EndEvidence() string }); ok {
+					evidence = source.EndEvidence()
 				}
+				c.reportLocal(fmt.Errorf("%v; %s elapsed=%v", werr, evidence, time.Since(started)))
 			}
 			return false
 		}
@@ -986,8 +992,8 @@ func warmAccount(spec adapter.TurnSpec, codexFile ...string) string {
 }
 
 // startTurn starts a turn: in an agent's live process when there is one that is still what the turn needs, in a new warm process when warm
-// mode is on and the adapter serves the turn warm, and as a process of its own otherwise. Warm mode never fails a turn: a process that cannot
-// be started, recorded or handed the turn is reported and the turn runs cold.
+// mode is on and the adapter serves the turn warm, and as a process of its own otherwise. A recoverable warm refusal falls back cold; a selected
+// Docker launcher's interface failure is a start failure and must not silently retry cold.
 func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.Writer, cred credentials) (adapter.Turn, error) {
 	if !spec.KeepAlive {
 		c.clearWarmRefusal(spec.Agent.ID)
@@ -1087,10 +1093,19 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		started.OnBackgroundResult = func() { c.noteBackgroundEnded(agentID) }
 		session, err := warm.StartWarm(pool.ctx, started)
 		if err != nil {
+			if errors.Is(err, adapter.ErrWarmLaunch) {
+				return nil, err
+			}
 			c.reportWarmRefusal(spec, cred, "starting a warm process", err)
 			return c.Adapter.Start(ctx, spec)
 		}
 		entry = &warmEntry{agentID: spec.Agent.ID, tool: spec.Agent.Tool, session: session, fp: fp, login: cred.stamp, account: cred.account, loginNow: cred.now, started: now, stderr: stderr, containerized: spec.LauncherContainerized || spec.Agent.Variant == "docker"}
+		if spec.LauncherReportsSessionEnd {
+			entry.endProbeCommand = spec.LauncherPath
+			entry.endProbeArgs = append([]string(nil), spec.LauncherArgs...)
+			entry.endProbeDir = spec.CheckoutPath
+			entry.endProbeEnv = adapter.DockerControlEnv(spec.LauncherEnvRefs)
+		}
 		c.warmLive.Add(1) // counted from the moment it exists until its end is confirmed (endWarm)
 		// A process nobody can find again if this supervisor dies is not kept warm: the journal's note, with the process's own start time, is
 		// what a later supervisor ends it by.
@@ -1119,6 +1134,10 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 	}
 	turn, err := entry.session.Run(spec)
 	if err != nil {
+		if errors.Is(err, adapter.ErrWarmLaunch) {
+			c.finish(slot, entry, "the launcher rejected its session end fd", 0)
+			return nil, err
+		}
 		// Still as it was reported (kept idle): its end is reported with this reason, because no turn of its own is going to say it.
 		c.degraded("handing the turn to its warm process failed; the turn runs cold", fmt.Errorf("agent %s: handing the turn to its warm process: %w; the turn runs cold", spec.Agent.ID, err))
 		if !c.finish(slot, entry, "it could not take the turn", 0) {
@@ -1181,6 +1200,7 @@ func (c *Client) waitWarmStuck(ctx context.Context, agentID string) error {
 		poll = c.warmStuckPoll
 	}
 	slot := c.pool().slot(agentID)
+	started := time.Now()
 	deadline := time.Now().Add(limit)
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
@@ -1191,6 +1211,7 @@ func (c *Client) waitWarmStuck(ctx context.Context, agentID string) error {
 		}
 		slot.mu.Lock()
 		cleared := c.clearStuck(slot)
+		stuck := slot.stuck
 		if !cleared {
 			nudgeStuck(slot)
 		}
@@ -1198,6 +1219,9 @@ func (c *Client) waitWarmStuck(ctx context.Context, agentID string) error {
 		if cleared {
 			if c.stoppedWhileWaiting(agentID) {
 				return errStoppedWhileWaiting
+			}
+			if logged {
+				log.Printf("agent %s: its warm quarantine wait ended after %v", agentID, time.Since(started))
 			}
 			return nil
 		}
@@ -1207,6 +1231,9 @@ func (c *Client) waitWarmStuck(ctx context.Context, agentID string) error {
 		if !logged {
 			logged = true
 			log.Printf("agent %s: its last warm process is not confirmed ended; the turn waits up to %v for its quarantine", agentID, limit)
+			if stuck != nil && stuck.waitReported.CompareAndSwap(false, true) {
+				c.degraded("a delivery waits for warm process quarantine", fmt.Errorf("agent %s: its last warm process is not confirmed ended; delivery waits up to %v", agentID, limit))
+			}
 		}
 		select {
 		case <-ctx.Done():

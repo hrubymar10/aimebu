@@ -80,6 +80,9 @@ type TurnSpec struct {
 	// LauncherReportsContainer says the Docker launcher has turn_activity: asked to, it prints the ID of the container it starts the harness
 	// in before it does. A warm process is then started with that request, and its session is an adapter.ContainerSession that knows the ID.
 	LauncherReportsContainer bool
+	// LauncherReportsSessionEnd says the launcher advertises session_end_report.
+	// A matching stderr record or an ended probe confirms this warm session's end.
+	LauncherReportsSessionEnd bool `json:"-"`
 	// HarnessVersion is the version the supervisor last probed for the turn's harness (its launcher's, for a launcher), as the CLI printed it;
 	// empty when it is not known. An adapter that keeps a table of what each version supports (Claude) passes only what this one does.
 	HarnessVersion string `json:",omitempty"`

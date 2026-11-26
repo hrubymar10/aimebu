@@ -170,10 +170,26 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	cmd.Dir, cmd.Env = l.dir, l.env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var container *adapter.ContainerIdentity
+	var endRead, endWrite *os.File
+	defer func() {
+		if endRead != nil {
+			_ = endRead.Close()
+		}
+		if endWrite != nil {
+			_ = endWrite.Close()
+		}
+	}()
 	if l.containerized && spec.LauncherReportsContainer {
 		// Asked of the process only, not of the fingerprint: what the launcher prints about itself changes nothing the harness is started with.
 		container = &adapter.ContainerIdentity{}
 		cmd.Env = append(cmd.Env[:len(cmd.Env):len(cmd.Env)], adapter.DockerReportExecIDEnv+"=1")
+		if spec.LauncherReportsSessionEnd {
+			cmd.Env = append(cmd.Env, adapter.DockerStopGraceEnv+"=2")
+			endRead, endWrite, err = container.AttachEndReport(cmd)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -189,6 +205,12 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
+	}
+	if endWrite != nil {
+		_ = endWrite.Close()
+		endWrite = nil
+		go container.ReadEndReport(endRead)
+		endRead = nil
 	}
 	w := newWarmSession(cmd, stdin, l.fingerprint(), l.runtimeDir, l.visibleCheckout, l.authPath,
 		l.containerized, adapter.JoinWriters(spec.StderrSink, a.stderrCapture), a.stdoutCapture)
@@ -217,6 +239,12 @@ func (a *Adapter) StartWarm(ctx context.Context, spec adapter.TurnSpec) (adapter
 	}
 	if err != nil {
 		_ = w.Close(2 * time.Second)
+		w.mu.Lock()
+		code := w.exitCode
+		w.mu.Unlock()
+		if spec.LauncherReportsSessionEnd && w.reap.Reaped() && code == 2 {
+			return nil, fmt.Errorf("%w: session end fd was rejected", adapter.ErrWarmLaunch)
+		}
 		return nil, err
 	}
 	return w, nil
