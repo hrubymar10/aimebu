@@ -124,5 +124,116 @@
    "@live",
    "#live"
   ]
+ },
+ {
+  "name": "fence four columns past the item's text, no other line shallower",
+  "body": "- a\n      ```\n      @hidden #hidden\n      ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "ordered item, fence four columns past the text",
+  "body": "1. a\n       ```\n       @hidden #hidden\n       ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "nested item, fence four columns past the text",
+  "body": "- a\n  - b\n        ```\n        @hidden #hidden\n        ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "blank line inside a fence four columns past the text",
+  "body": "- a\n      ```\n      @hidden\n\n      #hidden\n      ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "tabs indent the fence under an item",
+  "body": "- a\n\t\t```\n\t\t@hidden #hidden\n\t\t```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "a shallower line in the item moves the dedent, so the fence is code again",
+  "body": "- a\n    text\n      ```\n      @hidden #hidden\n      ```\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "a shallower line in the item makes the fence an indented line of prose",
+  "body": "- a\n  text\n      ```\n      @live #live\n      ```",
+  "fenced": [],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "unclosed fence four columns past the text is text",
+  "body": "- a\n      ```\n      @live #live",
+  "fenced": [],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "a closer under the next item does not close the fence",
+  "body": "- a\n      ```\n      @live #live\n- b\n      ```\n",
+  "fenced": [],
+  "live": [
+   "@live",
+   "#live"
+  ]
+ },
+ {
+  "name": "a block indented four more than the item text after a blank line is code",
+  "body": "- a\n\n      first\n\n          @hidden #hidden\n@live #live",
+  "fenced": [
+   "@hidden",
+   "#hidden"
+  ],
+  "live": [
+   "@live",
+   "#live"
+  ]
  }
 ]

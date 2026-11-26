@@ -43,249 +43,28 @@ type MentionSpan struct {
 	Token      string
 }
 
-// A fence inside a list item is indented relative to the item's content column, not to the page: the web renderer reads such a line
-// with the column stripped (web/js/markdown.js, readList), and so does the prose scanner, or a fenced block of a nested item would be
-// code on screen and live prose here. col is that column; 0 means no enclosing item.
-
-// fenceIndent strips up to col columns of leading whitespace (a tab counts four) from line and returns the rest with the number of
-// spaces still in front of it.
-func fenceIndent(line string, col int) (string, int) {
-	width, i := 0, 0
-	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
-		if line[i] == '\t' {
-			width += 4
-		} else {
-			width++
-		}
-		i++
-	}
-	strip := min(width, col)
-	return line[i:], width - strip
-}
-
-func proseFenceOpen(line string, col int) string {
-	line, spaces := fenceIndent(line, col)
-	if spaces > 3 {
-		return ""
-	}
-	if len(line) < 3 || line[0] != '`' && line[0] != '~' {
-		return ""
-	}
-	end := 0
-	for end < len(line) && line[end] == line[0] {
-		end++
-	}
-	if end < 3 || line[0] == '`' && strings.ContainsRune(line[end:], '`') {
-		return ""
-	}
-	return line[:end]
-}
-
-func proseFenceClose(line, marker string, col int) bool {
-	if marker == "" {
-		return false
-	}
-	line, spaces := fenceIndent(line, col)
-	if spaces > 3 || len(line) < len(marker) || line[0] != marker[0] {
-		return false
-	}
-	end := 0
-	for end < len(line) && line[end] == marker[0] {
-		end++
-	}
-	return end >= len(marker) && strings.Trim(line[end:], " \t\r") == ""
-}
-
-var proseListItemPattern = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+\.)\s+(.*)$`)
-
-// proseListFrame is one open list item: the indent of its marker and its content column.
-type proseListFrame struct{ indent, col int }
-
-func proseLeadingWidth(line string) int {
-	width := 0
-	for i := 0; i < len(line) && (line[i] == ' ' || line[i] == '\t'); i++ {
-		if line[i] == '\t' {
-			width += 4
-		} else {
-			width++
-		}
-	}
-	return width
-}
-
-// proseThematicBreak mirrors the web renderer's rule: three or more of -, * or _ (spaces between allowed), alone on the line.
-func proseThematicBreak(line string) bool {
-	spaces := 0
-	for spaces < len(line) && line[spaces] == ' ' {
-		spaces++
-	}
-	rest := strings.TrimRight(line[spaces:], " \t\r\f")
-	if spaces > 3 || rest == "" || rest[0] != '-' && rest[0] != '*' && rest[0] != '_' {
-		return false
-	}
-	count := 0
-	for i := 0; i < len(rest); i++ {
-		switch rest[i] {
-		case rest[0]:
-			count++
-		case ' ', '\t', '\f':
-		default:
-			return false
-		}
-	}
-	return count >= 3
-}
-
-// proseListItem reads a list item line: the indent of its marker and its content column (where its text begins).
-func proseListItem(line string) (indent, col int, ok bool) {
-	m := proseListItemPattern.FindStringSubmatch(line)
-	if m == nil || proseThematicBreak(line) {
-		return 0, 0, false
-	}
-	col = 0
-	for _, c := range []byte(line[:len(line)-len(m[2])]) {
-		if c == '\t' {
-			col += 4
-		} else {
-			col++
-		}
-	}
-	return proseLeadingWidth(m[1]), col, true
-}
-
 // liveProseSpans returns the live prose of body (code and escaped @ blanked to
 // spaces, as liveProse renders them) and, for each byte of that string, the
 // byte offset in body it was rendered from (-1 for a newline the prober
 // synthesised between kept lines). Within one line the mapping is one-to-one,
 // so a span found in the live prose maps back onto a contiguous span of body.
+// Which lines are code is decided by the same block rules the web renderer
+// applies (see prose_blocks.go).
 func liveProseSpans(body string) (string, []int) {
-	var live strings.Builder
-	var pos []int
-	// i is an index into the current line; lineStart turns it into an offset
-	// in body.
-	lineStart := 0
-	byteAt := func(i int) {
-		live.WriteByte(body[lineStart+i])
-		pos = append(pos, lineStart+i)
-	}
-	blank := func(i int) {
-		live.WriteByte(' ')
-		pos = append(pos, lineStart+i)
-	}
-	inFence, fence, fenceCol := false, "", 0
-	var items []proseListFrame
+	var out proseOutput
 	lines := strings.Split(body, "\n")
-	previousBlank := true
-	indented := false
+	vlines := make([]proseLine, len(lines))
+	offset := 0
 	for n, line := range lines {
-		if n > 0 {
-			lineStart += len(lines[n-1]) + 1
+		pos := make([]int, len(line))
+		for i := range pos {
+			pos[i] = offset + i
 		}
-		trimmed := strings.TrimSpace(line)
-		if inFence {
-			if proseFenceClose(line, fence, fenceCol) {
-				inFence = false
-				fence = ""
-			}
-			live.WriteByte('\n')
-			pos = append(pos, -1)
-			previousBlank = false
-			continue
-		}
-		// The list item this line sits in, if any: an item line opens a frame (and closes the deeper or equal ones before it), a line
-		// no deeper than the open item's marker closes it, and a fence under an item is read relative to its content column.
-		col, itemIndent := 0, -1
-		if trimmed != "" {
-			width := proseLeadingWidth(line)
-			if indent, itemCol, ok := proseListItem(line); ok {
-				for len(items) > 0 && items[len(items)-1].indent >= indent {
-					items = items[:len(items)-1]
-				}
-				items = append(items, proseListFrame{indent, itemCol})
-			} else {
-				for len(items) > 0 && items[len(items)-1].indent >= width {
-					items = items[:len(items)-1]
-				}
-				if len(items) > 0 {
-					col, itemIndent = items[len(items)-1].col, items[len(items)-1].indent
-				}
-			}
-		}
-		if marker := proseFenceOpen(line, col); marker != "" {
-			for next := n + 1; next < len(lines); next++ {
-				if itemIndent >= 0 && strings.TrimSpace(lines[next]) != "" && proseLeadingWidth(lines[next]) <= itemIndent {
-					break // the item ends before the fence closes
-				}
-				if proseFenceClose(lines[next], marker, col) {
-					inFence = true
-					fence = marker
-					fenceCol = col
-					break
-				}
-			}
-			if inFence {
-				live.WriteByte('\n')
-				pos = append(pos, -1)
-				previousBlank = false
-				continue
-			}
-		}
-		if trimmed == "" {
-			indented = false
-			previousBlank = true
-			live.WriteByte('\n')
-			pos = append(pos, -1)
-			continue
-		}
-		if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
-			if previousBlank || indented {
-				indented = true
-				live.WriteByte('\n')
-				pos = append(pos, -1)
-				previousBlank = false
-				continue
-			}
-		}
-		indented = false
-		codeRun := 0
-		for i := 0; i < len(line); i++ {
-			switch line[i] {
-			case '`':
-				end := i + 1
-				for end < len(line) && line[end] == '`' {
-					end++
-				}
-				run := end - i
-				if codeRun == run {
-					codeRun = 0
-				} else if codeRun == 0 && hasClosingBacktickRun(line, end, run) {
-					codeRun = run
-				}
-				for j := i; j < end; j++ {
-					blank(j)
-				}
-				i = end - 1
-			case '\\':
-				if i+1 < len(line) && line[i+1] == '@' {
-					blank(i)
-					blank(i + 1)
-					i++
-				} else {
-					byteAt(i)
-				}
-			default:
-				if codeRun != 0 {
-					blank(i)
-				} else {
-					byteAt(i)
-				}
-			}
-		}
-		live.WriteByte('\n')
-		pos = append(pos, -1)
-		previousBlank = false
+		vlines[n] = proseLine{text: line, pos: pos}
+		offset += len(line) + 1
 	}
-	return live.String(), pos
+	scanProseBlocks(&out, vlines, 0)
+	return out.live.String(), out.pos
 }
 
 // proseMentionSpans lists every @token occurrence in the live prose of body,
