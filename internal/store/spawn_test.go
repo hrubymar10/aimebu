@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestAgentSpawnRefusesIdleSameRoleWithoutReason(t *testing.T) {
+	s, _, room, worker, lead := wakeFixture(t)
+	if _, err := s.db.Exec(`UPDATE role SET cap_can_spawn=1 WHERE id='role_lead'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_spawn','spawnowner','hash','{}','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO membership(project_id,user_id,role) VALUES (?,'usr_spawn','owner')`, worker.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	spawn := func(actorKind string) (AgentCard, error) {
+		var card AgentCard
+		err := s.Tx(context.Background(), func(tx *Tx) error {
+			var err error
+			actorID := lead.ID
+			if actorKind == "user" {
+				actorID = "usr_spawn"
+			}
+			card, err = tx.SpawnAgent(SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID,
+				RoleKey: "worker", Tool: "fake", Variant: "test", Model: "test", Provider: "test",
+				MachineID: worker.MachineID, Path: "/tmp/wake", KeyHash: "key"})
+			return err
+		})
+		return card, err
+	}
+	if _, err := spawn("agent"); err == nil || !strings.Contains(err.Error(), worker.ID) || !strings.Contains(err.Error(), worker.Slug) {
+		t.Fatalf("agent duplicate did not name the active idle worker: %v", err)
+	}
+	if _, err := spawn("user"); err != nil {
+		t.Fatalf("person duplicate: %v", err)
+	}
+}
+
 func TestAgentNamePoolUsesNumericSuffixAfterExhaustion(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})

@@ -2110,7 +2110,7 @@ it never silently reruns a turn with uncertain effects.
   body, yours?}, conversation?:{no, from, body, yours?}}], attachment_bearer?,
   context{role_body, rooms[{room_id, title, kind}],
   you_are:{id,name,role,harness,model},
-  team_roster:[{id,name,role,harness,model}],
+  team_roster:[{id,name,role,observed,harness?,model?}],
   team_roster_more?:string, referenced_messages?:[{no, available, room_id?, room?, project?, from?, body?, created_at?}],
   knowledge?:{project_memory_enabled, project_memory[], user_profiles[],
   agent_shared_notes[], task_notes[]},
@@ -2118,6 +2118,20 @@ it never silently reruns a turn with uncertain effects.
   allowed_tools?, agent:{id, tool, variant, model, provider},
   native_session?, native_session_started?, import_legacy_session?}` — rooms in context list every current open agent room membership, including restricted rooms, with its title and kind; they are information, not grants. Closed rooms are omitted. In the dispatcher flow, the leader's role body names the live routing room title and ID. For pi agents on gemma models `knowledge` is trimmed to a
   shared 2048-byte budget of record bodies; later records are dropped. The
+  `team_roster` lists every non-revoked agent with `desired=active` who belongs
+  to any open room in the turn's `rooms`, once per agent, with `id`, `name`,
+  `role` and `observed`. The recipient, leads, and agents involved in delivered
+  notes also have `harness` and `model`; other entries are compact. The roster
+  is a dispatch-time snapshot. Full entries are capped at 20. Compact entries
+  are capped separately at 200; `team_roster_more` counts what was left out.
+  The recipient and leads come first, then agents involved in delivered notes,
+  then everyone else by observed state: idle, in_turn, then other states.
+  `spawn_agent` through the agent tool refuses with 409 `idle_agent_exists`
+  when an agent with `desired=active`, `observed=idle`, the same `role_key`,
+  and membership in the target room already exists. The error names that
+  agent's slug and id. A non-empty `reason` permits an intentional duplicate.
+  The person's spawn route is unaffected.
+  The
   attachment bearer is used only by Pi Docker, never journaled, and authorizes
   reads only for a delivered file in a live turn while the agent remains a
   member of its room; MCP agents use `attachment_get` with the same checks.

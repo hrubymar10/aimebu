@@ -137,12 +137,12 @@ var catalog = []tool{
 		"attachment_id": map[string]string{"type": "string"},
 		"save":          map[string]string{"type": "boolean", "description": "Also save an image or small text to a file; other files are always saved"},
 	}, "required": []string{"attachment_id"}}},
-	{"spawn_agent", "Active lead only. Spawn one non-lead agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. A choice outside the role's default pool (tool, variant, model or launcher_id) also needs approved_by: the number or id of the person's message that approved this exact choice. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"spawn_agent", "Active lead or dispatcher only. Spawn one non-lead agent. Check team_roster first: an active idle agent of the same role in the target room causes 409 idle_agent_exists. Pass a concrete reason to spawn a deliberate second agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. A choice outside the role's default pool (tool, variant, model or launcher_id) also needs approved_by: the number or id of the person's message that approved this exact choice. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "role_key": map[string]string{"type": "string"},
 		"tool": map[string]string{"type": "string"}, "variant": map[string]string{"type": "string"},
 		"model": map[string]string{"type": "string"}, "provider": map[string]string{"type": "string"},
 		"launcher_id": map[string]string{"type": "string", "description": "Optional launcher to run the agent on; validated like on the person's spawn route (unknown launcher: 409 launcher_unavailable) and gated against the role's default pool with tool, variant and model (409 model_not_approved without approved_by)"},
-		"reason":      map[string]string{"type": "string", "description": "Required when an explicit choice differs from an available role default"},
+		"reason":      map[string]string{"type": "string", "description": "Concrete reason for a deliberate second idle agent of the same role in the room, or for an explicit choice that differs from an available role default"},
 		"machine_id":  map[string]string{"type": "string", "description": "Optional target machine; defaults to the host"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create or use this task room's Git worktree"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base ref for a newly created worktree"},

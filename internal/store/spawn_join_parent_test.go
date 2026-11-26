@@ -29,7 +29,7 @@ func TestSpawnJoinParent(t *testing.T) {
 	spawn := func(actorID, roomID string, joinParent bool, key string) error {
 		return f.s.Tx(ctx, func(tx *Tx) error {
 			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"),
-				RoleKey: "worker", Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key, JoinParent: joinParent})
+				RoleKey: "worker", Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key, JoinParent: joinParent, Reason: "testing a deliberate second worker"})
 			return err
 		})
 	}

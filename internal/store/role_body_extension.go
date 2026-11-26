@@ -304,6 +304,7 @@ func (tx *Tx) deliveredRoleBody(roleID, projectID string) (string, bool, error) 
 		return "", false, err
 	}
 	if staffingRole {
+		roleBody += "\n\nBefore spawn_agent, inspect team_roster for an active idle agent of the same role in the target room. The tool returns 409 idle_agent_exists for that duplicate; pass a concrete reason only when a second agent is intentional."
 		if enabled, err := tx.projectReviewerEnabled(projectID); err != nil {
 			return "", false, err
 		} else if !enabled {

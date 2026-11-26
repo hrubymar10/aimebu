@@ -562,7 +562,7 @@ func TestTeamFlowSpawnAuthority(t *testing.T) {
 	}
 	spawn := func(actorID, roomID, role, key string) error {
 		return f.s.Tx(ctx, func(tx *Tx) error {
-			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key})
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key, Reason: "testing deliberate staffing of this room"})
 			return err
 		})
 	}
@@ -661,7 +661,7 @@ func TestDispatcherFlowResearcherSpawn(t *testing.T) {
 	}
 	spawn := func(actorID, roomID, role, key string) error {
 		return f.s.Tx(ctx, func(tx *Tx) error {
-			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key})
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key, Reason: "testing deliberate staffing of this room"})
 			return err
 		})
 	}
@@ -709,7 +709,7 @@ func TestSharedTaskRoomAccess(t *testing.T) {
 	}
 	spawn := func(actorID, roomID, role, key string) error {
 		return f.s.Tx(ctx, func(tx *Tx) error {
-			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key})
+			_, err := tx.SpawnAgent(SpawnInput{RoomID: roomID, ActorKind: "agent", ActorID: actorID, MachineID: "mch_members", Path: filepath.Join(f.project.Folder, "co"), RoleKey: role, Tool: "fake", Variant: "test", Model: "m", Provider: "p", KeyHash: key, Reason: "testing deliberate staffing of this room"})
 			return err
 		})
 	}

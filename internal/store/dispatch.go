@@ -736,10 +736,11 @@ func (tx *Tx) recentRoomHistory(agentID string) ([]AgentMessage, error) {
 }
 
 const maxDispatchRoster = 20
+const maxCompactDispatchRoster = 200
 
-// roomAgentRoster snapshots current room membership at dispatch time. Keep the
-// recipient, leads, and agents involved in delivered notes ahead of other
-// members so large rooms do not expand every prompt without bound.
+// roomAgentRoster snapshots active members across the recipient's open rooms.
+// Keep the recipient, leads, and agents involved in delivered notes ahead of
+// other members while bounding detailed and compact entries separately.
 func (tx *Tx) roomAgentRoster(roomID, agentID string, notes []protocol.DeliveryNote, originalBodies map[string]string) ([]map[string]string, map[string]string, int, error) {
 	authors := map[string]bool{}
 	mentioned := map[string]string{}
@@ -767,27 +768,31 @@ func (tx *Tx) roomAgentRoster(roomID, agentID string, notes []protocol.DeliveryN
 			}
 		}
 	}
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.tool,a.model,r.cap_is_lead
-		FROM room_member mb JOIN agent a ON a.id=mb.member_id JOIN role r ON r.id=a.role_id
-		WHERE mb.room_id=? AND mb.member_kind='agent' AND mb.left_at IS NULL AND a.revoked_at IS NULL
-		ORDER BY a.slug,a.id`, roomID)
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT DISTINCT a.id,a.slug,r.role_key,a.tool,a.model,r.cap_is_lead,a.observed
+		FROM room_member mine JOIN room rm ON rm.id=mine.room_id
+		JOIN room_member mb ON mb.room_id=mine.room_id AND mb.member_kind='agent' AND mb.left_at IS NULL
+		JOIN agent a ON a.id=mb.member_id JOIN role r ON r.id=a.role_id
+		WHERE mine.member_kind='agent' AND mine.member_id=? AND mine.left_at IS NULL
+		AND rm.lifecycle='open' AND a.revoked_at IS NULL AND a.desired='active'
+		ORDER BY a.slug,a.id`, agentID)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 	type member struct {
 		data     map[string]string
 		priority int
+		state    int
 	}
 	var members []member
 	var self map[string]string
 	for rows.Next() {
-		var id, name, role, harness, model string
+		var id, name, role, harness, model, observed string
 		var lead bool
-		if err := rows.Scan(&id, &name, &role, &harness, &model, &lead); err != nil {
+		if err := rows.Scan(&id, &name, &role, &harness, &model, &lead, &observed); err != nil {
 			rows.Close()
 			return nil, nil, 0, err
 		}
-		entry := map[string]string{"id": id, "name": name, "role": role, "harness": harness, "model": model}
+		entry := map[string]string{"id": id, "name": name, "role": role, "observed": observed, "harness": harness, "model": model}
 		priority := 4
 		if id == agentID {
 			priority = 0
@@ -798,7 +803,13 @@ func (tx *Tx) roomAgentRoster(roomID, agentID string, notes []protocol.DeliveryN
 		} else if mentioned[id] == "role" {
 			priority = 3
 		}
-		members = append(members, member{data: entry, priority: priority})
+		state := 2
+		if observed == "idle" {
+			state = 0
+		} else if observed == "in_turn" {
+			state = 1
+		}
+		members = append(members, member{data: entry, priority: priority, state: state})
 		if id == agentID {
 			self = entry
 		}
@@ -808,24 +819,36 @@ func (tx *Tx) roomAgentRoster(roomID, agentID string, notes []protocol.DeliveryN
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	sort.SliceStable(members, func(i, j int) bool { return members[i].priority < members[j].priority })
-	more := 0
-	if len(members) > maxDispatchRoster {
-		more = len(members) - maxDispatchRoster
-		members = members[:maxDispatchRoster]
-	}
+	sort.SliceStable(members, func(i, j int) bool {
+		if members[i].priority != members[j].priority {
+			return members[i].priority < members[j].priority
+		}
+		return members[i].state < members[j].state
+	})
+	more, full, compact := 0, 0, 0
 	roster := make([]map[string]string, 0, len(members))
 	for _, item := range members {
+		if item.priority <= 3 && full < maxDispatchRoster {
+			full++
+		} else {
+			if compact == maxCompactDispatchRoster {
+				more++
+				continue
+			}
+			delete(item.data, "harness")
+			delete(item.data, "model")
+			compact++
+		}
 		roster = append(roster, item.data)
 	}
 	if self == nil {
-		var id, name, role, harness, model string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.tool,a.model
+		var id, name, role, harness, model, observed string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id,a.slug,r.role_key,a.tool,a.model,a.observed
 			FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, agentID).
-			Scan(&id, &name, &role, &harness, &model); err != nil {
+			Scan(&id, &name, &role, &harness, &model, &observed); err != nil {
 			return nil, nil, 0, err
 		}
-		self = map[string]string{"id": id, "name": name, "role": role, "harness": harness, "model": model}
+		self = map[string]string{"id": id, "name": name, "role": role, "observed": observed, "harness": harness, "model": model}
 	}
 	return roster, self, more, nil
 }

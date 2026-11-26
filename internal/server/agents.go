@@ -1190,7 +1190,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	// an agent-specific worktree is used only for an explicit session copy.
 	spawn := func(where string, own *store.AgentWorktree) (string, bool, error) {
 		return s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
-			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, JoinParent: req.JoinParent, KeyHash: hex.EncodeToString(keyHashBytes[:])}
+			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, JoinParent: req.JoinParent, Reason: req.Reason, KeyHash: hex.EncodeToString(keyHashBytes[:])}
 			if actorKind == "agent" {
 				input.ApprovedBy = req.ApprovedBy
 			}
@@ -1426,6 +1426,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "home_is_lead_only", "this project's home room accepts only lead roles; spawn other agents into a task room such as general, or turn off Home room: lead only in the project settings")
 	case errors.Is(err, store.ErrRoleOccupied):
 		apiError(w, 409, "role_occupied", "project already has an active agent in this singleton role")
+	case errors.Is(err, store.ErrIdleAgentExists):
+		apiError(w, 409, "idle_agent_exists", err.Error())
 	case errors.Is(err, store.ErrSpawnLimit):
 		apiError(w, 429, "spawn_limit", "agent or spawn rate limit reached")
 	case errors.Is(err, store.ErrSlugTaken):

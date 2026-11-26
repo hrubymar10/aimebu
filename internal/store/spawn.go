@@ -16,6 +16,17 @@ import (
 
 var ErrRoleOccupied = errors.New("role_occupied")
 var ErrSpawnLimit = errors.New("spawn_limit")
+var ErrIdleAgentExists = errors.New("idle_agent_exists")
+
+type IdleAgentExistsError struct {
+	ID, Slug string
+}
+
+func (e *IdleAgentExistsError) Error() string {
+	return fmt.Sprintf("active idle agent @%s (%s) already has this role in the room; provide a reason to spawn another", e.Slug, e.ID)
+}
+
+func (e *IdleAgentExistsError) Unwrap() error { return ErrIdleAgentExists }
 
 type AgentCard struct {
 	DefaultUsed      bool                `json:"default_used,omitempty"`
@@ -106,6 +117,7 @@ func nullableString(value string) sql.NullString {
 
 type SpawnInput struct {
 	SpawnNote                                                                          string
+	Reason                                                                             string
 	RoomID, ActorID, MachineID, Path, RoleKey, Tool, Variant, Model, Provider, KeyHash string
 	LauncherID                                                                         string
 	ActorKind                                                                          string
@@ -251,6 +263,21 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	}
 	if actorKind == "agent" && (flowKey == "" || flowKey == "custom") && leadRole {
 		return AgentCard{}, ErrForbidden
+	}
+	if actorKind == "agent" && strings.TrimSpace(in.Reason) == "" {
+		var existingID, existingSlug string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id,a.slug FROM agent a
+			JOIN room_member mb ON mb.member_kind='agent' AND mb.member_id=a.id
+			JOIN role r ON r.id=a.role_id
+			WHERE mb.room_id=? AND mb.left_at IS NULL AND a.revoked_at IS NULL
+			AND a.desired='active' AND a.observed='idle' AND r.role_key=?
+			ORDER BY a.slug,a.id LIMIT 1`, in.RoomID, in.RoleKey).Scan(&existingID, &existingSlug)
+		if err == nil {
+			return AgentCard{}, &IdleAgentExistsError{ID: existingID, Slug: existingSlug}
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return AgentCard{}, err
+		}
 	}
 	if !leadRole {
 		// "Home room: lead only" (on by default): the home room is the lead's; other roles are spawned into task rooms.

@@ -183,7 +183,7 @@ func TestDeliveredRoleBodyComposition(t *testing.T) {
 	}
 
 	// A flow's role-text override replaces the base; the extensions still append. The dispatcher of the leader-dispatcher
-	// flow carries an override and no other addition, so the delivered text is exactly override, global, project.
+	// flow carries an override, extensions, and the duplicate-spawn instruction.
 	if _, err := s.db.Exec(`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id=?`, project.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestDeliveredRoleBodyComposition(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if want := override + "\n\nglobal rules\n\nproject rules"; dispatcherDelivered != want {
+	if want := override + "\n\nglobal rules\n\nproject rules"; !strings.HasPrefix(dispatcherDelivered, want) || !strings.Contains(dispatcherDelivered, "409 idle_agent_exists") {
 		t.Fatalf("flow override: %q, want %q", dispatcherDelivered, want)
 	}
 }

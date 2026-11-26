@@ -55,6 +55,51 @@ func TestDispatchContextTracksRoomRoster(t *testing.T) {
 	}
 }
 
+func TestDispatchRosterIncludesOtherOpenRoomsOnce(t *testing.T) {
+	s, project, room, one, _ := wakeFixture(t)
+	ctx := context.Background()
+	other, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "task", Title: "second task", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := s.CreateAgent(ctx, Agent{Slug: "otherpeer", ProjectID: project.ID, RoleID: one.RoleID,
+		Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: one.MachineID,
+		CheckoutID: one.CheckoutID, KeyHash: "otherkey", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{other.ID, one.ID}, {other.ID, peer.ID}, {room.ID, peer.ID}} {
+		if err := s.AddMember(ctx, pair[0], "agent", pair[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "@one handle this"}); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, one.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("dispatch ready=%t err=%v", ready, err)
+	}
+	var data struct {
+		TeamRoster []map[string]string `json:"team_roster"`
+	}
+	if err := json.Unmarshal(delivery.Context, &data); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, item := range data.TeamRoster {
+		if item["id"] == peer.ID {
+			count++
+			if item["observed"] != "idle" {
+				t.Fatalf("peer state: %v", item)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("other-room peer appears %d times: %v", count, data.TeamRoster)
+	}
+}
+
 func TestDispatchContextListsRestrictedMembershipAndRoutingInstructions(t *testing.T) {
 	s, project, room, _, leader := wakeFixture(t)
 	ctx := context.Background()
@@ -197,7 +242,7 @@ func TestDispatchContextCapsLargeRoomRoster(t *testing.T) {
 	if err := json.Unmarshal(delivery.Context, &data); err != nil {
 		t.Fatal(err)
 	}
-	if len(data.TeamRoster) != maxDispatchRoster || data.TeamRosterMore != "5 more" || data.YouAre["id"] != one.ID {
+	if len(data.TeamRoster) != 25 || data.TeamRosterMore != "" || data.YouAre["id"] != one.ID {
 		t.Fatalf("roster length=%d more=%q self=%v", len(data.TeamRoster), data.TeamRosterMore, data.YouAre)
 	}
 	want := []string{one.ID, lead.ID, assigningAgent.ID, mentionedAgent.ID, namedWorker.ID}
@@ -210,5 +255,14 @@ func TestDispatchContextCapsLargeRoomRoster(t *testing.T) {
 		if got := data.TeamRoster[i]["name"]; got != fmt.Sprintf("peer%02d", i-len(want)) {
 			t.Fatalf("remaining roster order at %d: %q", i, got)
 		}
+		if data.TeamRoster[i]["observed"] != "idle" {
+			t.Fatalf("roster state at %d: %v", i, data.TeamRoster[i])
+		}
+		if i >= maxDispatchRoster && (data.TeamRoster[i]["harness"] != "" || data.TeamRoster[i]["model"] != "") {
+			t.Fatalf("compact roster entry at %d: %v", i, data.TeamRoster[i])
+		}
+	}
+	if data.TeamRoster[4]["id"] != namedWorker.ID || data.TeamRoster[4]["observed"] != "idle" {
+		t.Fatalf("idle worker missing from roster: %v", data.TeamRoster)
 	}
 }

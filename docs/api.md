@@ -1009,7 +1009,10 @@ plain question text does not create an inbox item. A task room returned by
 `create_room` can be targeted in the same turn after the tool succeeds.
 `go test ./internal/server -run TestFakeLeadCoordinatesTaskFromHomeToArchive`
 exercises that flow with scripted fake turns. The MCP `spawn_agent` tool takes `role_key`, defaults the harness and model where configured, and accepts optional `machine_id` and `reason` for a deliberate deviation;
-it spawns one agent per call. A project
+it spawns one agent per call. When the target room already has an active idle
+agent of the same role, the agent route returns 409 `idle_agent_exists` with
+that agent's slug and id; a non-empty `reason` permits a deliberate duplicate.
+The person's spawn route is unaffected. A project
 room may also request `worktree:true` and optional `base_ref` on
 `create_room` or `spawn_agent`; a new agent then uses the room's worktree
 checkout on its selected machine. A dirty base contributes only its changed

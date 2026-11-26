@@ -181,6 +181,14 @@ func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
 		}
 	}
+	spawn := listed.Result.Tools[26]
+	if !strings.Contains(spawn.Description, "idle_agent_exists") || !strings.Contains(spawn.Description, "reason") {
+		t.Fatalf("spawn description does not explain duplicate guard: %q", spawn.Description)
+	}
+	reason := spawn.InputSchema["properties"].(map[string]any)["reason"].(map[string]any)["description"].(string)
+	if !strings.Contains(reason, "second idle agent") {
+		t.Fatalf("reason parameter does not explain deliberate duplicate: %q", reason)
+	}
 	var called struct {
 		Result struct {
 			Content []struct {

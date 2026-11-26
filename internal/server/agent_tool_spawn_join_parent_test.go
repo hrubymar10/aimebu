@@ -109,6 +109,32 @@ func spawnViaTool(t *testing.T, f *fixture, key string, args map[string]any) sto
 	return card
 }
 
+func TestSpawnAgentToolIdleSameRoleGuard(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "idlelead")
+	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "idleworker")
+	seedFakePool(t, f, "worker")
+	connectFakeSupervisor(t, f, map[string]string{lead.ID: leadKey})
+	room := generalRoom(t, f)
+	for _, id := range []string{lead.ID, worker.ID} {
+		if err := f.db.AddMember(t.Context(), room.ID, "agent", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := map[string]any{"room_id": room.ID, "role_key": "worker", "request_key": "idle-worker-blocked"}
+	if body, failed := mcpToolCall(t, f, leadKey, "spawn_agent", args); !failed ||
+		!strings.Contains(body, "HTTP 409") || !strings.Contains(body, "idle_agent_exists") ||
+		!strings.Contains(body, worker.Slug) || !strings.Contains(body, worker.ID) {
+		t.Fatalf("duplicate guard: failed=%v body=%s", failed, body)
+	}
+	args["request_key"] = "idle-worker-reasoned"
+	args["reason"] = "a second independent worker is needed"
+	if body, failed := mcpToolCall(t, f, leadKey, "spawn_agent", args); failed {
+		t.Fatalf("reasoned duplicate: %s", body)
+	}
+}
+
 // assertJoinParent checks what join_parent promises at the HTTP boundary: without it the new agent is not in the parent room; with it the
 // agent is a quiet member there, woken by a mention but not by an unaddressed message (the store's own test covers the rule in depth).
 func assertJoinParent(t *testing.T, f *fixture, parent store.Room, plain, joined store.AgentCard) {
@@ -169,6 +195,7 @@ func TestSpawnAgentToolJoinParentLead(t *testing.T) {
 		out := map[string]any{"room_id": room, "role_key": "reviewer", "tool": "fake", "variant": "test", "model": "test", "request_key": requestKey}
 		if joinParent {
 			out["join_parent"] = true
+			out["reason"] = "a second agent is needed to test the parent join"
 		}
 		return out
 	}
@@ -213,6 +240,7 @@ func TestSpawnAgentToolJoinParentDispatcher(t *testing.T) {
 		out := map[string]any{"room_id": room, "role_key": "worker", "tool": "fake", "variant": "test", "model": "test", "request_key": requestKey}
 		if joinParent {
 			out["join_parent"] = true
+			out["reason"] = "a second agent is needed to test the parent join"
 		}
 		return out
 	}
