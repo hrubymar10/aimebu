@@ -18,9 +18,9 @@ type roomRecipient struct {
 	// project is the agent's own project (an ID and a name). In a chat between agents the room has no project, so a
 	// project-qualified mention is read against this.
 	projectID, projectName string
-	// desired/observed are the agent's control state: the stop guarantee reads them at note creation (an unaddressed
+	// desired is the agent's control state: the stop guarantee reads it at note creation (an unaddressed
 	// note is not created for a stopped agent, and no note is created in a closing or closed room).
-	desired, observed string
+	desired string
 	// createdAt orders agents that share a name: the display of the later duplicate is `name-2`, and `@name-2`
 	// resolves to it (see the `-N` branch of resolveMentions).
 	createdAt string
@@ -38,7 +38,7 @@ func (tx *Tx) roomRecipients(roomID string) ([]roomRecipient, error) {
 }
 
 func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, error), ctx context.Context, roomID string) ([]roomRecipient, error) {
-	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name,a.created_at,a.desired,a.observed
+	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name,a.created_at,a.desired
 		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
 		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL
 		ORDER BY a.id`, roomID)
@@ -49,7 +49,7 @@ func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, 
 	for rows.Next() {
 		var item roomRecipient
 		item.kind = "agent"
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName, &item.createdAt, &item.desired, &item.observed); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName, &item.createdAt, &item.desired); err != nil {
 			rows.Close()
 			return nil, err
 		}
