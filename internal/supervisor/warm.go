@@ -1117,7 +1117,15 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 			}
 			return c.Adapter.Start(ctx, spec)
 		}
-		if err := c.Journal.RecordWarmProcess(context.Background(), WarmProcess{PID: session.Pid(), AgentID: spec.Agent.ID, Started: identity}); err != nil {
+		enabled := spec.LauncherReportsSessionEnd
+		process := WarmProcess{PID: session.Pid(), AgentID: spec.Agent.ID, Started: identity,
+			LauncherID: spec.Agent.LauncherID, SessionEndReport: &enabled}
+		if spec.LauncherReportsSessionEnd {
+			if proof, ok := session.(interface{ ContainerToken() string }); ok {
+				process.ExecToken = proof.ContainerToken()
+			}
+		}
+		if err := c.Journal.RecordWarmProcess(context.Background(), process); err != nil {
 			c.degraded("noting a warm process failed; the turn runs cold", fmt.Errorf("agent %s: noting a warm process: %w; the turn runs cold", spec.Agent.ID, err))
 			if !c.finish(slot, entry, "it could not be noted", 0) {
 				return nil, errWarmUnconfirmed
@@ -1546,6 +1554,7 @@ func (c *Client) warmGuard(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.SweepWarmOrphans(ctx)
 			c.guardOnce()
 		}
 	}
@@ -1721,10 +1730,17 @@ func groupRSS(pgid int) int64 {
 	return total
 }
 
-// SweepWarmOrphans ends the warm processes an earlier supervisor started and did not end (it died, or was killed): each one the journal
-// noted that is still running with the same start time is killed with its group. It runs once when the supervisor starts.
+// SweepWarmOrphans settles warm processes left by an earlier supervisor. A
+// session-end-enabled container row stays journaled until its exact exec has
+// ended or Docker proves the container gone.
 func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	if c.Journal == nil {
+		return
+	}
+	c.warmOrphansMu.Lock()
+	empty := c.warmOrphans != nil && len(c.warmOrphans) == 0
+	c.warmOrphansMu.Unlock()
+	if empty {
 		return
 	}
 	processes, err := c.Journal.WarmProcesses(ctx)
@@ -1732,12 +1748,62 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 		c.report("the journal could not list the warm processes", err)
 		return
 	}
+	c.warmOrphansMu.Lock()
+	if c.warmOrphans == nil {
+		c.warmOrphans = make(map[int]bool, len(processes))
+		for _, process := range processes {
+			c.warmOrphans[process.PID] = true
+		}
+	}
+	c.warmOrphansMu.Unlock()
 	for _, process := range processes {
+		c.warmOrphansMu.Lock()
+		orphan := c.warmOrphans[process.PID]
+		c.warmOrphansMu.Unlock()
+		if !orphan {
+			continue
+		}
 		if started := processStart(process.PID); started != "" && started == process.Started {
 			_ = syscall.Kill(-process.PID, syscall.SIGKILL)
 		}
-		_ = c.Journal.ForgetWarmProcess(ctx, process.PID)
+		if process.SessionEndReport != nil && *process.SessionEndReport {
+			if !c.orphanWarmGone(ctx, process) {
+				continue
+			}
+		}
+		if err := c.Journal.ForgetWarmProcess(ctx, process.PID); err == nil {
+			c.warmOrphansMu.Lock()
+			delete(c.warmOrphans, process.PID)
+			c.warmOrphansMu.Unlock()
+		}
 	}
+}
+
+func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
+	if !adapter.ValidDockerExecID(process.ExecToken) {
+		return false
+	}
+	container, _, _ := strings.Cut(process.ExecToken, ":")
+	if !adapter.ValidDockerContainerID(container) {
+		return false
+	}
+	row := c.launcherRow(process.LauncherID)
+	if row.ID != "" && row.Available {
+		dirs := c.probeDirs()
+		if len(dirs) > 0 {
+			probeCtx, cancel := context.WithTimeout(ctx, warmContainerQueryLimit)
+			answer, err := adapter.ProbeDockerActivity(probeCtx, row.ResolvedCommand, row.Args, dirs[0], adapter.DockerControlEnv(row.EnvRefs), process.ExecToken, time.Time{})
+			cancel()
+			if err != nil {
+				return false
+			}
+			if answer == "ended" {
+				return true
+			}
+		}
+	}
+	state, err := c.containerState(container)
+	return err == nil && (state == "removing" || state == "exited" || state == "dead")
 }
 
 // applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU_WARM_IDLE,

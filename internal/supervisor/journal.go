@@ -195,6 +195,13 @@ func OpenJournal(ctx context.Context, path string) (*Journal, error) {
 		db.Close()
 		return nil, err
 	}
+	for _, column := range []string{"exec_token TEXT", "launcher_id TEXT", "session_end_report INTEGER"} {
+		name, _, _ := strings.Cut(column, " ")
+		if err := ensureColumn(ctx, db, "warm_process", name, "ALTER TABLE warm_process ADD COLUMN "+column); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	if err := ensureColumn(ctx, db, "command_start", "timeout_seconds", `ALTER TABLE command_start ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0`); err != nil {
 		db.Close()
 		return nil, err
@@ -937,14 +944,37 @@ func nullableInt(value *int) any {
 // WarmProcess is a warm harness process this supervisor started and has not yet seen end: Started is the process's own start time as the
 // system reports it, so a pid that has since been reused is not mistaken for it.
 type WarmProcess struct {
-	PID     int
-	AgentID string
-	Started string
+	PID              int
+	AgentID          string
+	Started          string
+	ExecToken        string
+	LauncherID       string
+	SessionEndReport *bool
 }
 
 // RecordWarmProcess notes a warm process so that a supervisor that dies without ending it can find and end it at its next start.
 func (j *Journal) RecordWarmProcess(ctx context.Context, process WarmProcess) error {
-	_, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO warm_process(pid,agent_id,started,recorded_at) VALUES (?,?,?,?)`, process.PID, process.AgentID, process.Started, time.Now().UTC().Format(time.RFC3339Nano))
+	var report any
+	if process.SessionEndReport != nil {
+		report = *process.SessionEndReport
+	}
+	_, err := j.db.ExecContext(ctx, `INSERT OR REPLACE INTO warm_process(pid,agent_id,started,recorded_at,exec_token,launcher_id,session_end_report) VALUES (?,?,?,?,?,?,?)`, process.PID, process.AgentID, process.Started, time.Now().UTC().Format(time.RFC3339Nano), nullableString(process.ExecToken), nullableString(process.LauncherID), report)
+	return err
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// RecordWarmExecToken fills in the launcher's identity once its stderr arrives.
+func (j *Journal) RecordWarmExecToken(ctx context.Context, pid int, token string) error {
+	if !adapter.ValidDockerExecID(token) {
+		return errors.New("invalid warm exec token")
+	}
+	_, err := j.db.ExecContext(ctx, `UPDATE warm_process SET exec_token=? WHERE pid=?`, token, pid)
 	return err
 }
 
@@ -956,7 +986,7 @@ func (j *Journal) ForgetWarmProcess(ctx context.Context, pid int) error {
 
 // WarmProcesses lists the warm processes noted and not yet forgotten.
 func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
-	rows, err := j.db.QueryContext(ctx, `SELECT pid,agent_id,started FROM warm_process ORDER BY pid`)
+	rows, err := j.db.QueryContext(ctx, `SELECT pid,agent_id,started,exec_token,launcher_id,session_end_report FROM warm_process ORDER BY pid`)
 	if err != nil {
 		return nil, err
 	}
@@ -964,8 +994,14 @@ func (j *Journal) WarmProcesses(ctx context.Context) ([]WarmProcess, error) {
 	var out []WarmProcess
 	for rows.Next() {
 		var process WarmProcess
-		if err := rows.Scan(&process.PID, &process.AgentID, &process.Started); err != nil {
+		var token, launcher sql.NullString
+		var report sql.NullBool
+		if err := rows.Scan(&process.PID, &process.AgentID, &process.Started, &token, &launcher, &report); err != nil {
 			return nil, err
+		}
+		process.ExecToken, process.LauncherID = token.String, launcher.String
+		if report.Valid {
+			process.SessionEndReport = &report.Bool
 		}
 		out = append(out, process)
 	}

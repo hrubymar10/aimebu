@@ -1139,11 +1139,14 @@ processes are never on one session.
   process is about 240 MB native and 250 to 330 MB inside the harness container.
 - **Orphans.** The journal notes each warm process with its own start time and keeps the note until
   the process is known to be gone; a process that cannot be noted is not kept warm. A supervisor
-  that starts ends the ones a dead predecessor left (a pid with another start time is never
-  touched). With harness-docker the wrapper's own session watchdog (it watches the wrapper's
-  pid and start time) ends the process inside the shared harness container when the host wrapper
-  is gone, so there is nothing for the supervisor to label: the harness container is shared by
-  every agent and a warm process is one `docker exec` in it.
+  that starts kills a dead predecessor's matching host process group (a pid with another start
+  time is never touched). For a warm launch using `session_end_report`, the journal also keeps
+  its exec token and launcher ID, with no environment values or agent key. Once the server sends
+  the launcher definition, the supervisor probes that exact token. Only `ended` or a container
+  state proving it stopped releases the row; another answer or a probe error leaves it for the
+  next sweep. Rows from older journals, whose new columns are null, retain the earlier host
+  process cleanup behavior. The harness-docker session watchdog also ends a session whose host
+  wrapper vanished; the harness container may still be shared with other agents.
 - **Containers.** `docker exec` passes no signal on, so killing the host side leaves the process in the
   container until harness-docker's session heartbeat sweeps it (about fifteen seconds), and neither the
   wrapper's exit after a kill nor the passing of time proves it gone. A process in a container is
@@ -1161,9 +1164,8 @@ processes are never on one session.
   and probe errors prove nothing. The private fd is kept out of Docker children;
   a same-uid process inside a sandbox may still write through `/proc` to a
   sandboxed launcher, so such a launcher needs its sandbox boundary trusted.
-  This probe is not used when recovering a
-  journaled warm process after supervisor restart: that path still kills its
-  recorded host process group and forgets the record. Any other status, a kill, or no capability
+  Recovery after supervisor restart uses the same `ended` probe when the journal has its token
+  and the server has supplied the launcher. Any other status, a kill, or no capability
   is *unconfirmed*. The first uncertain end is logged locally with its exit code, TERM/KILL flags and elapsed time. A delivery that waits on the quarantine emits one warning. The supervisor retries the end periodically, backing off as the retries fail, twice as long
   each time up to about five minutes; a stop or a delivery that finds the slot stuck wakes the retry at once (at most one such wake per stuck process every 30 seconds), so a process that has recovered is confirmed without waiting out the backoff; only the first failure logs the uncertainty (the release says so once more), so a slot
   nothing can settle neither spins nor fills the log. While the

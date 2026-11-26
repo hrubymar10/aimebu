@@ -93,6 +93,13 @@ func (c *Client) sightContainer(pool *warmPool, entry *warmEntry) {
 		for {
 			wait := warmContainerSightEvery
 			if id, neverStarted := session.Container(); id != "" {
+				if proof, ok := entry.session.(interface{ ContainerToken() string }); ok && c.Journal != nil {
+					if token := proof.ContainerToken(); token != "" {
+						if err := c.Journal.RecordWarmExecToken(context.Background(), entry.session.Pid(), token); err != nil {
+							c.report("recording a warm exec token failed", err)
+						}
+					}
+				}
 				state, err := c.containerState(id)
 				if err == nil && state != "" {
 					entry.containerSeen.Store(true)

@@ -104,7 +104,10 @@ type Client struct {
 	retired          atomic.Bool // Run ended because a retire request found nothing owed (FinishRetire removes the journal then)
 	// DrainOnly marks an instance that only finishes the work a dead predecessor left in its journal: hello says so, so the server sends it nothing
 	// new, and it retires as soon as its connection is up.
-	DrainOnly bool
+	DrainOnly            bool
+	warmOrphansRechecked atomic.Bool
+	warmOrphansMu        sync.Mutex
+	warmOrphans          map[int]bool
 	// disconnectedDrops counts the sends that failed for want of a connection since the last one: the first is logged, the rest only
 	// counted and summed up in one line when the connection is back (logDisconnectedDrops).
 	disconnectedDrops atomic.Int64
@@ -460,6 +463,9 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		if err := c.setLauncher(definition); err != nil {
 			c.report("a launcher definition from the server was not applied", err)
 		}
+	}
+	if !c.warmOrphansRechecked.Swap(true) {
+		c.SweepWarmOrphans(ctx)
 	}
 	if ack.HarnessProbeDir != "" || len(ack.HarnessProbeDirs) > 0 {
 		for _, row := range rows {
