@@ -193,10 +193,9 @@ Projects, rooms, people
   choice, so nobody is flagged, and an open item whose pool became empty is
   withdrawn. Leaders and the dispatcher count like any agent. They raise one
   `pool_change` Inbox item per project (see Inbox): another change before a
-  decision updates that item, and an agent that stopped drops off it. An agent
-  that stopped, was revoked, or was switched to an explicit choice drops off it
-  the same way: the stop, revoke and switch paths re-sync the item, so one whose
-  last affected agent leaves is withdrawn.
+  decision updates that item, and an agent that stopped, was revoked, or was
+  switched to an explicit choice drops off it (the stop, revoke and switch paths
+  re-sync the item), so an item whose last affected agent leaves is withdrawn.
   In flows A and B the leader belongs
   to `general`; in the dispatcher flow, specs still go through routing and
   task work stays in task rooms.
