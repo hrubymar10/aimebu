@@ -1411,8 +1411,11 @@ cleaned first, so `..`, `./..` or `a/../..` is refused on the server and again
 on the machine; a native
 command is also checked on the resolved path: the checkout and the cwd are
 resolved through every symlink, a cwd whose real directory lies outside the
-checkout is refused, and the process starts in exactly that resolved directory,
-so nothing is followed again between the check and the start. The guarantee is not `openat`-based: a path component swapped for a symlink between the `EvalSymlinks` check and the exec can still escape (a known, narrow window). A container
+checkout is refused. The supervisor retains an open descriptor for the checked
+directory and verifies its device, inode and containment immediately before
+starting the process. A directory swapped for a symlink before that final
+check is refused. Go's portable process API still starts from a pathname, so
+a narrow race remains between the final check and `Start`. A container
 command is not resolved on the host: the launcher is given the cwd relative to
 the checkout, and a symlink in it resolves inside the container, against the
 container's own filesystem, so it can reach nothing the agent's own container

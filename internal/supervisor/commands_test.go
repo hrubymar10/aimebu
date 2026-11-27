@@ -405,6 +405,40 @@ func TestCommandCwdSymlinkMayNotLeaveTheCheckout(t *testing.T) {
 	}
 }
 
+func TestCommandCwdSwapBeforeStartIsRefused(t *testing.T) {
+	c, _, _ := commandTestClient(t)
+	checkout, outside := t.TempDir(), t.TempDir()
+	work := filepath.Join(checkout, "work")
+	if err := os.Mkdir(work, 0755); err != nil {
+		t.Fatal(err)
+	}
+	c.commandBeforeStart = func() {
+		if err := os.Rename(work, filepath.Join(checkout, "held")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, work); err != nil {
+			t.Fatal(err)
+		}
+		// The former pathname-only start follows the replacement symlink.
+		old := exec.Command("sh", "-c", "pwd -P > old_escape")
+		old.Dir = work
+		if err := old.Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_swap", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: checkout, Cmd: "pwd -P > new_escape", Cwd: "work", TimeoutSeconds: 60})
+	if result.Result != "error" || !strings.Contains(result.Message, "cwd") {
+		t.Fatalf("swapped cwd was accepted: %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "old_escape")); err != nil {
+		t.Fatalf("the previous pathname start did not escape: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new_escape")); !os.IsNotExist(err) {
+		t.Fatalf("the new command ran outside: %v", err)
+	}
+}
+
 // A supervisor that is being replaced does not wait for a long command: its exit ends the command and reports the end with exit code -1
 // and the reason supervisor_replaced (journaled, so a replacement replays it if this connection is gone), which wakes the agent.
 func TestReplacedSupervisorEndsItsCommandsAsSupervisorReplaced(t *testing.T) {

@@ -366,13 +366,19 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	if c.runner().has(spec.JobID) {
 		return fail(errors.New("that command is already running here"))
 	}
-	// A native command starts in the directory that was checked, not in a spelling of it: a directory symlink inside the checkout that
-	// points outside it would pass the lexical check above, and the start would follow it.
+	// Resolve the native cwd and retain the directory descriptor until after Start.
+	// The final identity check below narrows, but cannot eliminate, the race
+	// between checking a path and os/exec changing the child's directory.
 	workDir := ""
+	var workFile *os.File
 	if docker == nil {
 		if workDir, err = resolveCommandDir(spec.CheckoutPath, spec.Cwd); err != nil {
 			return fail(err)
 		}
+		if workFile, err = os.Open(workDir); err != nil {
+			return fail(fmt.Errorf("cwd could not be opened: %w", err))
+		}
+		defer workFile.Close()
 	}
 	logger := ""
 	if docker == nil && c.CommandLogger != nil {
@@ -424,6 +430,17 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	} else {
 		cmd.Stdout, cmd.Stderr = log, log
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	if workFile != nil {
+		if c.commandBeforeStart != nil {
+			c.commandBeforeStart()
+		}
+		if err := verifyCommandDir(spec.CheckoutPath, workDir, workFile); err != nil {
+			if log != nil {
+				log.CloseTail()
+			}
+			return fail(err)
+		}
 	}
 	if err := cmd.Start(); err != nil {
 		if log != nil {
@@ -799,9 +816,8 @@ func commandProcessAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// resolveCommandDir is the directory a native command starts in: the cwd under the checkout with every symlink resolved, which must
-// still lie inside the checkout with its own symlinks resolved. The caller uses the returned path as the process's directory, so no
-// symlink is followed again between the check and the start.
+// resolveCommandDir checks the native cwd under the checkout with symlinks
+// resolved. Its returned pathname is checked again immediately before Start.
 func resolveCommandDir(checkout, cwd string) (string, error) {
 	root, err := filepath.EvalSymlinks(checkout)
 	if err != nil {
@@ -815,6 +831,26 @@ func resolveCommandDir(checkout, cwd string) (string, error) {
 		return "", errors.New("cwd must stay inside the agent's checkout (it resolves outside through a symlink)")
 	}
 	return dir, nil
+}
+
+func verifyCommandDir(checkout, dir string, opened *os.File) error {
+	root, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		return fmt.Errorf("checkout cannot be resolved before command start: %w", err)
+	}
+	current, err := filepath.EvalSymlinks(dir)
+	if err != nil || !withinDir(root, current) {
+		return errors.New("cwd changed or left the agent's checkout before command start")
+	}
+	openedInfo, err := opened.Stat()
+	if err != nil {
+		return fmt.Errorf("cwd descriptor cannot be checked: %w", err)
+	}
+	currentInfo, err := os.Stat(current)
+	if err != nil || !os.SameFile(openedInfo, currentInfo) {
+		return errors.New("cwd changed before command start")
+	}
+	return nil
 }
 
 func withinDir(dir, path string) bool {

@@ -57,9 +57,11 @@ var (
 )
 
 type Client struct {
-	MachineID  string
-	MachineKey string
-	ServerURL  string
+	// commandBeforeStart is a test seam between cwd selection and the final check.
+	commandBeforeStart func()
+	MachineID          string
+	MachineKey         string
+	ServerURL          string
 	// AllowPlainHTTP lets this supervisor reach a server on another machine over plain http (the --insecure flag); without it only https, or this machine, is used.
 	AllowPlainHTTP bool
 	// OnTelemetry takes the server's telemetry settings (in hello_ack, and again whenever they change). Nil means this supervisor does not take them: it
