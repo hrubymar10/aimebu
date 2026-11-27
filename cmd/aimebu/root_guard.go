@@ -8,6 +8,7 @@ import (
 )
 
 var errV1RootWrite = errors.New("v1 data or an interrupted v1 move is present")
+var errMixedV1RootWrite = errors.New("mixed v1/v2 database")
 
 // refuseV1RootWrite protects a v1 installation until the server has moved its
 // data into the cutover backup. CLI operations must not create v2 state in the
@@ -24,9 +25,13 @@ func refuseV1RootWriteWith(root string, lockHeld bool) error {
 		return err
 	}
 	if !pending {
-		pending, err = isV1RootWith(root, lockHeld)
+		var mixed bool
+		pending, mixed, err = classifyV1RootWith(root, lockHeld)
 		if err != nil {
 			return err
+		}
+		if mixed {
+			return fmt.Errorf("refusing to write %s: %w; stop the v1 server, then restore the backup into a new folder (docs/migrating-from-v1.md, Roll back)", root, errMixedV1RootWrite)
 		}
 	}
 	if pending {

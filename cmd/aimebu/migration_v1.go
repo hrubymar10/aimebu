@@ -509,17 +509,24 @@ func isV1Root(root string) (bool, error) { return isV1RootWith(root, false) }
 // isV1RootWith is isV1Root for a caller that says whether it already holds server/.writer.lock (lockHeld). Without the lock the
 // probe takes it for the read, without creating the file.
 func isV1RootWith(root string, lockHeld bool) (bool, error) {
+	v1, _, err := classifyV1RootWith(root, lockHeld)
+	return v1, err
+}
+
+// classifyV1RootWith keeps the mixed-root distinction in the same locked
+// database probe used to identify a root awaiting v1 cutover.
+func classifyV1RootWith(root string, lockHeld bool) (v1, mixed bool, err error) {
 	path := filepath.Join(root, "server", "aimebu.sqlite")
 	serverPath := path
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		path = filepath.Join(root, "aimebu.sqlite")
 	} else if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false, nil
+		return false, false, nil
 	} else if err != nil {
-		return false, err
+		return false, false, err
 	}
 	opener := v1DatabaseOpener
 	// The server lock only excludes other v2 processes, so only the server layout may be read immutable under it; a v1 writer can still
@@ -533,9 +540,9 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 			if errors.Is(err, syscall.EWOULDBLOCK) {
 				// A v2 server may own this path. Without its lock we cannot
 				// inspect the file, and it is not a movable v1 root.
-				return false, nil
+				return false, false, nil
 			}
-			return false, fmt.Errorf("server running or lock held; cannot inspect database: %w", err)
+			return false, false, fmt.Errorf("server running or lock held; cannot inspect database: %w", err)
 		}
 		defer unlockServerDirectory(lock)
 		if lock != nil {
@@ -544,7 +551,7 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 	}
 	db, err := opener(path)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer db.Close()
 	var version int
@@ -555,20 +562,20 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 		// A v2 database has schema_version rather than schema_meta.
 		var v2 int
 		if e := query("SELECT COALESCE(MAX(version),0) FROM schema_version", &v2); e == nil && v2 > 0 {
-			return false, nil
+			return false, false, nil
 		}
-		return false, fmt.Errorf("cannot identify existing database at %s: %w", path, err)
+		return false, false, fmt.Errorf("cannot identify existing database at %s: %w", path, err)
 	}
 	if version != 1 {
-		return false, fmt.Errorf("unsupported v1 schema %d", version)
+		return false, false, fmt.Errorf("unsupported v1 schema %d", version)
 	}
 	// A v2 database that also holds v1's schema_meta, with the backup already in place, is the mixed database a v1 server started on a
 	// moved root leaves behind. It is not a root awaiting cutover; doctor classifies it as the mixed failure.
 	if _, err := os.Lstat(filepath.Join(root, v1BackupName)); err == nil {
 		var v2 int
 		if e := query("SELECT COALESCE(MAX(version),0) FROM schema_version", &v2); e == nil && v2 > 0 {
-			return false, nil
+			return false, true, nil
 		}
 	}
-	return true, nil
+	return true, false, nil
 }

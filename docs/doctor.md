@@ -50,7 +50,10 @@ server) or `machine` (a supervisor host).
   newer than the binary fails.
   It also fails when the v2 database holds v1's `schema_meta` table, which
   means a v1 server was started on the folder after v2 moved v1's files into
-  `.old-v1-bkp` (see [migrating from v1](migrating-from-v1.md)).
+  `.old-v1-bkp` (see [migrating from v1](migrating-from-v1.md)). CLI commands
+  that write to the data root refuse this mixed state until the v1 server is
+  stopped and the backup is restored into a new folder; stopped doctor still
+  reports the failure without changing the database.
 - **disk space** — free space on the filesystem holding the config root, with
   the database and WAL sizes. Warns under 2 GiB, fails under 200 MiB: SQLite
   writes start failing on a full disk.

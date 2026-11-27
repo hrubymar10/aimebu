@@ -101,7 +101,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	} else {
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 			dbCheck = checkSQLiteDB(path, nil)
-		} else if v1Err := refuseV1RootWrite(config.root); v1Err != nil {
+		} else if v1Err := refuseV1RootWrite(config.root); v1Err != nil && !errors.Is(v1Err, errMixedV1RootWrite) {
 			// v1's database lives at this same path. Opening it here would not be a read, and the lock file is not ours to create.
 			dbCheck = doctorV1RootCheck(config.root, v1Err)
 		} else {
@@ -110,7 +110,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 				dbCheck = doctorCheck{Name: "sqlite database", Status: statusWarn, Description: "server running or lock held; database check skipped"}
 			} else {
 				defer unlockServerDirectory(lock)
-				if v1Err := refuseV1RootWriteHeld(config.root); v1Err != nil {
+				if v1Err := refuseV1RootWriteHeld(config.root); v1Err != nil && !errors.Is(v1Err, errMixedV1RootWrite) {
 					dbCheck = doctorV1RootCheck(config.root, v1Err)
 				} else if _, err := os.Stat(path); err == nil {
 					opened, openErr := doctorOpenReadOnly(path)

@@ -161,6 +161,31 @@ func TestDoctorStoppedMixedDatabaseIsTheMixedFailure(t *testing.T) {
 	}
 }
 
+func TestPruneMixedDatabaseRefusesWithoutWrites(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	createFixtureDatabase(t, path)
+	addV1SchemaMeta(t, path)
+	if err := os.Mkdir(filepath.Join(root, v1BackupName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "server", ".writer.lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stoppedEnv(t, root)
+	before := treeSnapshot(t, root)
+	var out, errOut bytes.Buffer
+	if code := pruneCommand(context.Background(), []string{"-a", "-y"}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "restore the backup into a new folder") {
+		t.Fatalf("prune exit=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	requireTreeUnchanged(t, root, before)
+	check := doctorDatabaseCheck(t)
+	requireTreeUnchanged(t, root, before)
+	if check.Status != statusFail || !strings.Contains(check.Description, "restore the backup into a new folder") {
+		t.Fatalf("doctor finding = %+v", check)
+	}
+}
+
 func TestSessionsStoppedV1RootWritesNothing(t *testing.T) {
 	root := v1RootFixture(t)
 	stoppedEnv(t, root)
