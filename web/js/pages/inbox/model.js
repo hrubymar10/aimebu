@@ -97,6 +97,8 @@ export function deliveryEvidence(item) {
     return [known[item.held_reason], error && error !== 'The reply did not pass validation.' ? `Reason: ${error}` : ''].filter(Boolean).join(' ');
   }
   if (known[item.held_reason]) return known[item.held_reason];
+  // The server words this reason as sentences already; a code in front of it would only glue the two together.
+  if (item.held_reason === 'not_member' && error) return error;
   const reason = item.held_reason?.replaceAll('_', ' ');
   return [reason, error].filter(Boolean).join(' ') || 'The reply was held; view the room for context.';
 }

@@ -137,6 +137,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			return tx.insertAnswerReceipt(receipt, input.Candidate)
 		}
 		missedMentionHeld, invalidHeld := false, false
+		var dropped []droppedMessage
 		if turn.mode == "diagnostic" {
 			if input.ParseError != "" || input.Parsed == nil {
 				detail := input.ParseError
@@ -160,7 +161,6 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 					return err
 				}
 			}
-			var dropped []droppedMessage
 			// The turn that answers decides whether a handoff needs an outcome: a correction runs under the supervisor it was
 			// dispatched to, which may not be its parent's.
 			reason, detail, err := tx.validateAnswer(parent, input, turn.handoffOutcomeRequired, &receipt.Warnings, &dropped)
@@ -246,7 +246,7 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 			} else if invalidHeld {
 				err = tx.routeInvalidReply(parent, input, receipt.Error)
 			} else {
-				err = tx.deliveryFailedInbox(parent, receipt.HeldReason == "invalid_after_correction")
+				err = tx.routeUndeliverable(parent, input, receipt, dropped)
 			}
 			if err != nil {
 				return err
@@ -288,12 +288,16 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 	// A chat between two agents belongs to no project, so its turn may also report into the agent's own project (a lead woken by the
 	// peer's reply has to tell its people). A chat with a person stays closed to everything else.
 	agentChat := turnRoomKind == "dm" && turnRoomProject == AgentDMProjectID
+	var agentProject string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&agentProject); err != nil {
+		return "", "", err
+	}
 	for i, item := range input.Parsed.Messages {
 		if item.Handoff && item.Outcome == "" && requireOutcome {
 			return "invalid_answer", fmt.Sprintf("message %d is a handoff without an outcome; set outcome to %s", i, answer.OutcomeChoices), nil
 		}
 		if turnRoomKind == "dm" && item.Room != turn.roomID && !agentChat {
-			*dropped = append(*dropped, droppedMessage{i, "not_member", "private chat replies must stay in that chat"})
+			*dropped = append(*dropped, droppedMessage{i, "not_member", "Replies in a private chat with a person must stay in that chat."})
 			continue
 		}
 		var projectID, lifecycle, itemKind string
@@ -304,20 +308,15 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 		if err != nil {
 			return "", "", err
 		}
-		var agentProject string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&agentProject); err != nil {
-			return "", "", err
-		}
-		if projectID != agentProject && !(agentChat && item.Room == turn.roomID) {
+		// A chat between agents belongs to no project: an agent may report into any of them it is a member of (the membership check below),
+		// whichever room its turn was woken in, as dm_agent reaches the same chat from anywhere.
+		targetAgentChat := itemKind == "dm" && projectID == AgentDMProjectID
+		if projectID != agentProject && !targetAgentChat {
 			*dropped = append(*dropped, droppedMessage{i, "not_member", outsideProjectDetail})
 			continue
 		}
-		if agentChat && item.Room != turn.roomID && itemKind == "dm" {
-			*dropped = append(*dropped, droppedMessage{i, "not_member", "a chat between agents cannot report into another private chat"})
-			continue
-		}
 		if lifecycle != "open" {
-			*dropped = append(*dropped, droppedMessage{i, "room_closed", "room is closing or closed"})
+			*dropped = append(*dropped, droppedMessage{i, "room_closed", "This room is closing or closed."})
 			continue
 		}
 		var member int
@@ -325,9 +324,9 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 			return "", "", err
 		}
 		if member != 1 {
-			detail := "agent is not an active room member"
+			detail := notMemberDetail
 			if item.Force {
-				detail += "; force does not allow posting into a room you are not a member of"
+				detail += " Force does not allow posting into a room you are not a member of."
 			}
 			*dropped = append(*dropped, droppedMessage{i, "not_member", detail})
 			continue
@@ -377,7 +376,7 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 			arg := projectID
 			var err error
 			switch {
-			case agentChat && item.Room == turn.roomID:
+			case targetAgentChat:
 				// The Inbox shows an agent's question to the owners and operators of the agent's own project and an approval to its owners, so only
 				// someone in the chat who is one of them can answer it.
 				roles := `'owner','operator'`
@@ -497,7 +496,10 @@ func committedRooms(input AnswerInput, held []HeldMessage) []string {
 
 const heldReplyNotePrefix = "Your previous reply was held: "
 const partialHeldNotePrefix = "Part of your previous reply was held: "
-const outsideProjectDetail = "room is outside the agent project"
+
+// The reasons a message's target is refused, each a sentence of its own; a room of another project also names the missing membership.
+const notMemberDetail = "The agent is not a member of this room."
+const outsideProjectDetail = "This room is outside the agent's project. " + notMemberDetail
 
 // heldDetail makes a held-answer reason safe to put in a note the room can read: a parser error quotes what the agent wrote (a field name, a
 // character), so only fixed texts go in as they are and a quoting one is described instead.
@@ -718,8 +720,16 @@ func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) error {
 	var b strings.Builder
 	b.WriteString(partialHeldNotePrefix)
 	b.WriteString("the other messages were delivered and must not be sent again. Not delivered:")
-	for _, h := range receipt.HeldMessages {
-		fmt.Fprintf(&b, "\n- message %d: %s.", h.Index+1, h.Error)
+	writeHeldMessages(&b, receipt.HeldMessages)
+	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: b.String(), OnlyTargets: []string{turn.agentID}})
+	return err
+}
+
+// writeHeldMessages lists refused messages for the author's note: the reason as a sentence, a hint and the full text, so the author can send it
+// again.
+func writeHeldMessages(b *strings.Builder, held []HeldMessage) {
+	for _, h := range held {
+		fmt.Fprintf(b, "\n- message %d: %s", h.Index+1, h.Error)
 		switch {
 		case h.Error == outsideProjectDetail:
 			b.WriteString(" This room is in another project; to reach an agent there use the `dm_agent` tool, and to reach a person use your own project's rooms.")
@@ -732,8 +742,117 @@ func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) error {
 		if len(body) > 4000 {
 			body = append(body[:4000:4000], []rune("…")...)
 		}
-		fmt.Fprintf(&b, " Its text was:\n%s", string(body))
+		fmt.Fprintf(b, " Its text was:\n%s", string(body))
 	}
+}
+
+// routeUndeliverable decides where a held reply goes when its target was refused (room_closed, not_member). A reply whose messages all go to
+// other agents — a private chat with an agent, a mention of an agent, a reply to an agent's message, and no person addressed in any of them —
+// raises no Inbox item: its author gets a note in the room it was woken in, with the reason and the full text, and sends it again (dm_agent
+// reaches any agent). Anything else raises the delivery_failed card for people: a plain message, a mention of a person, a reply to a person,
+// an ask, a mixed message that names an agent and a person, an author that no longer exists, a room the note cannot be written in, and a turn
+// that the same kind of note already woke (no loop).
+func (tx *Tx) routeUndeliverable(parent answerTurn, input AnswerInput, receipt AnswerReceipt, dropped []droppedMessage) error {
+	toLead := receipt.HeldReason == "invalid_after_correction"
+	if (receipt.HeldReason == "not_member" || receipt.HeldReason == "room_closed") && input.Parsed != nil && len(dropped) == len(input.Parsed.Messages) && len(dropped) > 0 {
+		ok, err := tx.agentOnlyReply(parent.agentID, input.Parsed.Messages)
+		if err != nil {
+			return err
+		}
+		if ok {
+			sent, err := tx.undeliverableAgentNote(parent, input, dropped)
+			if err != nil || sent {
+				return err
+			}
+		}
+	}
+	return tx.deliveryFailedInbox(parent, toLead)
+}
+
+// agentOnlyReply says whether every message of a reply is addressed to agents and to nobody else (see routeUndeliverable).
+func (tx *Tx) agentOnlyReply(authorID string, messages []answer.Message) (bool, error) {
+	var revoked bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT revoked_at IS NOT NULL FROM agent WHERE id=?`, authorID).Scan(&revoked); err != nil || revoked {
+		return false, err
+	}
+	for _, message := range messages {
+		if message.Ask != nil || message.NeedsAttention || len(message.ProposedAnswers) > 0 || len(message.OpenQuestions) > 0 {
+			return false, nil
+		}
+		agentSignal := false
+		var kind, project string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,project_id FROM room WHERE id=?`, message.Room).Scan(&kind, &project); err != nil {
+			return false, err
+		}
+		members, err := tx.roomRecipients(message.Room)
+		if err != nil {
+			return false, err
+		}
+		if kind == "dm" {
+			for _, m := range members {
+				if m.kind == "user" && !m.implicit {
+					return false, nil
+				}
+				agentSignal = agentSignal || m.kind == "agent" && m.id != authorID
+			}
+		}
+		var projectName string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT name FROM project WHERE id=?`, project).Scan(&projectName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+		for id := range resolveMentionTargets(message.Body, authorID, members, project, projectName) {
+			for _, m := range members {
+				if m.id != id {
+					continue
+				}
+				if m.kind == "user" {
+					return false, nil
+				}
+				agentSignal = agentSignal || m.id != authorID
+			}
+		}
+		if message.ReplyTo != "" {
+			var kindOf string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT author_kind FROM message WHERE id=?`, message.ReplyTo).Scan(&kindOf)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return false, err
+			}
+			switch kindOf {
+			case "user":
+				return false, nil
+			case "agent":
+				agentSignal = true
+			}
+		}
+		if !agentSignal {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// undeliverableAgentNote tells the author, as a system note only it can see in the room its turn was woken in, why messages to other agents
+// were refused, with their full text. It reports false (and writes nothing) when the room is not open or the turn was already woken by a held-reply
+// note, so the caller raises the card instead.
+func (tx *Tx) undeliverableAgentNote(turn answerTurn, input AnswerInput, dropped []droppedMessage) (bool, error) {
+	var lifecycle string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle FROM room WHERE id=?`, turn.roomID).Scan(&lifecycle); err != nil || lifecycle != "open" {
+		return false, err
+	}
+	var woken bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
+		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
+		return false, err
+	}
+	held := make([]HeldMessage, 0, len(dropped))
+	for _, d := range dropped {
+		item := input.Parsed.Messages[d.index]
+		held = append(held, HeldMessage{Index: d.index, Reason: d.reason, Error: d.detail, Room: item.Room, Body: item.Body})
+	}
+	var b strings.Builder
+	b.WriteString(heldReplyNotePrefix)
+	b.WriteString("a message to another agent was not delivered, and no person was asked about it. Send it again to that agent with the `dm_agent` tool. Not delivered:")
+	writeHeldMessages(&b, held)
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: b.String(), OnlyTargets: []string{turn.agentID}})
-	return err
+	return err == nil, err
 }

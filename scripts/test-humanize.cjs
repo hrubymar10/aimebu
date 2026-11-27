@@ -33,6 +33,7 @@ assert.match(humanize('{"oops'), /incomplete/);
 assert.match(humanize('{}'), /No readable details/);
 for (const input of [cut, '{"error":"x"}', '{"oops', '[1,2,3]']) assert.ok(!/[{}"]/.test(humanize(input)), `raw JSON characters left in ${input}`);
 // Why a reply was held: a sentence for the reasons we know (real data had "room closed room is closing or closed").
+assert.equal(deliveryEvidence({ held_reason: 'not_member', delivery_error: "This room is outside the agent's project. The agent is not a member of this room." }), "This room is outside the agent's project. The agent is not a member of this room.");
 assert.equal(deliveryEvidence({ held_reason: 'room_closed', delivery_error: 'room is closing or closed' }), 'The room was archived before this reply could be posted.');
 assert.match(deliveryEvidence({ held_reason: 'correction_unavailable', delivery_error: 'invalid_answer: json: unknown field "type"' }), /did not pass validation/);
 assert.equal(deliveryEvidence({ held_reason: 'something_new', delivery_error: 'it broke' }), 'something new it broke');

@@ -1207,8 +1207,20 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   (it is stopped or not accepting, blocked, recorded lost, or its machine has
   not been seen for five minutes), the card — or the lead's `answer_held`
   recovery for a worker with a lead — comes at once, and the note still waits
-  for when the agent can act again; `room_closed` and `not_member` holds always
-  stay with people. Every empty answer logs the harness exit
+  for when the agent can act again; `room_closed` and `not_member` holds are
+  never re-asked and stay with people, except a reply held whole whose every
+  message goes to other agents (a private chat with an agent, a mention of an
+  agent present in the target room, a reply to an agent's message) and
+  addresses no person (no person in the chat, no mention of a person, no reply
+  to a person's message, no `ask`, `needs_attention`, `proposed_answers` or
+  `open_questions`): that raises no Inbox item and no room notice; its author
+  gets one system note (`OnlyTargets` the author) in the room its turn was
+  woken in, starting "Your previous reply was held: a message to another agent
+  was not delivered", with the reason and the full text of each message, to
+  send again with `dm_agent`. A reply that addresses a person (a message naming
+  both an agent and a person included), an author that no longer exists, a turn
+  room that is not open, and a turn already woken by a held-reply note keep the
+  card. Every empty answer logs the harness exit
   code and the last stderr lines, and every answered turn logs one server line
   (`turn answered: agent=… turn=… mode=… result=… messages=N held_reason=…`,
   `none` when nothing was held).
@@ -1280,7 +1292,8 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   turn's room while the reply was meant for another one.
 - `room_closed` / `not_member` targets (a room outside the agent's project,
   a closed room, a room the agent is not an active member of, a private chat
-  that is not the turn's own) are authorisation/lifecycle failures, not
+  with a person that is not the turn's own, a private chat between agents the
+  agent is not a member of) are authorisation/lifecycle failures, not
   formatting errors: never re-asked (the model must not reroute content).
   They hold **only the message that names them**. When at least one other
   message of the reply is valid, that message is delivered, the refused rows
@@ -1290,7 +1303,13 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   the reason, as before. Any structural error (malformed JSON, schema errors,
   an unknown room, a bad reply reference or attachment, a missed mention, an
   `ask` with no recipient) still holds the whole reply, whatever else it
-  holds. A partial hold raises **no** inbox item (the author is the one to
+  holds. A final answer may go into any private chat between agents that the
+  agent is an active member of, from a turn woken in any room; the project
+  check does not apply to such a chat. A turn woken in a private chat with a
+  person keeps replying in that chat. Each refusal reason is one sentence:
+  "This room is outside the agent's project.", "The agent is not a member of
+  this room." (a room of another project gets both) and "This room is closing
+  or closed." A partial hold raises **no** inbox item (the author is the one to
   act, and a person would only get noise); an open originating room gets a
   system row "<agent> reply was only partly delivered: message 2 of 2
   (not_member: …) held; the other 1 delivered. The author was asked to resend

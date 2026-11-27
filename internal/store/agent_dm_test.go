@@ -377,7 +377,8 @@ func (f dmFixture) answer(t *testing.T, agent Agent, roomID, raw string) AnswerR
 }
 
 // A lead woken in a chat with an agent of another project has to tell its own people what came of it, so that turn may also post in the
-// rooms of the lead's own project; nothing else, and a turn in a project room cannot post into the chat.
+// rooms of the lead's own project. A final answer may also go into any chat the agent is a member of from a turn woken in any room; a chat it
+// is not in, and another project's room, stay refused.
 func TestAgentDMTurnMayReportIntoItsOwnProjectOnly(t *testing.T) {
 	t.Parallel()
 	f := newDMFixture(t)
@@ -401,11 +402,12 @@ func TestAgentDMTurnMayReportIntoItsOwnProjectOnly(t *testing.T) {
 		want  string
 	}{
 		"reply in the chat and report to its own project": {room, f.worker2, []string{room.ID, task2.ID}, "committed"},
-		"only the chat":                     {room, f.worker2, []string{room.ID}, "committed"},
-		"a lead reports to its own project": {room, f.lead1, []string{f.task1.ID}, "committed"},
-		"another chat the agent is in":      {room, f.worker2, []string{second.ID}, "held"},
-		"the other agent's project room":    {room, f.lead1, []string{task2.ID}, "held"},
-		"a project room into the chat":      {task2, f.worker2, []string{room.ID}, "held"},
+		"only the chat":                       {room, f.worker2, []string{room.ID}, "committed"},
+		"a lead reports to its own project":   {room, f.lead1, []string{f.task1.ID}, "committed"},
+		"another chat the agent is in":        {room, f.worker2, []string{second.ID}, "committed"},
+		"the other agent's project room":      {room, f.lead1, []string{task2.ID}, "held"},
+		"a project room into a chat it is in": {task2, f.worker2, []string{room.ID}, "committed"},
+		"a chat the agent is not in":          {f.task1, f.worker1, []string{room.ID}, "held"},
 	} {
 		if got := f.answer(t, tc.agent, tc.from.ID, post(tc.to...)); got.Result != tc.want {
 			t.Errorf("%s: result=%q want %q (%+v)", name, got.Result, tc.want, got)
