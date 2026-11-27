@@ -391,6 +391,7 @@ func TestNoticeOutputIsSizeCapped(t *testing.T) {
 	o.mu.Unlock()
 	delivery := protocol.Delivery{AgentID: lead.ID, TurnID: "trn_none", Notes: []protocol.DeliveryNote{{NoteID: "note_big", OutputSource: &protocol.OutputSource{AgentID: o.agent.ID, TurnID: "trn_big"}}}}
 	prefetchForDelivery(t, o, &delivery)
+	waitFetch(t, o, *delivery.Notes[0].OutputSource, lead.ID)
 	o.srv.addWorkerOutput(t.Context(), &delivery)
 	out := delivery.Notes[0].WorkerOutput
 	if out == nil || len(out.Text) > noticeOutputBytes || len(out.Text) < noticeOutputBytes-100 || !out.Truncated || !strings.HasPrefix(out.Text, "\tfiller") || !strings.HasSuffix(out.Text, "done, but said nothing\n") {
