@@ -28,6 +28,15 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			Scan(&projectID, &roomID, &askMessage, &requesterKind, &requesterID, &kind, &state, &currentRev); err != nil {
 			return "", err
 		}
+		// Who is asking comes first: a person outside the item's project learns nothing of it, not that it exists, was resolved or
+		// withdrawn, or what its revision is.
+		var role string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", ErrForbidden
+			}
+			return "", err
+		}
 		if state == "resolved" {
 			return "", ErrAlreadyResolved
 		}
@@ -56,13 +65,6 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 		}
 		if boundary {
 			return "", ErrForbidden
-		}
-		var role string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return "", ErrForbidden
-			}
-			return "", err
 		}
 		var roomKind, roomProject string
 		var privateAllowed int
