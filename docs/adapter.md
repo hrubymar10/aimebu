@@ -232,6 +232,10 @@ cap cuts it, the note names `message_get #N`, which returns all pages (`room_his
 the server treats `null` as unset. A block's `data` is a JSON-encoded object
 string in those native schemas; Pi may send an object directly. The server accepts either,
 stores the raw block, and warns when its shape does not match a known renderer.
+Every prompt's output contract (`prompt.HumanResponse`, not an overridable sentence) says that a question the agent needs a person to answer, or an
+approval it needs from them, always goes in `ask` (kind `question` or `approval`, with its options), never only in the body or in
+`proposed_answers`; `proposed_answers` and `open_questions` are for a human response that does not block the agent. The live eval's
+scenarios s07 and s08 measure it (`docs/eval.md`).
 For an Inbox `ask`, the native prompts show `needs_attention:false`,
 `proposed_answers:null`, and `open_questions:null` in the same message.
 An agent's reply to another agent's message wakes that agent, but only up to four

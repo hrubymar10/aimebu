@@ -46,7 +46,7 @@ const (
 	// OutsideRoomContext closes the prompt for adapters that read it from
 	// standard input ahead of the turn JSON, so it ends with a newline.
 	OutsideRoomContext = "Do not send messages outside the given room context.\n"
-	humanResponse      = `For a human response, set needs_attention with proposed_answers (2-4 %s), open_questions (up to 10 questions with 2-8 choices each), or neither for free text.`
+	humanResponse      = `A question you need a person to answer, or an approval you need from them, always goes in ask (kind question or approval, with its options), never only in the body or in proposed_answers. For a human response that does not block you, set needs_attention with proposed_answers (2-4 %s), open_questions (up to 10 questions with 2-8 choices each), or neither for free text.`
 )
 
 // HandoffOutcome is the rule for a handoff's outcome, in every adapter's prompt right after its output contract. It belongs to that contract, so it
