@@ -1406,7 +1406,7 @@ on the machine; a native
 command is also checked on the resolved path: the checkout and the cwd are
 resolved through every symlink, a cwd whose real directory lies outside the
 checkout is refused, and the process starts in exactly that resolved directory,
-so nothing is followed again between the check and the start. A container
+so nothing is followed again between the check and the start. The guarantee is not `openat`-based: a path component swapped for a symlink between the `EvalSymlinks` check and the exec can still escape (a known, narrow window). A container
 command is not resolved on the host: the launcher is given the cwd relative to
 the checkout, and a symlink in it resolves inside the container, against the
 container's own filesystem, so it can reach nothing the agent's own container
