@@ -659,10 +659,18 @@ func TestStartUsageAlertsWiresTheRejectionTimes(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker := f.srv.usageAlerts
-	select {
-	case <-changed:
-	case <-time.After(10 * time.Second):
-		t.Fatalf("the usage alert observer did not process the cached rejection: snapshot=%+v times=%+v", f.srv.Usages.Snapshot().Providers[0], tracker.RejectionTimes())
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for {
+		if _, seen := tracker.RejectionTimes()["codex\x00work"]; seen {
+			break
+		}
+		select {
+		case <-changed:
+		case <-time.After(10 * time.Millisecond):
+		case <-deadline.C:
+			t.Fatalf("the usage alert observer did not process the cached rejection: snapshot=%+v times=%+v", f.srv.Usages.Snapshot().Providers[0], tracker.RejectionTimes())
+		}
 	}
 	// The server's snapshot answers through the tracker's RejectionTimes
 	// without an extra wiring step.
