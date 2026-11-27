@@ -14,7 +14,14 @@ func TestAttachmentPathMigrationMixedRows(t *testing.T) {
 	s, path := attachmentPathStore(t)
 	project, _, _ := fixture(t, s)
 	root := dataRootForDB(path)
-	inside := filepath.Join(root, "server", "attachments", "att_inside.bin")
+	if err := os.MkdirAll(filepath.Join(root, "server", "attachments"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(resolvedRoot, "server", "attachments", "att_inside.bin")
 	outside := filepath.Join(t.TempDir(), "att_outside.bin")
 	for _, item := range []struct{ id, path string }{
 		{"att_inside", inside}, {"att_outside", outside},
@@ -48,6 +55,113 @@ func TestAttachmentPathMigrationMixedRows(t *testing.T) {
 		if err := reopened.db.QueryRow(`SELECT path FROM attachment WHERE id=?`, item.id).Scan(&got); err != nil || got != item.want {
 			t.Fatalf("%s: path %q, want %q: %v", item.id, got, item.want, err)
 		}
+	}
+}
+
+func TestAttachmentPathMigrationSymlinkedRoot(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	link := filepath.Join(base, "link")
+	if err := os.MkdirAll(filepath.Join(real, "server", "attachments"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(link, "server", "aimebu.sqlite")
+	if err := os.WriteFile(path, blankTestDB, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, _ := fixture(t, s)
+	outside := filepath.Join(base, "outside", "att_outside.bin")
+	if err := os.MkdirAll(filepath.Dir(outside), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	escapingFile := filepath.Join(real, "server", "attachments", "att_file_link.bin")
+	if err := os.Symlink(outside, escapingFile); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, path string }{
+		{"att_link", filepath.Join(link, "server", "attachments", "att_link.bin")},
+		{"att_real", filepath.Join(real, "server", "attachments", "att_real.bin")},
+		{"att_outside", outside},
+		{"att_file_link", escapingFile},
+	} {
+		if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES (?,?,'','text/plain',0,?,'owner','now')`, item.id, project.ID, item.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	for _, item := range []struct{ id, want string }{
+		{"att_link", "server/attachments/att_link.bin"},
+		{"att_real", "server/attachments/att_real.bin"},
+		{"att_outside", outside},
+		{"att_file_link", escapingFile},
+	} {
+		var got string
+		if err := reopened.db.QueryRow(`SELECT path FROM attachment WHERE id=?`, item.id).Scan(&got); err != nil || got != item.want {
+			t.Fatalf("%s: path %q, want %q: %v", item.id, got, item.want, err)
+		}
+	}
+}
+
+func TestAttachmentPathMigrationLeavesExternalAttachmentDirectory(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(filepath.Join(root, "server"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "server", "attachments")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	if err := os.WriteFile(path, blankTestDB, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, _ := fixture(t, s)
+	stored := filepath.Join(root, "server", "attachments", "att_escape.bin")
+	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_escape',?,'','text/plain',0,?,'owner','now')`, project.ID, stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	var got string
+	if err := reopened.db.QueryRow(`SELECT path FROM attachment WHERE id='att_escape'`).Scan(&got); err != nil || got != stored {
+		t.Fatalf("path %q, want %q: %v", got, stored, err)
 	}
 }
 

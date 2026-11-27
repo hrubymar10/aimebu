@@ -2373,6 +2373,17 @@ func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
 	}
 	root := dataRootForDB(dbPath)
 	dir := filepath.Join(filepath.Dir(dbPath), "attachments")
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// A symlinked attachments directory may point outside this data root.
+	// Such paths cannot be safely converted to root-relative paths.
+	trustedDir := err == nil && resolvedDir == filepath.Join(resolvedRoot, "server", "attachments")
 	rows, err := tx.QueryContext(ctx, `SELECT id,path FROM attachment`)
 	if err != nil {
 		return err
@@ -2385,14 +2396,24 @@ func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
 			rows.Close()
 			return err
 		}
-		if filepath.IsAbs(stored) && filepath.Clean(stored) == stored && stored == filepath.Join(dir, id+".bin") {
-			rel, err := filepath.Rel(root, stored)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			changes = append(changes, change{id, rel})
+		if !trustedDir || !filepath.IsAbs(stored) || filepath.Clean(stored) != stored || filepath.Base(stored) != id+".bin" {
+			continue
 		}
+		storedDir := filepath.Dir(stored)
+		if storedDir != dir {
+			resolvedStoredDir, resolveErr := filepath.EvalSymlinks(storedDir)
+			if resolveErr != nil || resolvedStoredDir != resolvedDir {
+				continue
+			}
+		}
+		if resolvedStored, resolveErr := filepath.EvalSymlinks(stored); resolveErr == nil {
+			if resolvedStored != filepath.Join(resolvedDir, id+".bin") {
+				continue
+			}
+		} else if !os.IsNotExist(resolveErr) {
+			continue
+		}
+		changes = append(changes, change{id, filepath.Join("server", "attachments", id+".bin")})
 	}
 	err = rows.Err()
 	rows.Close()
