@@ -5,7 +5,7 @@ if [ "$#" -ne 3 ]; then
     echo "usage: $0 OLD_BINARY NEW_BINARY SCRATCH_DIR" >&2
     exit 2
 fi
-exec python3 - "$@" <<'PYCODE'
+exec python3 - "$@" "$(dirname "$0")/test-upgrade-state.cjs" <<'PYCODE'
 import json
 import sys
 import tempfile
@@ -23,6 +23,7 @@ import http.cookiejar
 OLD = pathlib.Path(sys.argv[1]).resolve()
 NEW = pathlib.Path(sys.argv[2]).resolve()
 PARENT = pathlib.Path(sys.argv[3]).resolve()
+STATE = pathlib.Path(sys.argv[4]).resolve()
 if not OLD.is_file() or not NEW.is_file() or not PARENT.is_dir():
     raise SystemExit('old binary, new binary, and an existing scratch directory required')
 STUB = r'''#!/usr/bin/env python3
@@ -99,7 +100,8 @@ with socket.socket() as s:
     port = s.getsockname()[1]
 env['AIMEBU_PORT'] = str(port)
 base = 'http://127.0.0.1:' + str(port)
-opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+cookies = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
 csrf = ''
 oldpid = None
 
@@ -129,30 +131,6 @@ def req(method, path, data=None, key=None):
         print('HTTP_ERROR', stamp(), method, path, e.code, e.read().decode()[:700], flush=True)
         raise
 
-def upload(room, contents):
-    boundary='aimebu-upgrade-boundary'
-    body=(('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="upgrade.txt"\r\n'
-           'Content-Type: text/plain\r\n\r\n').encode()+contents+b'\r\n--'+boundary.encode()+b'--\r\n')
-    request=urllib.request.Request(base+'/api/rooms/'+room+'/attachments',data=body,
-        headers={'Content-Type':'multipart/form-data; boundary='+boundary,'X-CSRF-Token':csrf},method='POST')
-    with opener.open(request,timeout=15) as response:
-        assert response.status==201
-        return json.load(response)
-
-def download(attachment):
-    with opener.open(base+'/api/attachments/'+attachment,timeout=15) as response:
-        assert response.status==200
-        return response.read()
-
-def seeded_state(project, room, attachment):
-    def subset(rows, fields):
-        return [tuple(row.get(field) for field in fields) for row in rows]
-    return {'projects':subset(req('GET','/api/projects'),('id','name','folder')),
-            'rooms':subset(req('GET','/api/projects/'+project+'/rooms'),('id','project_id','kind','title')),
-            'agents':subset(req('GET','/api/rooms/'+room+'/agents'),('id','slug','role_key','tool','model')),
-            'messages':subset(messages(room),('id','body','author_kind','attachments')),
-            'attachment':download(attachment)}
-
 def until(label, predicate, seconds=60):
     deadline = time.monotonic()+seconds
     while time.monotonic()<deadline:
@@ -179,6 +157,7 @@ try:
     cli('old','server','start')
     login=req('POST','/api/login',{'login':'owner','password':'correct horse battery staple'})
     csrf=login['csrf_token']
+    state_env={**env,'AIMEBU_TEST_COOKIE':'; '.join(c.name+'='+c.value for c in cookies),'AIMEBU_TEST_CSRF':csrf}
     project=req('POST','/api/projects',{'name':'upgrade-probe','folder':str(T/'project')})
     rooms=req('GET','/api/projects/'+project['id']+'/rooms')
     room=next(r['id'] for r in rooms if r['kind']=='task')
@@ -189,35 +168,21 @@ try:
     req('PUT','/api/machines/'+machine+'/launchers/'+claude['id']+'/models',{'models':[{'slug':'haiku','label':'Haiku','default':True}]})
     until('scratch launcher available',lambda: any(row['config']['id']==claude['id'] and row['available'] for row in req('GET','/api/machines/'+machine+'/launchers')['launchers']))
     old=req('POST','/api/rooms/'+room+'/agents',{'name':'oldwork','role_key':'worker','tool':'claude','variant':'native','launcher_id':claude['id'],'model':'haiku'},'old-agent')
-    contents=b'upgrade attachment content\n'
-    attachment=upload(room,contents)
-    req('POST','/api/rooms/'+room+'/messages',{'body':'seeded message','attachments':[attachment['id']]})
-    assert download(attachment['id'])==contents
+    attachment=subprocess.check_output(['node',str(STATE),'seed',base,room],env=state_env,text=True,timeout=30).strip()
     msg=req('POST','/api/rooms/'+room+'/messages',{'body':'@oldwork old-release-probe'})
     until('old job started',lambda: (T/'job.id').exists())
     jobid=(T/'job.id').read_text()
     print('OLD_TURN', (T/'old.turn').read_text(), 'JOB',jobid,flush=True)
     oldpid=int(re.search(r'pid (\d+)',cli('old','supervisor','status')).group(1))
     assert alive(oldpid)
-    before=seeded_state(project['id'],room,attachment['id'])
-    assert any(m[1]=='seeded message' for m in before['messages'])
+    snapshot=T/'seed-state.json'
+    subprocess.run(['node',str(STATE),'snapshot',base,project['id'],room,attachment,str(snapshot)],env=state_env,check=True,timeout=30)
     print('PASS seeded projects rooms messages agents attachments and in-flight turn',flush=True)
     cli('old','server','stop')
     assert alive(oldpid)
     cli('new','server','start')
     print('BUILD',req('GET','/api/buildinfo'),flush=True)
-    after=seeded_state(project['id'],room,attachment['id'])
-    for name in ('projects','rooms','agents'):
-        assert after[name]==before[name],name+' changed across migration'
-        print('PASS migrated '+name+' count and content',flush=True)
-    original=before['messages']
-    original_ids={m[0] for m in original}
-    survivors=[m for m in after['messages'] if m[0] in original_ids]
-    expected_count=len(original)+(os.environ.get('AIMEBU_UPGRADE_CORRUPT_EXPECTED_MESSAGES')=='1')
-    assert len(survivors)==expected_count and all(m in survivors for m in original), 'messages changed across migration'
-    assert after['attachment']==before['attachment']==contents
-    print('PASS migrated messages count and content',flush=True)
-    print('PASS migrated attachment bytes',flush=True)
+    subprocess.run(['node',str(STATE),'compare',base,project['id'],room,attachment,str(snapshot)],env=state_env,check=True,timeout=30)
     until('new machine connected',lambda: any(m.get('connected') and m.get('supervisor_version')==new_version for m in req('GET','/api/machines')['machines']))
     print('OLD_ALIVE_DURING_NEW',oldpid,alive(oldpid),flush=True)
     assert alive(oldpid)
