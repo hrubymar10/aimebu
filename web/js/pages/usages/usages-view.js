@@ -8,6 +8,7 @@ import { maskEmail, maskName, maskNames, usagePrivacy, toggleUsagePrivacy } from
 import { toolOf, isSwitchable, sortProviders, providerConfigured, canEnable, movedOrder, profileKey, profileStatusLine, staleReason, switchView, affectedText } from './model.js';
 import { CopilotSetup, MistralSetup, OllamaSetup } from './provider-setup.js';
 import { profileActions } from './profile-actions.js';
+import { absoluteTime } from '../../time.js';
 
 // The Usages view (shared by Settings → Usages and the side panel): v1's usages panel, as it was drawn there (a tile per provider, its accounts one under the other, each limit a bar with a
 // number under it), carrying what v2 added in the places v1 would have put it: the expected-pace tick on the bar, a thin 48-hour line under it, the
@@ -85,7 +86,7 @@ function ProfileRow({ store, provider, profile, state, usedDisplay, refreshSec, 
       : profile.has_credentials === false ? html`<div class="usages-empty usages-empty-compact">Needs login</div>` : html`<div class="usages-empty usages-empty-compact">No usage data yet.</div>`}
     ${credits && html`<div class="usages-credits-row"><span>${credits}</span></div>`}
     ${status && html`<div class="usages-error-line usages-b-status">${status}</div>`}
-    ${stale && html`<div class="usages-stale-line" title=${profile.error || ''}>Stale, last update ${stale} ago${reason && ` · ${reason}`}${state.owner && !readOnly && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
+    ${stale && html`<div class="usages-stale-line" title=${profile.error || ''}><span data-time-tip=${absoluteTime(profile.last_refresh_at) || null}>Stale, last update ${stale} ago</span>${reason && ` · ${reason}`}${state.owner && !readOnly && html` <${IconButton} name="refresh" label="Refresh now" className="usages-b-refresh" onClick=${() => store.mutateUsage(() => store.source.refresh(provider.provider_name))} />`}</div>`}
   </div>`;
 }
 
@@ -120,7 +121,7 @@ function Tile({ store, provider, profiles, order, providers, state, usedDisplay,
     <div class="usages-provider-heading">
       <div class="usages-provider-title">
         <span class="usages-provider-icon" aria-hidden="true">${MASKS.has(key) ? html`<span class=${`usages-provider-mask usages-provider-mask-${key}`}></span>` : 'AI'}</span>
-        <div><h4 class="usages-provider-name">${provider.label || key}</h4><div class="usages-provider-updated">${updated}</div></div>
+        <div><h4 class="usages-provider-name">${provider.label || key}</h4><div class="usages-provider-updated" data-time-tip=${(oldest && absoluteTime(oldest)) || null}>${updated}</div></div>
       </div>
       ${owner && html`<${IconButton} name="more" label=${manage ? `Hide ${provider.label || key} settings` : `Manage ${provider.label || key}`} className="usages-b-manage" aria-pressed=${String(manage)} aria-expanded=${String(manage)} onClick=${() => setManage(!manage)} />`}
     </div>

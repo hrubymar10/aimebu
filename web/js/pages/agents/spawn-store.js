@@ -2,7 +2,7 @@ import { batch, computed, signal } from '../../ui.js';
 import { request, rights } from '../../api.js';
 import { ClaudeSessionPicker } from '../claude-sessions/page.js';
 import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, sortModelOptions, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
-import { relativeTime } from '../../time.js';
+import { relativeTime, absoluteTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
 import { captureError } from '../../telemetry.js';
 
@@ -48,7 +48,7 @@ export class SpawnStore {
     this.version = computed(() => this.tool.value?.cli_version ? `CLI version ${this.tool.value.cli_version}` : '');
     this.banner = computed(() => {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
-      return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, history: this.historyNote.value });
+      return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, absolute: absoluteTime, history: this.historyNote.value });
     });
     this.submitDisabled = computed(() => !this.rolesReady.value || !this.role.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
   }

@@ -552,6 +552,15 @@ async function main() {
       assert.ok(shared.centre.every(offset => offset <= 1), `the reply chip's clear glyph is centred in its button: ${shared.centre} (${theme || 'plain'}, ${width}px)`);
     }
     await page.setViewport({ width: 1280, height: 900 }); await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await settle(page);
+    // The relative time carries the absolute date as a tooltip (the app's bubble, not the native title), and keeps it through the live refresh.
+    {
+      const tipOf = async () => { await page.hover('[data-message-id=rm_a_sys] .chat-msg-time'); await page.waitForSelector('.time-tip', { timeout: 3000 }); const text = await page.$eval('.time-tip', node => node.textContent); await page.mouse.move(0, 0); await page.waitForFunction(() => !document.querySelector('.time-tip')); return text; };
+      const expected = await page.$eval('[data-message-id=rm_a_sys] .chat-msg-time', node => new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }).format(new Date(node.dateTime)));
+      assert.equal(await page.$eval('[data-message-id=rm_a_sys] .chat-msg-time', node => node.title), '', 'no native title on a message time');
+      assert.equal(await tipOf(), expected, 'a message time shows its absolute date in the tooltip');
+      await page.$eval('[data-message-id=rm_a_sys] .chat-msg-time', async node => { const { refreshRelativeTimes } = await import('/js/time.js'); refreshRelativeTimes(node.parentElement); });
+      assert.equal(await tipOf(), expected, 'the tooltip is still there after the relative time refreshed');
+    }
     // F4: the time of a system line stays beside its text.
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_sys] .chat-msg-system-row'), body = row.firstElementChild, stamp = row.querySelector('.chat-msg-time'); const b = body.getBoundingClientRect(), s = stamp.getBoundingClientRect(); return { sideBySide: s.left >= b.right - 1 && s.top < b.bottom, nowrap: getComputedStyle(row).flexWrap }; }), { sideBySide: true, nowrap: 'nowrap' }, 'the time of a system line is beside its text, not alone on a line below');
     // Seen-by markers sit at the column's right edge whatever they follow: one on a centred system line lines up with one on someone else's message

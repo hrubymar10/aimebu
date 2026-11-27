@@ -1,4 +1,5 @@
 // Import Preact only through this module: a second copy of it would break hooks.
+import './time-tip.js'; // the tooltip a time carries (data-time-tip) works wherever a page renders one
 import { h, render, Fragment, Component, cloneElement, createContext, createPortal } from 'preact';
 import htm from 'htm';
 

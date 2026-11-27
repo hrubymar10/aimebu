@@ -191,7 +191,7 @@ export function historyNote(resume, rooms, projectName = '') {
 
 // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm. `mode` is the continue/copy choice,
 // `hasRoom` whether the start has a task room to go to, `warning` the note about another model, `relative` writes a time.
-export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relative, history = '' }) {
+export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relative, absolute = () => '', history = '' }) {
   const empty = { hidden: true, title: 'Spawn', text: '', card: null, notes: '', choosing: false, held: false, forking: false, confirmHidden: true, confirmText: ' v1 is not running this session any more' };
   if (!resume) return empty;
   const continuing = resume.kind === 'claude_session';
@@ -205,7 +205,7 @@ export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relativ
   const confirmText = continuing ? ' I closed this session in my terminal' : ' v1 is not running this session any more';
   const lines = [];
   if (continuing) {
-    const card = [['Session', resume.session_id.slice(0, 8), true], ['Folder', resume.cwd, true], ['Last active', resume.modified_at ? relative(resume.modified_at) : 'unknown', false], ...(resume.model ? [['Ran on', resume.model, true]] : [])];
+    const card = [['Session', resume.session_id.slice(0, 8), true], ['Folder', resume.cwd, true], ['Last active', resume.modified_at ? relative(resume.modified_at) : 'unknown', false, ...(resume.modified_at && absolute(resume.modified_at) ? [absolute(resume.modified_at)] : [])], ...(resume.model ? [['Ran on', resume.model, true]] : [])];
     if (!hasRoom) lines.push('This project has no open task room to start it in.');
     if (resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
     if (held) lines.push(`${resume.held_by} already continues this session, so it can only be copied.`);

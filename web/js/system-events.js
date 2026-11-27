@@ -1,7 +1,8 @@
 import { applyChatPreferences } from './chat-preferences.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
 import { request } from './api.js';
-import { relativeTime } from './time.js';
+import { relativeTime, absoluteTime } from './time.js';
+import './time-tip.js';
 import { captureError } from './telemetry.js';
 
 function node(tag, className = '', text = '') { const item = document.createElement(tag); if (className) item.className = className; if (text) item.textContent = text; return item; }
@@ -202,7 +203,7 @@ export class SystemEvents {
       main.append(node('span', 'system-event-text', view.text));
       if (count > 1) { const times = node('span', 'system-event-count', `×${count}`); times.title = `${count} identical events in a row; the newest is shown`; main.append(times); }
       if (view.where) main.append(node('span', 'system-event-where', view.where));
-      const time = node('time', 'system-event-time', relativeTime(event.created_at)); time.dateTime = event.created_at; time.title = new Date(event.created_at).toLocaleString();
+      const time = node('time', 'system-event-time', relativeTime(event.created_at)); time.dateTime = event.created_at; time.dataset.timeTip = absoluteTime(event.created_at);
       line.append(main, time); row.append(line);
       if (view.details) {
         const details = node('div', 'system-event-details', view.details); details.hidden = true; row.append(details);

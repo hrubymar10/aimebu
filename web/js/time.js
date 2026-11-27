@@ -26,11 +26,22 @@ export function stateAge(seconds) {
   return `${Math.floor(total / 86400)}d`;
 }
 
-// Fill a <time> element: relative text, full date as tooltip, ISO kept for refresh.
+// The absolute date and time a relative time stands for, in the person's own zone and format: date and time to the second, with the zone
+// abbreviation. Empty for no or an invalid time. This is the one place that formats it; the tooltip (time-tip.js) shows what it returns.
+export function absoluteTime(value) {
+  const at = value instanceof Date ? value : new Date(value);
+  if (!value || Number.isNaN(at.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }).format(at);
+}
+
+// A tooltip for several times at once ("Last agent event: …"): the lines joined, the empty ones left out.
+export const absoluteTimes = (...lines) => lines.filter(Boolean).join(' · ');
+
+// Fill a <time> element: relative text, absolute date as tooltip (data-time-tip, shown by time-tip.js), ISO kept for refresh.
 export function stampTime(node, isoString) {
   node.dateTime = isoString;
   node.dataset.relative = '1';
-  node.title = new Date(isoString).toLocaleString();
+  node.dataset.timeTip = absoluteTime(isoString);
   node.textContent = relativeTime(isoString);
   return node;
 }

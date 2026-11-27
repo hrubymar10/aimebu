@@ -185,7 +185,7 @@ export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
 }
 
 // The rows of an open profile: what the card knows, then what the profile read added. Each is [label, value, { mono, copy }].
-export function profileRows(agent, profile, { harness, relative }) {
+export function profileRows(agent, profile, { harness, relative, absolute = () => '' }) {
   const data = profile || {};
   const variant = agent.variant && agent.variant !== agent.tool ? `${harness(agent.tool)}/${agent.variant}` : harness(agent.tool);
   const today = data.turns_today || data.cost_today ? `${data.turns_today || 0} turn${data.turns_today === 1 ? '' : 's'}${data.cost_today ? ` · $${data.cost_today.toFixed(data.cost_today < 0.01 ? 4 : 2)}${data.cost_today_estimated ? ' estimated' : ''}` : ''}` : '';
@@ -197,7 +197,7 @@ export function profileRows(agent, profile, { harness, relative }) {
     ['CWD', data.cwd, { mono: true }], ['Branch', data.branch, { mono: true }],
     ['Machine', data.machine_name], ['Launcher', data.launcher_name],
     ['Project', data.project_name], ['Repo', data.repo_url, { mono: true }],
-    ['Spawned', data.spawned_by ? `${data.spawned_by}${data.spawned_at ? ` · ${relative(data.spawned_at)}` : ''}` : ''],
+    ['Spawned', data.spawned_by ? `${data.spawned_by}${data.spawned_at ? ` · ${relative(data.spawned_at)}` : ''}` : '', data.spawned_at ? { tip: absolute(data.spawned_at) } : undefined],
     data.resumed_from ? ['Continues', `the v1 session of ${data.resumed_from}`] : null,
     ['Last 24 h', today], ['Agent ID', agent.id, { mono: true, copy: true }],
   ];

@@ -1,6 +1,6 @@
 import { html, useLayoutEffect, useRef } from '../../ui.js';
 import { renderMarkdown } from '../../markdown.js';
-import { relativeTime } from '../../time.js';
+import { relativeTime, absoluteTime } from '../../time.js';
 
 const SECTIONS = [
   ['current_state', 'Current state'],
@@ -19,7 +19,7 @@ function Markdown({ source }) {
 
 function Updated({ document }) {
   if (!document.updated_at) return html`<p class="handbook-meta">No updates yet.</p>`;
-  return html`<p class="handbook-meta">Updated by ${document.updated_by || 'an agent'} · <time datetime=${document.updated_at} title=${document.updated_at}>${relativeTime(document.updated_at)}</time> · Revision ${document.rev}</p>`;
+  return html`<p class="handbook-meta">Updated by ${document.updated_by || 'an agent'} · <time datetime=${document.updated_at} data-time-tip=${absoluteTime(document.updated_at)}>${relativeTime(document.updated_at)}</time> · Revision ${document.rev}</p>`;
 }
 
 function Document({ document }) {
@@ -43,7 +43,7 @@ function RevisionHistory({ store }) {
     ${revisions.length > 0 && html`<ol class="handbook-revisions">${revisions.map(item => html`<li key=${item.rev}>
       <div class="handbook-revision-head"><button type="button" class="btn" onClick=${() => store.showRevision(item.rev)} aria-label=${`View handbook revision ${item.rev}`}>Revision ${item.rev}</button>
         <span>${SECTION_NAMES[item.section] || item.section || 'Handbook'} · ${item.operation || 'updated'}</span>
-        <small>${item.updated_by || 'an agent'} · <time datetime=${item.updated_at || ''} title=${item.updated_at || ''}>${item.updated_at ? relativeTime(item.updated_at) : 'unknown time'}</time></small></div>
+        <small>${item.updated_by || 'an agent'} · <time datetime=${item.updated_at || ''} data-time-tip=${absoluteTime(item.updated_at)}>${item.updated_at ? relativeTime(item.updated_at) : 'unknown time'}</time></small></div>
       ${item.diff && html`<details><summary>View changes</summary><pre class="handbook-diff">${item.diff}</pre></details>`}
     </li>`)}</ol>`}
     ${store.nextBeforeRev.value != null && html`<button type="button" class="btn" disabled=${store.historyLoading.value} onClick=${() => store.loadHistory(true)}>${store.historyLoading.value ? 'Loading…' : 'Older revisions'}</button>`}

@@ -2,7 +2,7 @@ import { html, Component, useRef, useState } from '../../ui.js';
 import { currentUser } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { harnessIcon, agentLabel } from '../../sender-identity.js';
-import { relativeTime, stateAge } from '../../time.js';
+import { relativeTime, absoluteTime, absoluteTimes, stateAge } from '../../time.js';
 import { harnessName } from '../../harness-version.js';
 import { healthLabel } from '../health/model.js';
 import { actionsOf, quickActionsOf, activityOf, keepAliveOf, contextOf, dotOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
@@ -64,9 +64,9 @@ function CopyButton({ value, label, target }) {
 const BREAKS = new Set(['/', '-', '_', '.']);
 export const breakable = text => String(text).split(/([/\-_.])/).filter(part => part !== '').flatMap(part => (BREAKS.has(part) ? [part, html`<wbr />`] : [part]));
 
-function Fact({ label, value, mono, copy }) {
+function Fact({ label, value, mono, copy, tip }) {
   const target = useRef(null);
-  return html`<div class=${mono ? 'profile-fact profile-fact-mono' : 'profile-fact'}><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${breakable(value)}</code>` : html`<strong class="profile-fact-value" ref=${target}>${label === 'Runtime' ? String(value).split(' · ').flatMap((part, index) => [index ? ' · ' : '', html`<span class="profile-fact-token">${part}</span>`]) : String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
+  return html`<div class=${mono ? 'profile-fact profile-fact-mono' : 'profile-fact'}><span class="profile-fact-label">${label}</span>${mono ? html`<code class="profile-fact-value" ref=${target}>${breakable(value)}</code>` : html`<strong class="profile-fact-value" ref=${target} data-time-tip=${tip || null}>${label === 'Runtime' ? String(value).split(' · ').flatMap((part, index) => [index ? ' · ' : '', html`<span class="profile-fact-token">${part}</span>`]) : String(value)}</strong>`}${copy && html`<${CopyButton} value=${value} label=${label} target=${target} />`}</div>`;
 }
 
 function Output({ agent, state, store }) {
@@ -84,7 +84,7 @@ function Output({ agent, state, store }) {
 }
 
 function Profile({ agent, profile, output, readOutput, store }) {
-  const rows = profileRows(agent, profile, { harness: harnessName, relative: relativeTime });
+  const rows = profileRows(agent, profile, { harness: harnessName, relative: relativeTime, absolute: absoluteTime });
   return html`<div class="profile-facts-list">${rows.map(([label, value, options]) => html`<${Fact} key=${label} label=${label} value=${value} ...${options} />`)}</div>${readOutput && output?.agentID === agent.id && html`<${Output} agent=${agent} state=${output} store=${store} />`}`;
 }
 
@@ -122,7 +122,7 @@ export class AgentCard extends Component {
       <small class="agent-keepalive" hidden=${(!keep && !agent.warm) || (!expanded && !keep?.warning)} title=${keep?.warning || ''}>${[agent.warm?.state === 'sleeping' ? 'Process: sleeping' : agent.warm?.state === 'warm' ? 'Process: warm' : '', keep?.warning || (keep ? `Cache: ${keep.text.replace(/^Cache /, '')}` : '')].filter(Boolean).join(' · ')}</small>
       <small class="agent-role-update">${agent.role_updated ? 'Role updated · respawn to apply' : ''}</small>
       <div class="agent-health">${(agent.health_flags || []).map((flag, index) => html`<span key=${`${flag.code}${index}`} class=${`health-flag health-${flag.code}`} title=${healthLabel(flag)}>${healthLabel(flag)}</span>`)}</div>
-      <p class="agent-activity" title=${[activity.last && `Last agent event: ${new Date(activity.last).toLocaleString()}`, activity.seen && `Supervisor seen: ${new Date(activity.seen).toLocaleString()}`].filter(Boolean).join(' · ') || 'No activity time recorded'}>${activity.text}</p>
+      <p class="agent-activity" data-time-tip=${absoluteTimes(activity.last && `Last agent event: ${absoluteTime(activity.last)}`, activity.seen && `Supervisor seen: ${absoluteTime(activity.seen)}`) || 'No activity time recorded'}>${activity.text}</p>
       <p class="agent-switch-status" hidden=${sw.hidden} onClick=${sw.inbox ? () => document.querySelector('#inbox-toggle')?.click() : null}>${sw.text}</p>
       ${expanded && agent.switch?.state === 'draining' && html`<div class="agent-switch-actions" aria-label="Switch controls">
         ${agent.switch.can_retry && html`<button type="button" class="btn" onClick=${() => api.switchAction(agent.id, 'retry-handoff')}>Retry handoff</button>`}
