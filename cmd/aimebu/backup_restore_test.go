@@ -218,6 +218,50 @@ func TestRestoreRebasesAttachmentPaths(t *testing.T) {
 	}
 }
 
+func TestRestoreKeepsRelativeAttachmentPath(t *testing.T) {
+	root, archive := backupFixture(t)
+	insertBackupAttachment(t, root, "relative", "source data")
+	rel := filepath.Join("server", "attachments", "relative.bin")
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "server", "aimebu.sqlite"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE attachment SET path=? WHERE id='relative'`, rel); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored")
+	if err := restoreArchive(context.Background(), target, archive, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Open(context.Background(), filepath.Join(target, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var stored string
+	if err := restored.DoctorReadDB().QueryRow(`SELECT path FROM attachment WHERE id='relative'`).Scan(&stored); err != nil || stored != rel {
+		t.Fatalf("stored path %q, want %q: %v", stored, rel, err)
+	}
+	_, _, got, err := restored.AttachmentByID(context.Background(), "relative", "owner")
+	want := filepath.Join(target, rel)
+	if err != nil || got != want {
+		t.Fatalf("attachment path %q, want %q: %v", got, want, err)
+	}
+	if blob, err := os.ReadFile(got); err != nil || string(blob) != "source data" {
+		t.Fatalf("restored data %q: %v", blob, err)
+	}
+}
+
 func TestRestoreWithoutSourceRootAndAttachments(t *testing.T) {
 	root, archive := backupFixture(t)
 	config, err := resolveServerConfig()

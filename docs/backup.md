@@ -66,9 +66,10 @@ after use, including when a client disconnects.
 Restore with `aimebu restore <file>`. The command checks every manifest entry
 and SHA-256 checksum, and refuses archives from a newer database schema.
 An older schema is restored and migrates when the server next starts. Before
-moving the current data root, restore rewrites attachment paths in the
-extracted database from the manifest's source root to the target data root.
-It refuses an attachment path outside the source root. For older archives
+moving the current data root, restore leaves relative attachment paths
+unchanged: they resolve against the new root. It rebases absolute attachment
+paths in older archives from the manifest's source root to the target data root.
+It refuses an absolute attachment path outside the source root. For older archives
 without `source_root`, restore uses the target root if every attachment path
 already points there or the snapshot has no attachment rows. Otherwise it
 infers the source root from the common `server/attachments/` path prefix and

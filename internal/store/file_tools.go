@@ -26,7 +26,7 @@ func VacuumFileInto(ctx context.Context, source, dest string) error {
 
 // SnapshotAttachments lists the files named by attachment rows in a private
 // snapshot. The caller never opens the live database from another process.
-func SnapshotAttachments(ctx context.Context, snapshot string) (map[string]string, error) {
+func SnapshotAttachments(ctx context.Context, snapshot, root string) (map[string]string, error) {
 	db, err := sql.Open(SQLDriverName, sqliteutil.DSN(snapshot, true))
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func SnapshotAttachments(ctx context.Context, snapshot string) (map[string]strin
 		if err := rows.Scan(&id, &path); err != nil {
 			return nil, err
 		}
-		paths[id] = path
+		paths[id] = AttachmentPath(root, path)
 	}
 	return paths, rows.Err()
 }

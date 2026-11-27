@@ -430,6 +430,16 @@ Content
   path, filename, width, height, created_by, created_at) — file bytes under the server config root,
   room fixed at upload, message bound atomically on send; width and height are
   an image's pixel size (0 when unknown); unattached rows swept after 24 h; indexed by `message_id` (migration 76). Reads require room membership.
+  Migration 146 converts an attachment `path` to `server/attachments/<id>.bin`
+  when its existing absolute path names that file within the current data root's
+  `server/attachments/` directory. Paths outside that directory remain unchanged.
+  New attachment rows store this relative path. Readers and file deletion
+  resolve relative paths against the current data root; absolute paths retain
+  their existing meaning. Backup resolves paths against its source root.
+  Restore keeps relative paths unchanged and rebases absolute paths from older
+  archives, including archives without `source_root`. The migration never
+  rewrites a path it cannot prove is inside the current root's
+  `server/attachments/`.
 - **reaction**(message_id, member_kind, member_id, emoji, created_at) —
   UNIQUE all four keys
 - **project_memory**(id, project_id, body, rev, author_kind[user|agent],

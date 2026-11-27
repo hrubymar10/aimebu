@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -2297,6 +2298,9 @@ WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND d
 -- repair note follows this, because the machine's last probed harness version says nothing about a launcher's harness. NULL is every
 -- turn answered before this, and every answer an older supervisor sent: the note then falls back to the probed version.
 ALTER TABLE turn ADD COLUMN answer_tool INTEGER CHECK (answer_tool IS NULL OR answer_tool IN (0,1));
+`}, {146, `
+-- Attachment paths within the current data root are stored relative to it.
+-- migrateAttachmentPaths performs the root-dependent rewrite in this transaction.
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -2361,6 +2365,50 @@ func roomLimitLines(ctx context.Context, tx *sql.Tx, version int) ([]string, err
 const roomLimitsMarker = "room daily limits are dropped here"
 
 func migrate(ctx context.Context, db *sql.DB) error { return migrateUpTo(ctx, db, 0) }
+
+func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
+	var dbPath string
+	if err := tx.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&dbPath); err != nil {
+		return err
+	}
+	if dbPath == "" {
+		return nil
+	}
+	root := dataRootForDB(dbPath)
+	dir := filepath.Join(filepath.Dir(dbPath), "attachments")
+	rows, err := tx.QueryContext(ctx, `SELECT id,path FROM attachment`)
+	if err != nil {
+		return err
+	}
+	type change struct{ id, path string }
+	var changes []change
+	for rows.Next() {
+		var id, stored string
+		if err := rows.Scan(&id, &stored); err != nil {
+			rows.Close()
+			return err
+		}
+		if filepath.IsAbs(stored) && filepath.Clean(stored) == stored && stored == filepath.Join(dir, id+".bin") {
+			rel, err := filepath.Rel(root, stored)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			changes = append(changes, change{id, rel})
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, item := range changes {
+		if _, err := tx.ExecContext(ctx, `UPDATE attachment SET path=? WHERE id=?`, item.path, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func ensureRoleDefaultColumns(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(role)`)
@@ -2461,8 +2509,11 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if err == nil && m.version == 112 {
 			err = moveCustomAdvisorRole(ctx, tx)
 		}
-		if err == nil {
+		if err == nil && m.version != 146 { // This migration is implemented entirely in Go.
 			_, err = tx.ExecContext(ctx, m.sql)
+		}
+		if err == nil && m.version == 146 {
+			err = migrateAttachmentPaths(ctx, tx)
 		}
 		if err == nil && m.version == 42 {
 			// Seed the shipped default macros once, in the same transaction.

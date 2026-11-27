@@ -153,7 +153,7 @@ func (s *Store) RemoveRoom(ctx context.Context, id string) error {
 			continue
 		}
 		// The room is already gone; a file that cannot be removed is a leftover to log, not a failed removal.
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		if removeErr := os.Remove(s.resolveAttachmentPath(path)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			log.Printf("remove room %s: attachment file %s left behind: %v", id, path, removeErr)
 		}
 	}

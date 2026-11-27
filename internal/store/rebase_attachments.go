@@ -38,8 +38,15 @@ func RebaseSnapshotAttachments(ctx context.Context, snapshot, sourceRoot, target
 			rows.Close()
 			return err
 		}
+		if !filepath.IsAbs(path) {
+			if !safeRelativeAttachmentPath(id, path) {
+				rows.Close()
+				return fmt.Errorf("attachment %s has unsafe relative path: %s", id, path)
+			}
+			continue
+		}
 		rel, err := filepath.Rel(sourceRoot, path)
-		if err != nil || !filepath.IsAbs(path) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			rows.Close()
 			return fmt.Errorf("attachment %s has path outside backup source_root: %s", id, path)
 		}
@@ -78,6 +85,9 @@ func InferSnapshotAttachmentSourceRoot(ctx context.Context, snapshot, targetRoot
 		if err := rows.Scan(&path); err != nil {
 			return "", err
 		}
+		if !filepath.IsAbs(path) {
+			continue
+		}
 		paths = append(paths, path)
 		rel, err := filepath.Rel(targetRoot, path)
 		if err != nil || !filepath.IsAbs(path) || !strings.HasPrefix(filepath.ToSlash(rel), "server/attachments/") {
@@ -108,4 +118,8 @@ func InferSnapshotAttachmentSourceRoot(ctx context.Context, snapshot, targetRoot
 		sourceRoot = candidate
 	}
 	return sourceRoot, nil
+}
+
+func safeRelativeAttachmentPath(id, path string) bool {
+	return path == filepath.Join("server", "attachments", id+".bin")
 }

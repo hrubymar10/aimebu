@@ -340,7 +340,7 @@ func (s *Store) DeleteProject(ctx context.Context, id, name, actor string) error
 			continue
 		}
 		// The project is already gone; a file that cannot be removed is a leftover to log, not a failed removal.
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		if removeErr := os.Remove(s.resolveAttachmentPath(path)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			log.Printf("remove project %s: attachment file %s left behind: %v", id, path, removeErr)
 		}
 	}

@@ -226,7 +226,7 @@ func (s *Store) RegisteredAttachmentPaths(ctx context.Context) (map[string]bool,
 		if err := rows.Scan(&path); err != nil {
 			return nil, err
 		}
-		out[filepath.Clean(path)] = true
+		out[filepath.Clean(s.resolveAttachmentPath(path))] = true
 	}
 	return out, rows.Err()
 }
@@ -371,6 +371,7 @@ func (s *Store) AttachmentsOlderThan(ctx context.Context, cutoff time.Time) ([]O
 		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.ProjectID, &item.Size); err != nil {
 			return nil, err
 		}
+		item.Path = s.resolveAttachmentPath(item.Path)
 		out = append(out, item)
 	}
 	return out, rows.Err()

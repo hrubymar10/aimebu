@@ -1818,7 +1818,11 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			if projectAlias == "" {
 				projectAlias = mapping.DefaultProject
 			}
-			if _, e = tx.ExecContext(ctx, "INSERT INTO attachment(id,project_id,room_id,message_id,sha256,mime,size,path,created_by,created_at,filename,width,height,arrived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", id, projectIDs[projectAlias], roomID, messageIDs[message.ID], check.Hash, mime, check.Entry.Size, destination, ownerID, createdAt, safeAttachmentName(check.Entry.Name), max(check.Entry.Width, 0), max(check.Entry.Height, 0), timestamp()); e != nil {
+			storedPath, e := filepath.Rel(dataRootForDB(s.dbPath), destination)
+			if e != nil {
+				return report, e
+			}
+			if _, e = tx.ExecContext(ctx, "INSERT INTO attachment(id,project_id,room_id,message_id,sha256,mime,size,path,created_by,created_at,filename,width,height,arrived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", id, projectIDs[projectAlias], roomID, messageIDs[message.ID], check.Hash, mime, check.Entry.Size, storedPath, ownerID, createdAt, safeAttachmentName(check.Entry.Name), max(check.Entry.Width, 0), max(check.Entry.Height, 0), timestamp()); e != nil {
 				return report, e
 			}
 			if e = addImportMap(ctx, tx, mapping.SourceKey, "attachment", ref.ID, id); e != nil {

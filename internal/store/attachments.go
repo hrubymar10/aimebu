@@ -56,6 +56,19 @@ type Attachment struct {
 // ErrAttachmentRemoved is returned for an attachment whose file retention has removed.
 var ErrAttachmentRemoved = errors.New("attachment removed")
 
+// AttachmentPath resolves a stored path against a data root. Older rows may
+// still carry absolute paths outside the attachment directory.
+func AttachmentPath(root, stored string) string {
+	if filepath.IsAbs(stored) {
+		return stored
+	}
+	return filepath.Join(root, stored)
+}
+
+func (s *Store) resolveAttachmentPath(stored string) string {
+	return AttachmentPath(dataRootForDB(s.dbPath), stored)
+}
+
 func safeAttachmentName(name string) string {
 	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	name = strings.Map(func(r rune) rune {
@@ -127,8 +140,12 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 	if err := file.Close(); err != nil {
 		return Attachment{}, err
 	}
-	path := filepath.Join(s.attachmentDir, id+".bin")
-	if err := os.Rename(file.Name(), path); err != nil {
+	filePath := filepath.Join(s.attachmentDir, id+".bin")
+	storedPath, err := filepath.Rel(dataRootForDB(s.dbPath), filePath)
+	if err != nil {
+		return Attachment{}, err
+	}
+	if err := os.Rename(file.Name(), filePath); err != nil {
 		return Attachment{}, err
 	}
 	hash := sha256.Sum256(data)
@@ -148,11 +165,11 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 		if err := s.stagedWithinQuota(tx.ctx, tx.tx, userID, int64(len(data))); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT INTO attachment(id,project_id,room_id,sha256,mime,size,path,created_by,created_at,filename,width,height,arrived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, projectID, roomID, hex.EncodeToString(hash[:]), mime, len(data), path, userID, timestamp(), name, result.Width, result.Height, timestamp())
+		_, err := tx.Exec(`INSERT INTO attachment(id,project_id,room_id,sha256,mime,size,path,created_by,created_at,filename,width,height,arrived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, projectID, roomID, hex.EncodeToString(hash[:]), mime, len(data), storedPath, userID, timestamp(), name, result.Width, result.Height, timestamp())
 		return err
 	})
 	if err != nil {
-		os.Remove(path)
+		os.Remove(filePath)
 		return Attachment{}, err
 	}
 	return result, nil
@@ -185,7 +202,7 @@ func (s *Store) AttachmentByID(ctx context.Context, id, userID string) (Attachme
 	if err == nil && removedAt.Valid {
 		return a, roomID, path, ErrAttachmentRemoved
 	}
-	return a, roomID, path, err
+	return a, roomID, s.resolveAttachmentPath(path), err
 }
 
 func (s *Store) AttachmentsForMessage(ctx context.Context, messageID string) ([]Attachment, error) {
@@ -285,7 +302,7 @@ func (s *Store) AgentTurnAttachment(ctx context.Context, turnID, agentID, attach
 		AND g.key_hash!='' LIMIT 1`, attachmentID, turnID, turnID, agentID, agentID).
 		Scan(&a.ID, &a.Name, &a.MIME, &a.Size, &path, &actualTurnID, &keyHash)
 	a.URL = "/api/attachments/" + a.ID
-	return a, path, actualTurnID, keyHash, err
+	return a, s.resolveAttachmentPath(path), actualTurnID, keyHash, err
 }
 
 func (s *Store) RemoveStagedAttachment(ctx context.Context, id, roomID, userID string) error {
@@ -298,7 +315,7 @@ func (s *Store) RemoveStagedAttachment(ctx context.Context, id, roomID, userID s
 		return err
 	})
 	if err == nil {
-		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		if removeErr := os.Remove(s.resolveAttachmentPath(path)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			return fmt.Errorf("remove attachment: %w", removeErr)
 		}
 	}
@@ -334,7 +351,7 @@ func (s *Store) SweepStagedAttachments(ctx context.Context) error {
 		return err
 	}
 	for _, path := range paths {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(s.resolveAttachmentPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

@@ -78,6 +78,14 @@ type Store struct {
 	snapshotBeforeCopy func(*sql.DB)
 }
 
+func dataRootForDB(path string) string {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == "server" {
+		return filepath.Dir(dir)
+	}
+	return dir
+}
+
 // DoctorReadDB is the store-owned read pool used by the authenticated doctor
 // route. Callers must not close it.
 func (s *Store) DoctorReadDB() *sql.DB { return s.readDB }

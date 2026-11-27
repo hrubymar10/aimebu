@@ -313,7 +313,7 @@ func makeBackupOptions(ctx context.Context, config serverConfig, root, output st
 		if err != nil {
 			return err
 		}
-		attachmentPaths, err = store.SnapshotAttachments(ctx, snapshot)
+		attachmentPaths, err = store.SnapshotAttachments(ctx, snapshot, root)
 		if err != nil {
 			return err
 		}
