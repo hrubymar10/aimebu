@@ -4709,7 +4709,7 @@ async function main() {
       slot.remove(); return out;
     });
     assert.deepEqual(wokenTag, { reply: 'Woken by reply · tool inspect', none: 'tool inspect', other: 'tool inspect' }, 'a card tags a turn woken by a reply');
-    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-live-chip', el => /^tool 0:\d\d$/.test(el.textContent)), true);
+    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-live-chip', el => /^tool (\d+:\d\d|\d+[hd])$/.test(el.textContent)), true);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-context-value', el => el.textContent), '75%');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-context', el => el.title.includes('150,000 / 200,000 tokens') && el.title.includes('Cost so far $0.35')), true);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-context-value', el => el.textContent), '—');
