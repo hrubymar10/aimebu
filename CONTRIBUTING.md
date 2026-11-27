@@ -209,6 +209,25 @@ machine-wide harness install directories during discovery. Put a fake
 executable on the test's
 `PATH` when a case needs a harness; never run a real login or launcher.
 
+### The cross-project authorization test
+
+`internal/server/cross_project_authz_test.go` builds two projects, a person who belongs to the first
+only, and an agent of the first, and calls every route of the server with the ids of the second
+project's objects (project, room, agent, message, attachment, inbox item, command, memory, schedule,
+...). Each answer must be a 403 or 404 that carries nothing of the second project; a route that has
+a parent id and a child id is also called with the first project's parent and the second's child.
+The agent MCP tools that take an id are called the same way, as the first project's agent.
+
+The route list is not written by hand: the test reads every `mux.Handle` and `mux.HandleFunc` call
+of the package's sources from the syntax tree (a pattern that is not a string literal fails it). A
+route with an id in its path is checked without anyone touching the test, provided the id's kind is
+known (`valueFor`); a route **without** an id must be on `crossProjectAllowlist` with the reason it
+needs no such check, an MCP tool without an id on `mcpToolsWithoutObjectID`, and an answer that is
+not a 403 or 404 on purpose on `crossProjectStatusExceptions`, each with a reason. So a new route
+that is neither checked nor allowlisted fails the test. When it does: if the route takes an object
+id, make sure its handler checks the caller's access to the object's project and add the id's kind
+to `valueFor`; if it takes none, add it to the allowlist with the reason.
+
 ### The web tests in Docker
 
 `make test-web` runs the scripts in Docker by default, so every machine uses the same toolchain, and
