@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func insertBackupAttachment(t *testing.T, root, id, blob string) string {
@@ -33,6 +34,47 @@ func insertBackupAttachment(t *testing.T, root, id, blob string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestBackupOmitsAttachmentRemovedByRetention(t *testing.T) {
+	root, archive := backupFixture(t)
+	path := insertBackupAttachment(t, root, "removed", "old data")
+	ctx := context.Background()
+	s, err := store.Open(ctx, filepath.Join(root, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleteFile, err := s.MarkAttachmentRemoved(ctx, "removed", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !deleteFile {
+		t.Fatal("retention did not select the file for deletion")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := makeBackup(ctx, config, root, archive, &output); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := extractVerified(archive, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.MissingAttachments) != 0 {
+		t.Fatalf("removed attachment reported missing: %v", manifest.MissingAttachments)
+	}
+	if strings.Contains(output.String(), "Warning:") {
+		t.Fatalf("backup warned about removed attachment: %q", output.String())
+	}
 }
 
 func TestBackupAttachmentRowsDetermineArchive(t *testing.T) {

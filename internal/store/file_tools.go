@@ -32,7 +32,7 @@ func SnapshotAttachments(ctx context.Context, snapshot string) (map[string]strin
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT id,path FROM attachment ORDER BY id`)
+	rows, err := db.QueryContext(ctx, `SELECT id,path FROM attachment WHERE removed_at IS NULL ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
