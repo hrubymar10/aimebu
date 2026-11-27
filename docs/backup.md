@@ -31,8 +31,14 @@ after use, including when a client disconnects.
 
 Restore with `aimebu restore <file>`. The command checks every manifest entry
 and SHA-256 checksum, and refuses archives from a newer database schema.
-An older schema is restored and migrates when the server next starts. Restore
-requires the server and supervisor to be stopped; use `aimebu server stop
+An older schema is restored and migrates when the server next starts. Before
+moving the current data root, restore rewrites attachment paths in the
+extracted database from the manifest's source root to the target data root.
+It refuses an attachment path outside the source root. Archives without a
+`source_root` manifest field must be recreated with a current binary before
+restore.
+
+Restore requires the server and supervisor to be stopped; use `aimebu server stop
 --with-supervisor` for a manually started installation or `brew services stop
 aimebu` for a Homebrew service. Restore asks for confirmation on a terminal;
 `--yes` allows unattended use. It moves the existing data root to

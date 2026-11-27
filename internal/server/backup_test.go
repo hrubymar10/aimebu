@@ -109,6 +109,64 @@ func TestBackupDatabaseUsesServerConnectionDuringWrites(t *testing.T) {
 	}
 }
 
+func TestRestoredCleanupDoesNotDeleteSourceAttachment(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	ctx := context.Background()
+	message, err := f.db.InsertMessage(ctx, store.Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "attachment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Dir(f.db.DatabasePath())
+	sourceFile := filepath.Join(f.db.AttachmentDir(), "kept.bin")
+	if err := os.MkdirAll(filepath.Dir(sourceFile), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceFile, []byte("source"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -10).UTC().Format("2006-01-02T15:04:05.000000000Z")
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO attachment(id,project_id,room_id,message_id,sha256,mime,size,path,created_by,created_at,filename) VALUES ('kept',?,?,?,?,?,?,?,?,?,?)`, f.project.ID, f.room.ID, message.ID, "", "text/plain", 6, sourceFile, "owner", old, "kept.bin")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := t.TempDir()
+	snapshot := filepath.Join(targetRoot, "api.sqlite")
+	if err := f.db.Snapshot(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RebaseSnapshotAttachments(ctx, snapshot, sourceRoot, targetRoot); err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(targetRoot, "attachments", "kept.bin")
+	if err := os.MkdirAll(filepath.Dir(targetFile), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetFile, []byte("target"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Open(ctx, snapshot, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	days := 1
+	if _, err := restored.SetCleanupSettings(ctx, nil, nil, nil, &days); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(restored).runCleanup(ctx, false, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
+		t.Fatalf("target attachment remains: %v", err)
+	}
+	if got, err := os.ReadFile(sourceFile); err != nil || string(got) != "source" {
+		t.Fatalf("source attachment changed: %q %v", got, err)
+	}
+}
+
 func TestBackupDatabaseCapsConcurrentSnapshots(t *testing.T) {
 	f := newFixture(t)
 	root := t.TempDir()

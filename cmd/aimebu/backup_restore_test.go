@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http/httptest"
@@ -159,6 +161,149 @@ func TestBackupRestoreStopped(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 401 {
 		t.Fatalf("restored server response = %d", response.StatusCode)
+	}
+}
+
+func TestRestoreRebasesAttachmentPaths(t *testing.T) {
+	root, archive := backupFixture(t)
+	original := insertBackupAttachment(t, root, "kept", "source data")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored")
+	if err := restoreArchive(context.Background(), target, archive, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(target, "server", "aimebu.sqlite"), true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var actual string
+	if err := db.QueryRow(`SELECT path FROM attachment WHERE id='kept'`).Scan(&actual); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(target, "server", "attachments", "kept.bin")
+	if actual != want {
+		t.Fatalf("attachment path = %q, want %q", actual, want)
+	}
+	if got, err := os.ReadFile(actual); err != nil || string(got) != "source data" {
+		t.Fatalf("restored attachment: %q %v", got, err)
+	}
+	if got, err := os.ReadFile(original); err != nil || string(got) != "source data" {
+		t.Fatalf("source attachment changed: %q %v", got, err)
+	}
+	if err := os.WriteFile(original, []byte("other source data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Open(context.Background(), filepath.Join(target, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	_, _, downloadPath, err := restored.AttachmentByID(context.Background(), "kept", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(downloadPath); err != nil || string(got) != "source data" {
+		t.Fatalf("download path read source data: %q %v", got, err)
+	}
+}
+
+func TestRestoreRefusesArchiveWithoutSourceRoot(t *testing.T) {
+	root, archive := backupFixture(t)
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy.tar.gz")
+	rewriteArchive(t, archive, legacy, func(m *archiveManifest) { m.SourceRoot = "" })
+	if err := restoreArchive(context.Background(), root, legacy, true, io.Discard); err == nil || !strings.Contains(err.Error(), "no source_root") {
+		t.Fatalf("legacy manifest: %v", err)
+	}
+}
+
+func TestRestoreRefusesAttachmentPathOutsideSourceRoot(t *testing.T) {
+	root, archive := backupFixture(t)
+	insertBackupAttachment(t, root, "external", "data")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	manifest, err := extractVerified(archive, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(stage, "server", "aimebu.sqlite")
+	db, err := sql.Open("sqlite", sqliteutil.DSN(copyPath, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "other.bin")
+	if _, err := db.Exec(`UPDATE attachment SET path=? WHERE id='external'`, outside); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tampered := filepath.Join(t.TempDir(), "tampered.tar.gz")
+	file, err := os.Create(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(file)
+	tw := tar.NewWriter(gz)
+	for i := range manifest.Files {
+		entry := &manifest.Files[i]
+		data, err := os.ReadFile(filepath.Join(stage, filepath.FromSlash(entry.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(data)
+		entry.SHA256, entry.Size = hex.EncodeToString(hash[:]), int64(len(data))
+		if err := tw.WriteHeader(&tar.Header{Name: entry.Path, Mode: 0600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored")
+	if err := restoreArchive(context.Background(), target, tampered, true, io.Discard); err == nil || !strings.Contains(err.Error(), "outside backup source_root") {
+		t.Fatalf("outside path: %v", err)
 	}
 }
 
