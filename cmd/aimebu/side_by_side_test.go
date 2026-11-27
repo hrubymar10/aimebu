@@ -102,6 +102,9 @@ func startSideBySide(t *testing.T) *sideBySide {
 	if code, out, errOut := runServerAction("start"); code != 0 {
 		t.Fatalf("start without a supervisor: %d %q %q", code, out, errOut)
 	}
+	if code, out, errOut := runServerAction("stop"); code != 0 {
+		t.Fatalf("stop before seeding: %d %q %q", code, out, errOut)
+	}
 	credential, err := readHostMachineKey(filepath.Join(root, "server", "host-machine.key"))
 	if err != nil {
 		t.Fatal(err)
@@ -151,9 +154,6 @@ func startSideBySide(t *testing.T) *sideBySide {
 		t.Fatal(err)
 	}
 	s.oldMessage = message.ID
-	if code, out, errOut := runServerAction("stop"); code != 0 {
-		t.Fatalf("stop after seeding: %d %q %q", code, out, errOut)
-	}
 	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "1")
 	if code, out, errOut := runServerAction("start"); code != 0 {
 		t.Fatalf("start build A: %d %q %q", code, out, errOut)
