@@ -57,8 +57,9 @@ It builds both refs in disposable worktrees and checks seeded projects, rooms,
 messages, agents and an attachment across the upgrade, including a turn and
 command held while the supervisor drains. For a backup archive, run
 `scripts/test-lock.sh sh scripts/test-upgrade.sh --from-backup /path/to/backup.tar.gz HEAD`;
-the restore and server start use a disposable data root. The added checks use
-Go and Node 24.
+the restore and server start use a disposable data root. The route needs Go,
+Node 24, and Python 3 for the existing `scripts/upgrade-smoke.sh` and its
+stand-in launcher.
 
 The formula runs `opt_bin/"aimebu"` in the foreground under `brew services`.
 It keeps a HEAD build from source as a second route; only that route requires
