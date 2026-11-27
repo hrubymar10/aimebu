@@ -252,7 +252,7 @@ shows up in the inbox. The routes and the reply format are in
 | `aimebu supervisor --local --journal <path> [--drain]` | Run one supervisor instance on its own journal; `--drain` only finishes a journal a dead instance left ([guide](docs/supervisor.md)). |
 | `aimebu server stop --with-supervisor` | Stop both the server and detached local supervisor. |
 | `aimebu agent-tools` | The agent's MCP server over stdio (started by the supervisor). |
-| `aimebu doctor [--live] [--json] [--strict] [--machine]` | Read-only health checks ([doctor](docs/doctor.md)). |
+| `aimebu doctor [--live] [--json] [--strict] [--machine]` | Health checks ([doctor](docs/doctor.md)). |
 | `aimebu fe` | Open the web UI (prints the address over SSH). |
 | `aimebu sessions` | Agents and their native resume hints. |
 | `aimebu usages [provider] [--json]` | Last cached usage snapshots ([usages](docs/usages.md)). |

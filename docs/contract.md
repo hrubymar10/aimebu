@@ -1751,6 +1751,22 @@ and its turns running; the server then closes its store.
 An ungraceful process death still reconciles the durable journal on restart;
 it never silently reruns a turn with uncertain effects.
 
+The authenticated `GET /api/doctor` answer also includes
+`database:{integrity_check,schema_version,has_v1_schema_meta,checks:[{name,status,description,hint?}]}`.
+`integrity_check` is SQLite's result, `schema_version` is the stored version,
+`has_v1_schema_meta` identifies a mixed v1/v2 database, and `checks` contains
+the server's database-backed doctor findings. These values are read by the
+server from its already-open store; the CLI never opens the database while the
+server owns its startup lock. `integrity_check` runs on a separate read
+connection with a 30-second limit; when the limit is reached it reads
+`timeout` and doctor reports a warning. A parallel request receives 429 `busy`.
+`GET /api/doctor/sessions` uses the same doctor-key and same-host guard as
+`GET /api/doctor`. It returns
+`{sessions:[{id,desired,observed,tool,variant,launcher,generation,checkout,remote,containerized,room,last_turn,when,native_session_id}]}`
+for server-managed agents, ordered by ID. The server reads these rows from its
+already-open store; the CLI never opens the database while the server holds
+its startup lock. No keys or environment variables are returned.
+
 ## 4. Wire protocol (versioned, `v:2`)
 
 ### 4.1 Machine-level frames (machine key)

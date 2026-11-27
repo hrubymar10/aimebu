@@ -256,8 +256,11 @@ the server stopped); see [usage snapshots](usages.md).
 `aimebu sessions` lists managed agents from the local server database and
 recent turns from the local supervisor journal. It merges matching agent IDs
 and shows state, tool, launcher, room, latest turn, and a native resume hint
-when available. The command only reads these files; a missing database simply
-contributes no rows. Codex hints include its private `CODEX_HOME`, Pi
+when available. The server database is read only after acquiring its startup
+lock; while the server runs, those rows come from the authenticated
+`GET /api/doctor/sessions` route. The local supervisor journal still
+contributes its rows. A missing database contributes
+no rows. Codex hints include its private `CODEX_HOME`, Pi
 hints include the checkout's session directory, OpenCode hints name its
 private session database, and Vibe hints name its private home and session directory. Remote Pi sessions and Codex,
 OpenCode and Vibe sessions on remote or containerized launchers have runtime paths that cannot

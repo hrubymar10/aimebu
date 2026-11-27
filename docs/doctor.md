@@ -1,17 +1,18 @@
 # Doctor
 
-`aimebu doctor` runs read-only health checks on the server installation and
+`aimebu doctor` runs health checks on the server installation and
 prints a table; `aimebu doctor --json` prints the same results as JSON. A
 warning or failure carries a one-line hint on fixing it (printed under the row,
 and as `hint` in JSON). The exit code is 0 when no check fails, 1 when at least
 one fails, 2 on a usage error. Warnings do not fail the run unless
 `--strict` is given, which makes them exit 1 too (for scripts that gate on a
-clean report). Doctor is safe to run while the server is running: it never
-writes — the database is opened with a read-only DSN (no journal mode
-change), the TLS files are only parsed, and the server is probed with a single
-unauthenticated `GET /api/me`. The one thing SQLite itself does on a read-only
-open of a WAL-mode database is create its empty `-wal`/`-shm` sidecar files
-when the server is stopped; the database file is never touched.
+clean report). While the server runs, doctor gets database findings from its
+authenticated `GET /api/doctor` route and never opens the live database in the
+CLI. With the server stopped, doctor takes the server's startup lock before
+opening the database through the store; when the lock is held but no server
+answers, it skips the database check with a warning. A stopped-server check
+may apply pending store migrations. The TLS files are parsed locally, and an
+unauthenticated `GET /api/me` first identifies a running server.
 
 The JSON is `{"version", "generated_at", "checks": [{"name", "status",
 "description", "hint", "scope"}], "exit_code"}`. `scope` says where a fact was
@@ -37,7 +38,8 @@ server) or `machine` (a supervisor host).
   development install has data under `~/.aimebu2`. Set
   `AIMEBU_CONFIG_DIR=~/.aimebu2` to keep using it, or move that data into the
   default root. The warning also appears on stderr for ordinary CLI commands.
-- **sqlite database** — opened read-only, then `PRAGMA integrity_check` and
+- **sqlite database** — checked by the running server, or opened under the
+  startup lock while stopped, then `PRAGMA integrity_check` and
   the stored schema version compared against the newest migration this binary
   applies. A missing or empty database warns (the server may not have started
   yet); a schema older than the binary warns (it forward-migrates on next
