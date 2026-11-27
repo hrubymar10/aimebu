@@ -84,7 +84,7 @@ If v1 used a custom data folder or port, set `AIMEBU_CONFIG_DIR` and
 shared by v1 and v2; the v2 process reads the values you set for it.
 
 Leave this terminal open. The server prints a one-time setup token and a
-shortcut link, `http://127.0.0.1:9997/setup?token=…` ([owner setup](auth.md#first-run-owner-setup)).
+shortcut link, `http://127.0.0.1:9997/setup#token=…` ([owner setup](auth.md#first-run-owner-setup)).
 Open the address, enter the token (or open the link), choose the new v2 owner login and password, and you land in the
 import wizard. (Headless? Set `AIMEBU_OWNER_LOGIN` and
 `AIMEBU_OWNER_PASSWORD` before starting and sign in at

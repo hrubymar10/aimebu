@@ -13,7 +13,7 @@ No owner exists yet. Open the setup page and enter this setup token (single use,
   setup_…
 The token is also in /home/you/.aimebu/.setup_token
 Shortcut that fills the token in for you:
-  http://127.0.0.1:9997/setup?token=setup_…
+  http://127.0.0.1:9997/setup#token=setup_…
 ```
 
 The same token is written to `$AIMEBU_CONFIG_DIR/.setup_token` (0600) and the
@@ -29,7 +29,11 @@ forwarding header, so not a reverse proxy relaying someone) gets the full path, 
 or directory layout; the token itself is never returned by any API). Continue checks the token with
 `POST /api/setup/token {token}` (204 when right, 403 `invalid_setup_token`
 when wrong, 429 rate limited, 404 when setup is closed), without spending it.
-The link with `?token=` is only a shortcut: the token is checked at once and the
+The link carries the token in the URL fragment (`#token=`), never in the query
+string: a browser does not send a fragment to the server, so a reverse proxy's
+access log cannot capture it. The page reads it, removes it from the address and
+history at once (`history.replaceState`), and sends it only in the POST body. The
+link is only a shortcut: the token is checked at once and the
 token screen is skipped. Then the "Create owner" form (login, password twice)
 posts `POST /api/setup {token, login, password}`, which creates the owner and the
 host machine in one transaction (the same code as the environment path),

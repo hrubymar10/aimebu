@@ -41,7 +41,7 @@ It prints the address and a one-time setup link:
 aimebu started (pid 12345, http://127.0.0.1:9997)
 log: /home/you/.aimebu/server/aimebu.log
 No owner exists yet. Open this link to create it (single use):
-  http://127.0.0.1:9997/setup?token=setup_...
+  http://127.0.0.1:9997/setup#token=setup_...
 ```
 
 `aimebu server start` runs it in the background; `aimebu server` stays in the foreground (Ctrl-C stops it). The server listens only on this computer unless you change `AIMEBU_BIND` and `AIMEBU_ALLOW`.

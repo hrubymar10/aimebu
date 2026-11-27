@@ -3016,7 +3016,7 @@ async function main() {
           const tokenFile = path.join(setupTmp, '.setup_token');
           const setupToken = fs.readFileSync(tokenFile, 'utf8').trim();
           assert.equal(fs.statSync(tokenFile).mode & 0o777, 0o600, 'the token file is private');
-          assert.ok(setupLogs().includes(`${setupOrigin}/setup?token=${setupToken}`), `the startup message does not carry the link: ${setupLogs()}`);
+          assert.ok(setupLogs().includes(`${setupOrigin}/setup#token=${setupToken}`), `the startup message does not carry the link: ${setupLogs()}`);
           assert.ok(setupLogs().includes(`\n  ${setupToken}\n`) && setupLogs().includes(`The token is also in ${tokenFile}`), `the startup message must print the token and name its file: ${setupLogs()}`);
           // Opening the plain address of a server with no owner asks for the setup token (there is no login that could work), tells where to
           // find it, refuses a wrong one with a clear error, and accepts the one in the file.
@@ -3042,7 +3042,7 @@ async function main() {
             await plain.close();
           }
           const setupPage = await setupContext.newPage();
-          await setupPage.goto(`${setupOrigin}/setup?token=${setupToken}`);
+          await setupPage.goto(`${setupOrigin}/setup#token=${setupToken}`);
           await setupPage.waitForSelector('#welcome-view');
           assert.equal(await setupPage.$eval('#setup-view', view => view.hidden), true, 'the form must wait behind the welcome');
           await setupPage.$eval('#welcome-view', view => view.click()); await setupPage.waitForSelector('#welcome-continue:not([hidden])'); await setupPage.click('#welcome-continue');
@@ -3245,7 +3245,7 @@ async function main() {
           // The app's own onboarding (still on its Harnesses step) polls and draws into the same card, so the last step is shown and left in one go.
           assert.equal(await setupPage.evaluate(() => { const step = window.__lastOnboarding; step.store.set(() => { step.store.open.value = true; step.store.step.value = 'how'; }); document.querySelector('#onboarding-done').click(); return document.querySelector('#onboarding-view').hidden; }), true, 'Not now closes the onboarding');
           assert.equal(new URL(setupPage.url()).pathname, '/', 'the setup address stays in the address bar after setup');
-          assert.equal((await fetch(`${setupOrigin}/setup?token=${setupToken}`)).status, 404, '/setup must be gone once an owner exists');
+          assert.equal((await fetch(`${setupOrigin}/setup#token=${setupToken}`)).status, 404, '/setup must be gone once an owner exists');
           assert.equal(fs.existsSync(tokenFile), false, 'the token file must be removed after use');
           assert.deepEqual(await (await fetch(`${setupOrigin}/api/setup/status`)).json(), { open: false }, 'the token path is not offered once an owner exists');
           await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });

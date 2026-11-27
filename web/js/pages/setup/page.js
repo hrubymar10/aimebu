@@ -7,9 +7,13 @@ import { showWelcome } from './welcome.js';
 
 // The adapter writes what is outside the steps: each view's hidden and the page's theme. The steps are drawn into the views themselves.
 export class Setup {
-  constructor({ views, welcome = showWelcome, send = request, search = location.search } = {}) {
+  constructor({ views, welcome = showWelcome, send = request, hash = location.hash, scrub = () => history.replaceState(null, '', location.pathname + location.search) } = {}) {
     this.views = views;
-    this.store = new SetupStore({ send, welcome: () => welcome(), linked: new URLSearchParams(search).get('token') || '', replaceUrl: () => history.replaceState(null, '', '/') });
+    // The shortcut link carries the token in the fragment, which a browser never sends to a server or a proxy. It is read once and the
+    // address is cleaned at once, so history and the address bar never keep it.
+    const linked = new URLSearchParams(String(hash).replace(/^#/, '')).get('token') || '';
+    if (linked) scrub();
+    this.store = new SetupStore({ send, welcome: () => welcome(), linked, replaceUrl: () => history.replaceState(null, '', '/') });
     const onError = error => console.error('setup:', error), steps = { token: TokenStep, owner: OwnerStep, theme: ThemeStep };
     this.pages = Object.entries(steps).filter(([name]) => views[name]).map(([name, Step]) => mountPreactPage(views[name], () => html`<${Step} store=${this.store} />`, { onError }));
     this.stops = [

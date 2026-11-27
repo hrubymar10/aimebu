@@ -127,8 +127,11 @@ func runFirstRunSetup(t *testing.T, root string, local bool) {
 	waitFor(t, "setup token", func() bool {
 		raw, err := os.ReadFile(tokenPath)
 		token = strings.TrimSpace(string(raw))
-		return err == nil && token != "" && strings.Contains(stderr.String(), "/setup?token="+token)
+		return err == nil && token != "" && strings.Contains(stderr.String(), "/setup#token="+token)
 	})
+	if strings.Contains(stderr.String(), "?token") {
+		t.Fatalf("the shortcut must carry the token in the fragment, never the query string: %s", stderr.String())
+	}
 	// The terminal gets the token itself (not only a link that carries it) and the full path of the file that holds it.
 	if out := stderr.String(); !strings.Contains(out, "\n  "+token+"\n") || !strings.Contains(out, "The token is also in "+tokenPath) {
 		t.Fatalf("the startup message must print the token and name its file %s: %s", tokenPath, out)
@@ -146,7 +149,7 @@ func runFirstRunSetup(t *testing.T, root string, local bool) {
 		}
 		return err == nil
 	})
-	if resp, err := testHTTP.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 200 {
+	if resp, err := testHTTP.Get(base + "/setup#token=" + token); err != nil || resp.StatusCode != 200 {
 		t.Fatalf("/setup while open: %v %v", resp, err)
 	}
 	// The setup screen asks where the token is, then checks it before it asks for a login.
@@ -178,7 +181,7 @@ func runFirstRunSetup(t *testing.T, root string, local bool) {
 	if _, err := os.Stat(filepath.Join(root, "server", "host-machine.key")); err != nil {
 		t.Fatalf("host machine key: %v", err)
 	}
-	if resp, err := testHTTP.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 404 {
+	if resp, err := testHTTP.Get(base + "/setup#token=" + token); err != nil || resp.StatusCode != 404 {
 		t.Fatalf("/setup after setup: %v %v", resp, err)
 	}
 	if code, _ := setupPost(t, base, token, "second", "correct horse battery staple"); code != 404 {
@@ -204,13 +207,13 @@ func runFirstRunSetup(t *testing.T, root string, local bool) {
 }
 
 func TestSetupLink(t *testing.T) {
-	if got := setupLink("", "0.0.0.0", 9897, nil, "t"); got != "http://localhost:9897/setup?token=t" {
+	if got := setupLink("", "0.0.0.0", 9897, nil, "t"); got != "http://localhost:9897/setup#token=t" {
 		t.Fatal(got)
 	}
-	if got := setupLink("https://aimebu.example/", "127.0.0.1", 9897, nil, "t"); got != "https://aimebu.example/setup?token=t" {
+	if got := setupLink("https://aimebu.example/", "127.0.0.1", 9897, nil, "t"); got != "https://aimebu.example/setup#token=t" {
 		t.Fatal(got)
 	}
-	if got := setupLink("", "::1", 9897, nil, "t"); got != "http://[::1]:9897/setup?token=t" {
+	if got := setupLink("", "::1", 9897, nil, "t"); got != "http://[::1]:9897/setup#token=t" {
 		t.Fatal(got)
 	}
 }

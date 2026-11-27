@@ -1,7 +1,7 @@
 # HTTP API
 
 Run `aimebu server`. On a first run it prints a one-time owner setup token
-(also in `.setup_token`, with a `/setup?token=…` shortcut, see [auth](auth.md#first-run-owner-setup)), or bootstraps
+(also in `.setup_token`, with a `/setup#token=…` shortcut, see [auth](auth.md#first-run-owner-setup)), or bootstraps
 the owner from `AIMEBU_OWNER_LOGIN` and `AIMEBU_OWNER_PASSWORD` when both are set. The listener defaults to
 `127.0.0.1:9997`; `AIMEBU_BIND` must be an IP literal and `AIMEBU_PORT` a
 TCP port. The default data root is `~/.aimebu`; use `AIMEBU_CONFIG_DIR` to

@@ -1230,7 +1230,7 @@ func setupLink(publicURL, bind string, port int, tlsConfig *serverTLSConfig, tok
 		}
 		base = scheme + "://" + net.JoinHostPort(host, strconv.Itoa(p))
 	}
-	return base + "/setup?token=" + token
+	return base + "/setup#token=" + token
 }
 
 // failStartup is how the server says it cannot start: to stderr, and to Sentry. It flushes: the process is about to exit, and an event still queued is lost.

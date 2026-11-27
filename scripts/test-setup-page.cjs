@@ -1,4 +1,4 @@
-// First-run owner setup against an owner-less scratch server: the welcome, the setup token (typed, or from a /setup?token= link; right,
+// First-run owner setup against an owner-less scratch server: the welcome, the setup token (typed, or from a /setup#token= link; right,
 // wrong and throttled), the Create owner form and its checks, the theme step, and what the server holds afterwards. Each flow that creates the
 // owner gets a server of its own, since there is only one first run. `AUTH_BINARY` shares a built binary.
 const assert = require('node:assert/strict');
@@ -55,16 +55,18 @@ async function main() {
   await withServer(async server => {
     const probe = await server.open({ context: await server.context() }); await probe.goto(`${server.origin}/setup`); const token = await tokenOf(probe); await probe.close();
     const wrongLink = await server.open({ context: await server.context() });
-    await wrongLink.goto(`${server.origin}/setup?token=nope`); await wrongLink.waitForSelector('#welcome-continue:not([inert])'); await wrongLink.click('#welcome-continue');
+    await wrongLink.goto(`${server.origin}/setup#token=nope`); await wrongLink.waitForSelector('#welcome-continue:not([inert])'); await wrongLink.click('#welcome-continue');
     await wrongLink.waitForSelector('#setup-token-view:not([hidden])');
     const wrong = await wrongLink.evaluate(() => [document.querySelector('#setup-token-form [name=token]').value, document.querySelector('#setup-token-error').textContent]);
     assert.equal(wrong[0], 'nope'); assert.equal(wrong[1], WRONG_TOKEN, 'a wrong linked token shows why');
+    assert.equal(await wrongLink.evaluate(() => location.href), `${server.origin}/setup`, 'a wrong linked token is not left in the address either');
     await wrongLink.close();
     const page = await server.open({ context: await server.context() });
     const checks = requests(page, /\/api\/setup\/token$/);
-    await page.goto(`${server.origin}/setup?token=${encodeURIComponent(token)}`); await page.waitForSelector('#welcome-continue:not([inert])'); await page.click('#welcome-continue');
+    await page.goto(`${server.origin}/setup#token=${encodeURIComponent(token)}`); await page.waitForSelector('#welcome-continue:not([inert])'); await page.click('#welcome-continue');
     await page.waitForSelector('#setup-view:not([hidden])');
     assert.deepEqual([checks.length, (await views(page))['setup-token-view']], [1, false], 'a right linked token is checked once and the token step is skipped');
+    assert.equal(await page.evaluate(() => location.href), `${server.origin}/setup`, 'the token is gone from the address once the page has read it');
     await page.close();
   });
 
@@ -173,17 +175,17 @@ async function main() {
     const answer = (entry, status, body) => entry.request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
     const settle = () => new Promise(resolve => setTimeout(resolve, 150));
     const pending = async count => { for (let i = 0; i < 200 && held.length < count; i++) await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(held.length, count, `expected ${count} held requests, saw ${held.length}: ${seen.join(', ')}`); };
-    const make = async (search = '', options = {}) => {
+    const make = async (hash = '', options = {}) => {
       held.length = 0; seen.length = 0;
-      await page.evaluate(async (search, options) => {
+      await page.evaluate(async (hash, options) => {
         const { Setup } = await import('/js/pages/setup/page.js');
         document.querySelectorAll('.late-view').forEach(node => node.remove());
         const views = {};
         for (const name of ['token', 'owner', 'theme']) { const view = document.createElement('main'); view.className = `late-view login`; view.id = `late-${name}`; view.hidden = true; document.body.append(view); views[name] = view; }
-        window.__setup = new Setup({ views, search, welcome: async () => {} });
+        window.__setup = new Setup({ views, hash, scrub: () => {}, welcome: async () => {} });
         window.__result = 'pending'; window.__setup.run().then(session => { window.__result = session; });
         window.__started = true;
-      }, search, options);
+      }, hash, options);
     };
     const shown = () => page.evaluate(() => Object.fromEntries(['token', 'owner', 'theme'].map(name => [name, !!document.querySelector(`#late-${name}`) && !document.querySelector(`#late-${name}`).hidden && document.querySelector(`#late-${name}`).childElementCount > 0])));
     const text = selector => page.evaluate(selector => document.querySelector(selector)?.textContent ?? '', selector);
@@ -200,7 +202,7 @@ async function main() {
 
     // the token from the link and a token typed meanwhile: the typed one is the later action, whichever answers first
     for (const [name, typed, linked, order] of [['typed rejected, link accepted, link answers first', 401, 200, 'link first'], ['typed rejected, link accepted, typed answers first', 401, 200, 'typed first'], ['typed accepted, link rejected, link answers first', 200, 401, 'link first'], ['typed accepted, link rejected, typed answers first', 200, 401, 'typed first']]) {
-      await make('?token=from-link');
+      await make('#token=from-link');
       await pending(1);
       const link = held[0];
       call("submitToken('typed')"); await pending(2);
@@ -213,13 +215,13 @@ async function main() {
     }
 
     // a link that is right skips the token step; a wrong one is put in the field with the server's sentence
-    await make('?token=from-link'); await pending(1); answer(held[0], 200, {}); await settle();
+    await make('#token=from-link'); await pending(1); answer(held[0], 200, {}); await settle();
     assert.deepEqual(await shown(), { token: false, owner: true, theme: false }, 'a right link goes to the owner form');
-    await make('?token=from-link'); await pending(1); answer(held[0], 401, { message: 'link rejected' }); await settle();
+    await make('#token=from-link'); await pending(1); answer(held[0], 401, { message: 'link rejected' }); await settle();
     assert.deepEqual([await shown(), await text('#late-token #setup-token-error'), await page.evaluate(() => document.querySelector('#late-token input').value)], [{ token: true, owner: false, theme: false }, 'link rejected', 'from-link'], 'a wrong link shows its sentence and the token in the field');
 
     // the link answered after destroy: nothing is shown
-    await make('?token=from-link'); await pending(1);
+    await make('#token=from-link'); await pending(1);
     await call('destroy()');
     answer(held[0], 200, {}); await settle();
     assert.deepEqual(await shown(), { token: false, owner: false, theme: false }, 'a link checked and answered after destroy shows nothing');
