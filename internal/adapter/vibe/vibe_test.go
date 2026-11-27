@@ -941,3 +941,41 @@ func TestAReadOnlyTurnGetsNoneOfThePersonsMCPServers(t *testing.T) {
 		t.Fatalf("a read-only turn keeps the models and none of the MCP servers: %v\n%s", err, data)
 	}
 }
+
+// The eval isolates a turn from the person's own MCP servers (TurnSpec.IsolateUserMCP). Vibe does load servers from the config it is started with,
+// and the private config copies the person's `[[mcp_servers]]`, so the turn gets none of them (aimebu's own entry comes through VIBE_MCP_SERVERS);
+// their models and providers stay, or a model they listed would not resolve.
+func TestIsolatedTurnCarriesNoneOfThePersonsServers(t *testing.T) {
+	root := t.TempDir()
+	path, _ := script(t, root, "cat "+fixture(t, "ok.jsonl")+"\n")
+	a, userHome := adapterFor(t, root, path)
+	config := "[[models]]\nname = \"m-custom\"\nalias = \"custom\"\nprovider = \"acme\"\n\n[[providers]]\nname = \"acme\"\napi_key_env_var = \"ACME_API_KEY\"\n\n[[mcp_servers]]\nname = \"grafana\"\ntransport = \"stdio\"\ncommand = \"uvx\"\n\n[[mcp_servers]]\nname = \"docs\"\ntransport = \"streamable-http\"\nurl = \"https://docs.example/mcp\"\n"
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	privateConfig := func(isolate bool) string {
+		t.Helper()
+		turnSpec := spec(t, t.TempDir())
+		turnSpec.Agent.Model = "custom"
+		turnSpec.IsolateUserMCP = isolate
+		turn, err := a.Start(context.Background(), turnSpec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exit, err := drain(t, turn); err != nil || !exit.TerminalEvent {
+			t.Fatalf("exit=%+v err=%v", exit, err)
+		}
+		data, err := os.ReadFile(filepath.Join(runtimeDirOf(root, "agt_test"), "home", "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if got := privateConfig(false); !strings.Contains(got, `name = "grafana"`) || !strings.Contains(got, `name = "docs"`) {
+		t.Fatalf("without isolation the person's servers are carried (the control of this test):\n%s", got)
+	}
+	got := privateConfig(true)
+	if strings.Contains(got, "mcp_servers") || strings.Contains(got, "grafana") || strings.Contains(got, "docs.example") || !strings.Contains(got, `alias = "custom"`) || !strings.Contains(got, `name = "acme"`) {
+		t.Fatalf("an isolated turn keeps the person's model and provider and none of their servers:\n%s", got)
+	}
+}

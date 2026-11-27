@@ -116,7 +116,7 @@ stderr tail; a failure that said nothing anywhere says "no output on stdout or s
 **An OpenCode target on its own provider.** For a model on one of OpenCode's built-in providers (`ollama-cloud/...`, not one of the target's custom
 `providers`), the key comes from the environment of the process that starts the launcher, as for a native turn (`adapter.KnownProviderKeys`): a real agent's
 supervisor has the owner's keys, the eval's process may not. OpenCode then fails in about two seconds with `UnknownError: Unexpected server error`, the same text it
-prints for an unknown model (run 3: every OpenCode case). The runner therefore refuses such a target before any turn when none of those variables is set
+prints for an unknown model (run 3: every OpenCode case). The target needs `OLLAMA_API_KEY` (or the key of its provider) in the environment of the process that runs the eval (`aimebu self-test` or `make eval`). The runner therefore refuses such a target before any turn when none of those variables is set
 (`builtinProviderKey`), naming them; export the provider's key (`OLLAMA_API_KEY` for `ollama-cloud`), give the model a custom provider, or leave the target out.
 A failure that still reads `UnknownError` carries a hint with the two meanings.
 
@@ -143,7 +143,7 @@ answer the toolbox accepted, `text` when it is the final text. The report counts
 **Only the aimebu toolbox.** Every turn the runner starts carries `TurnSpec.IsolateUserMCP` (`internal/adapter/adapter.go`), so a model is measured on the
 prompt and not on the MCP servers and connectors of the machine it runs on. Claude is started with `--strict-mcp-config` and reads only the `--mcp-config` entry
 (the toolbox); Codex's Docker turn gets none of the overrides it builds from the person's `config.toml`, and a native turn's private config holds aimebu's table
-alone; OpenCode's inline config and Pi's private `mcp.json` hold aimebu's entry alone (Pi then does not list `codemode`); Vibe seeds no server of the person's. A
+alone; OpenCode's inline config and Pi's private `mcp.json` hold aimebu's entry alone (Pi then does not list `codemode`); Vibe, which does load `[[mcp_servers]]` from the config it is started with, gets a private config with none of the person's (their models and providers stay). A
 person's own agents are unchanged: the field is never journaled and only the eval sets it. Each adapter has a test, `TestIsolatedTurn...`, that puts a server in
 the isolated user config and checks that it does not reach the harness (and that it does without the field, so the test can fail).
 
