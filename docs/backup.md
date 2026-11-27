@@ -5,6 +5,16 @@ archive to `<data root>/backups/aimebu-<version>-<UTC timestamp>.tar.gz`.
 `aimebu backup --out <file>` chooses another path. The data root is
 `~/.aimebu` by default or `AIMEBU_CONFIG_DIR` when set.
 
+`aimebu backup --keep N` (N of 1 or more; `0` and negative values are refused)
+deletes old backups after a **successful** backup: every regular
+`aimebu-*.tar.gz` file in the default folder (`<data root>/backups`) except
+the N newest, counting the archive just written. Nothing is deleted without
+the flag, after any failure, or for files with another name, directories and
+symlinks. It does not apply when `--out` is outside the default folder (the
+CLI says so). "Newest" is the UTC timestamp in the file name, which backup
+always writes; a file whose name carries none is ordered by modification
+time. The command prints each deleted file.
+
 The archive contains the server database, config, keys and the attachments
 named by active rows in the database snapshot. Files in the attachments folder with
 no active row in that snapshot are excluded. Attachments already removed by

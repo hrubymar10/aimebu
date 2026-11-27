@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,11 +47,22 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	flags := flag.NewFlagSet("backup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "", "archive path")
+	keep := flags.Int("keep", 0, "after a successful backup, delete all but the N newest aimebu-*.tar.gz files in the default backups folder (<data root>/backups); not applied when --out is outside that folder; default: delete nothing")
+	keepSet := false
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "keep" {
+			keepSet = true
+		}
+	})
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: aimebu backup [--out <file>]")
+		fmt.Fprintln(stderr, "usage: aimebu backup [--out <file>] [--keep <N>]")
+		return 2
+	}
+	if keepSet && *keep < 1 {
+		fmt.Fprintf(stderr, "--keep must be 1 or more (got %d); omit the flag to keep every backup\n", *keep)
 		return 2
 	}
 	config, err := resolveServerConfig()
@@ -80,7 +92,99 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Backup saved to %s (mode 0600). It contains secrets, including keys.\n", *out)
+	if keepSet {
+		if err := pruneBackups(root, *out, *keep, stdout); err != nil {
+			fmt.Fprintln(stderr, "backup: --keep:", err)
+			return 1
+		}
+	}
 	return 0
+}
+
+var backupStampPattern = regexp.MustCompile(`-(\d{8}T\d{6}(?:\.\d{9})?Z)\.tar\.gz$`)
+
+// pruneBackups deletes all but the keep newest aimebu-*.tar.gz regular files in <root>/backups. It runs only after a
+// successful backup and only when that backup's archive is itself in that folder. The new archive always counts toward keep
+// and is never deleted. Age is the UTC timestamp in the file name (what backupCommand writes; it sorts as text because it
+// has a fixed width); a file whose name has none is aged by its mtime. Files with other names, directories and symlinks are
+// never touched.
+func pruneBackups(root, output string, keep int, stdout io.Writer) error {
+	dir := filepath.Join(root, "backups")
+	absOut, err := filepath.Abs(output)
+	if err != nil {
+		return err
+	}
+	if !sameDir(filepath.Dir(absOut), dir) {
+		fmt.Fprintf(stdout, "--keep not applied: %s is outside the default backups folder %s.\n", absOut, dir)
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		name string
+		when time.Time
+	}
+	var old []candidate
+	newName := filepath.Base(absOut)
+	for _, e := range entries {
+		name := e.Name()
+		if name == newName || !e.Type().IsRegular() {
+			continue
+		}
+		if ok, _ := filepath.Match("aimebu-*.tar.gz", name); !ok {
+			continue
+		}
+		var when time.Time
+		if m := backupStampPattern.FindStringSubmatch(name); m != nil {
+			layout := "20060102T150405Z"
+			if strings.Contains(m[1], ".") {
+				layout = "20060102T150405.000000000Z"
+			}
+			when, _ = time.Parse(layout, m[1])
+		}
+		if when.IsZero() {
+			info, infoErr := e.Info()
+			if infoErr != nil {
+				continue
+			}
+			when = info.ModTime()
+		}
+		old = append(old, candidate{name, when})
+	}
+	sort.Slice(old, func(i, j int) bool {
+		if !old[i].when.Equal(old[j].when) {
+			return old[i].when.After(old[j].when)
+		}
+		return old[i].name > old[j].name
+	})
+	room := keep - 1 // the new archive takes one slot
+	if room >= len(old) {
+		return nil
+	}
+	var failed []string
+	for _, c := range old[room:] {
+		p := filepath.Join(dir, c.name)
+		if err := os.Remove(p); err != nil {
+			failed = append(failed, err.Error())
+			continue
+		}
+		fmt.Fprintf(stdout, "Deleted old backup %s (--keep %d).\n", p, keep)
+	}
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+func sameDir(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 func makeBackup(ctx context.Context, config serverConfig, root, output string, stdout io.Writer) (err error) {
