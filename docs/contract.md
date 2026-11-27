@@ -1328,14 +1328,19 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   the reason, as before. Any structural error (malformed JSON, schema errors,
   an unknown room, a bad reply reference or attachment, a missed mention, an
   `ask` with no recipient) still holds the whole reply, whatever else it
-  holds. A final answer may go into any private chat between agents that the
-  agent is an active member of, from a turn woken in any room; the project
-  check does not apply to such a chat. A turn woken in a private chat with a
+  holds. A final answer may go into a private chat when the author is an active
+  member and every agent member of that chat belongs to the author's project,
+  from a turn woken in any room.
+  A cross-project agent chat can receive the answer only when it is the turn's
+  own room; another turn must use `dm_agent` and its reach checks. An ask into
+  an agent chat needs an eligible person in that chat, not merely in the turn's
+  room. A turn woken in a private chat with a
   person keeps replying in that chat. Each refusal reason is one sentence:
   "This room is outside the agent's project.", "The agent is not a member of
   this room." (a room of another project gets both) and "This room is closing
-  or closed." A partial hold raises **no** inbox item (the author is the one to
-  act, and a person would only get noise); an open originating room gets a
+  or closed." A partial hold raises **no** inbox item while its author can
+  receive the held-reply note; if the author has left that room, the failure
+  reaches people instead. An open originating room gets a
   system row "<agent> reply was only partly delivered: message 2 of 2
   (not_member: …) held; the other 1 delivered. The author was asked to resend
   it." The author gets one system note (`OnlyTargets` the author, once

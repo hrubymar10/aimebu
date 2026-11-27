@@ -85,6 +85,64 @@ func TestFinalAnswerIntoForeignPrivateChatIsRefused(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerCannotReachCrossProjectChatFromTaskTurn(t *testing.T) {
+	t.Parallel()
+	f := newDMFixture(t)
+	chat := f.open(t, f.lead1, f.lead2)
+	turn := f.leadTurn(t, f.lead1, f.alice)
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"cross-project final answer"}]}`, chat.ID)
+	receipt, err := applyCandidate(t, f.s, turn, f.lead1.ID, 0, raw)
+	if err != nil || receipt.Result != "held" || receipt.HeldReason != "not_member" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	var note string
+	if err := f.s.db.QueryRow(`SELECT m.body FROM message m JOIN note n ON n.message_id=m.id WHERE m.room_id=? AND n.agent_id=? AND m.body LIKE 'Your previous reply was held:%' ORDER BY m.no DESC LIMIT 1`, f.task1.ID, f.lead1.ID).Scan(&note); err != nil {
+		t.Fatalf("failure note: %v", err)
+	}
+	if !strings.Contains(note, "dm_agent") || !strings.Contains(note, "cross-project final answer") {
+		t.Fatalf("failure note=%q, want dm_agent hint and original text", note)
+	}
+}
+
+func TestAskIntoAgentChatChecksThatChatsUserMembers(t *testing.T) {
+	t.Parallel()
+	d := newDMReplyFixture(t)
+	if err := d.s.AddMember(context.Background(), d.f.room.ID, "user", "usr_answers"); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"question","ask":{"kind":"question","text":"Answer?"}}]}`, d.own.ID)
+	receipt, err := applyCandidate(t, d.s, d.f.turn, d.f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "held" || receipt.Error != "ask has no authorized recipient" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestHeldAgentReplyAfterLeavingTurnRoomRaisesFailureCard(t *testing.T) {
+	t.Parallel()
+	d := newDMReplyFixture(t)
+	if _, err := d.s.db.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=?`, timestamp(), d.f.room.ID, d.f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"reply to peer"}]}`, d.other.ID)
+	receipt, err := applyCandidate(t, d.s, d.f.turn, d.f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "held" || d.cards(t) != 1 {
+		t.Fatalf("receipt=%+v cards=%d err=%v", receipt, d.cards(t), err)
+	}
+}
+
+func TestPartlyHeldReplyAfterLeavingTurnRoomRaisesFailureCard(t *testing.T) {
+	t.Parallel()
+	d := newDMReplyFixture(t)
+	if _, err := d.s.db.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=?`, timestamp(), d.f.room.ID, d.f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"delivered"},{"room":%q,"body":"held"}]}`, d.own.ID, d.other.ID)
+	receipt, err := applyCandidate(t, d.s, d.f.turn, d.f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "committed" || len(receipt.HeldMessages) != 1 || d.cards(t) != 1 {
+		t.Fatalf("receipt=%+v cards=%d err=%v", receipt, d.cards(t), err)
+	}
+}
+
 // A message to another agent that cannot be delivered raises no Inbox item: the sender gets a note, in the room it was woken in, with the
 // reason and the full text.
 func TestUndeliverableMessageToAgentNotesTheSenderAndRaisesNoCard(t *testing.T) {
@@ -120,7 +178,7 @@ func TestUndeliverableMessageToAgentNotesTheSenderAndRaisesNoCard(t *testing.T) 
 				t.Fatalf("an undeliverable agent-to-agent message raised %d delivery_failed items", n)
 			}
 			note := d.noteTo(t, d.f.room.ID)
-			if note == "" || !strings.Contains(note, body) || !strings.Contains(note, "dm_agent") {
+			if note == "" || !strings.Contains(note, body) || !strings.Contains(note, "dm_agent") || strings.Contains(note, "Send it to a room of your project") {
 				t.Fatalf("note=%q, want the reason, the full text and the dm_agent hint", note)
 			}
 			if items, err := d.s.InboxForUser(ctx, "usr_answers"); err != nil || len(items) != 0 {

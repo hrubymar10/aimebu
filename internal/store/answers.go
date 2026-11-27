@@ -224,8 +224,12 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				if err := tx.partialHeldRow(parent, input, receipt); err != nil {
 					return err
 				}
-				if err := tx.partialHeldNote(parent, receipt); err != nil {
+				sent, err := tx.partialHeldNote(parent, receipt)
+				if err != nil {
 					return err
+				}
+				if !sent {
+					return tx.deliveryFailedInbox(parent, false)
 				}
 			}
 		}
@@ -308,9 +312,21 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 		if err != nil {
 			return "", "", err
 		}
-		// A chat between agents belongs to no project: an agent may report into any of them it is a member of (the membership check below),
-		// whichever room its turn was woken in, as dm_agent reaches the same chat from anywhere.
+		// Agent chats use a system project. A same-project chat may receive this answer from any turn room; a cross-project chat
+		// needs its own turn, so a different room cannot bypass dm_agent's reach checks.
 		targetAgentChat := itemKind == "dm" && projectID == AgentDMProjectID
+		if targetAgentChat && item.Room != turn.roomID {
+			var foreignPeer bool
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member rm JOIN agent a ON a.id=rm.member_id
+				WHERE rm.room_id=? AND rm.member_kind='agent' AND rm.member_id<>? AND rm.left_at IS NULL AND a.project_id<>?)`,
+				item.Room, turn.agentID, agentProject).Scan(&foreignPeer); err != nil {
+				return "", "", err
+			}
+			if foreignPeer {
+				*dropped = append(*dropped, droppedMessage{i, "not_member", outsideProjectDetail})
+				continue
+			}
+		}
 		if projectID != agentProject && !targetAgentChat {
 			*dropped = append(*dropped, droppedMessage{i, "not_member", outsideProjectDetail})
 			continue
@@ -384,7 +400,7 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput, requireOutcome 
 					roles = `'owner'`
 				}
 				err = tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member rm JOIN membership mb ON mb.project_id=? AND mb.user_id=rm.member_id
-					WHERE rm.room_id=? AND rm.member_kind='user' AND rm.left_at IS NULL AND mb.role IN (`+roles+`)`, agentProject, turn.roomID).Scan(&recipients)
+					WHERE rm.room_id=? AND rm.member_kind='user' AND rm.left_at IS NULL AND mb.role IN (`+roles+`)`, agentProject, item.Room).Scan(&recipients)
 			case turnRoomKind == "dm" && item.Room == turn.roomID:
 				err = tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='user' AND left_at IS NULL`, turn.roomID).Scan(&recipients)
 			default:
@@ -711,26 +727,33 @@ func (tx *Tx) sharedMentionRoom(targetRoom, projectID, authorID, recipientID str
 
 // partialHeldNote tells an agent, as a system note only it can see, which messages of its reply were not delivered and why, with their text so it
 // can resend them correctly. Like invalidReplyNote it wakes the agent, and a turn already woken by such a note gets no second one.
-func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) error {
+func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) (bool, error) {
+	var reachable bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room r JOIN room_member m ON m.room_id=r.id
+		WHERE r.id=? AND r.lifecycle='open' AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL)`, turn.roomID, turn.agentID).Scan(&reachable); err != nil || !reachable {
+		return false, err
+	}
 	var woken bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
 		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
-		return err
+		return false, err
 	}
 	var b strings.Builder
 	b.WriteString(partialHeldNotePrefix)
 	b.WriteString("the other messages were delivered and must not be sent again. Not delivered:")
-	writeHeldMessages(&b, receipt.HeldMessages)
+	writeHeldMessages(&b, receipt.HeldMessages, false)
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: b.String(), OnlyTargets: []string{turn.agentID}})
-	return err
+	return err == nil, err
 }
 
 // writeHeldMessages lists refused messages for the author's note: the reason as a sentence, a hint and the full text, so the author can send it
 // again.
-func writeHeldMessages(b *strings.Builder, held []HeldMessage) {
+func writeHeldMessages(b *strings.Builder, held []HeldMessage, agentOnly bool) {
 	for _, h := range held {
 		fmt.Fprintf(b, "\n- message %d: %s", h.Index+1, h.Error)
 		switch {
+		case agentOnly:
+			b.WriteString(" Send it to that agent with the `dm_agent` tool.")
 		case h.Error == outsideProjectDetail:
 			b.WriteString(" This room is in another project; to reach an agent there use the `dm_agent` tool, and to reach a person use your own project's rooms.")
 		case h.Reason == "room_closed":
@@ -812,8 +835,8 @@ func (tx *Tx) agentOnlyReply(authorID string, messages []answer.Message) (bool, 
 			}
 		}
 		if message.ReplyTo != "" {
-			var kindOf string
-			err := tx.tx.QueryRowContext(tx.ctx, `SELECT author_kind FROM message WHERE id=?`, message.ReplyTo).Scan(&kindOf)
+			var kindOf, repliedAuthor string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT author_kind,author_id FROM message WHERE id=?`, message.ReplyTo).Scan(&kindOf, &repliedAuthor)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return false, err
 			}
@@ -821,7 +844,7 @@ func (tx *Tx) agentOnlyReply(authorID string, messages []answer.Message) (bool, 
 			case "user":
 				return false, nil
 			case "agent":
-				agentSignal = true
+				agentSignal = agentSignal || repliedAuthor != authorID
 			}
 		}
 		if !agentSignal {
@@ -839,6 +862,10 @@ func (tx *Tx) undeliverableAgentNote(turn answerTurn, input AnswerInput, dropped
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT lifecycle FROM room WHERE id=?`, turn.roomID).Scan(&lifecycle); err != nil || lifecycle != "open" {
 		return false, err
 	}
+	var member bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL)`, turn.roomID, turn.agentID).Scan(&member); err != nil || !member {
+		return false, err
+	}
 	var woken bool
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT EXISTS(SELECT 1 FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id
 		WHERE tn.turn_id=? AND m.author_kind='system' AND (m.body LIKE ? OR m.body LIKE ?))`, turn.id, heldReplyNotePrefix+"%", partialHeldNotePrefix+"%").Scan(&woken); err != nil || woken {
@@ -852,7 +879,7 @@ func (tx *Tx) undeliverableAgentNote(turn answerTurn, input AnswerInput, dropped
 	var b strings.Builder
 	b.WriteString(heldReplyNotePrefix)
 	b.WriteString("a message to another agent was not delivered, and no person was asked about it. Send it again to that agent with the `dm_agent` tool. Not delivered:")
-	writeHeldMessages(&b, held)
+	writeHeldMessages(&b, held, true)
 	_, err := tx.InsertMessage(Message{RoomID: turn.roomID, AuthorKind: "system", AuthorID: "system", Body: b.String(), OnlyTargets: []string{turn.agentID}})
 	return err == nil, err
 }
