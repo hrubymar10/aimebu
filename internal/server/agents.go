@@ -1604,6 +1604,15 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Who may switch this agent is decided before anything is read or asked of a machine: the checks below look up the agent's card, pick its
+	// machine and probe its checkout there, which a person outside the agent's project must not be able to start. The server's own switch
+	// (serverSwitchKey) was authorised by the decision that caused it.
+	if r.Context().Value(serverSwitchKey{}) == nil {
+		if err := s.Store.AuthorizeAgentControl(r.Context(), id, userID(r)); err != nil {
+			spawnError(w, err)
+			return
+		}
+	}
 	digestBytes := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d", id, req.RoomID, req.Tool, req.Variant, req.LauncherID, req.Model, req.MachineID, req.Rev)))
 	requestKey := store.RequestKey{ActorKind: "user", ActorID: userID(r), Kind: "switch", Key: key, Digest: hex.EncodeToString(digestBytes[:])}
 	if _, found, err := s.Store.RequestResult(r.Context(), requestKey); err != nil {
