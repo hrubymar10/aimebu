@@ -424,9 +424,9 @@ var crossProjectStatusExceptions = map[string]struct {
 	contains string
 	reason   string
 }{
-	"GET /api/agent/message-numbers/{no}":             {200, `"available":false`, "a message number the agent may not read answers like a number nothing carries (store.AgentMessageByNo), so the lookup does not tell that it exists"},
-	"GET /api/global-memory/{scope}":                  {200, `"records"`, "the instance-wide notes (user profiles, shared agent notes) are read by every signed-in person; they belong to no project"},
-	"GET /api/machines/{id}/pair-status":              {401, "machine credential required", "the pairing probe of a machine, authorized by the machine's own credential and not by a session"},
+	"GET /api/agent/message-numbers/{no}": {200, `"available":false`, "a message number the agent may not read answers like a number nothing carries (store.AgentMessageByNo), so the lookup does not tell that it exists"},
+	"GET /api/global-memory/{scope}":      {200, `"records"`, "the instance-wide notes (user profiles, shared agent notes) are read by every signed-in person; they belong to no project"},
+	"GET /api/machines/{id}/pair-status":  {401, "machine credential required", "the pairing probe of a machine, authorized by the machine's own credential and not by a session"},
 }
 
 // bodyFor is the body a write route needs to get past its validation, so the request reaches the check of who may do it: the handlers
