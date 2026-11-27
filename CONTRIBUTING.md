@@ -187,6 +187,9 @@ test hangs without a word. `cmd/aimebu/testwait_test.go` has the helpers: `recei
 a channel for a limit and dumps the goroutines when it gives up, and `testHTTP` is a client
 whose requests have a deadline (`http.DefaultClient` has none). Use them for a new wait, and
 make the limit generous: it is for a hang, not for a slow machine.
+Assert that an event or state change occurred, using a deadline only to detect a
+hang. Do not fail a test because a wall-clock latency crossed a short threshold
+on a busy runner; record latency separately when it matters.
 
 Run tests in the isolated environment above. When several people or agents
 share one machine, run the slow commands (`test-ui`, `test-full`) one at a
