@@ -8,6 +8,9 @@ import (
 )
 
 func TestAttachmentPathMigrationMixedRows(t *testing.T) {
+	if migrations[len(migrations)-1].sql != "" {
+		t.Fatal("the Go-only migration must have no SQL to execute")
+	}
 	s, path := attachmentPathStore(t)
 	project, _, _ := fixture(t, s)
 	root := dataRootForDB(path)
@@ -32,6 +35,10 @@ func TestAttachmentPathMigrationMixedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
+	var applied int
+	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM schema_version WHERE version=146`).Scan(&applied); err != nil || applied != 1 {
+		t.Fatalf("Go-only migration version row count = %d: %v", applied, err)
+	}
 	for _, item := range []struct{ id, want string }{
 		{"att_inside", filepath.Join("server", "attachments", "att_inside.bin")},
 		{"att_outside", outside},

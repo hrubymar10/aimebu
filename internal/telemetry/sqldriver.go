@@ -148,7 +148,7 @@ func (c *tracedConn) ExecContext(ctx context.Context, query string, args []drive
 		return nil, err
 	}
 	rows := int64(-1)
-	if err == nil {
+	if err == nil && result != nil {
 		if affected, rowsErr := result.RowsAffected(); rowsErr == nil {
 			rows = affected
 		}
@@ -250,7 +250,7 @@ func (s *tracedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) 
 		result, err = s.inner.Exec(plain(args)) //nolint:staticcheck
 	}
 	rows := int64(-1)
-	if err == nil {
+	if err == nil && result != nil {
 		if affected, rowsErr := result.RowsAffected(); rowsErr == nil {
 			rows = affected
 		}

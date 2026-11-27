@@ -2298,10 +2298,7 @@ WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND d
 -- repair note follows this, because the machine's last probed harness version says nothing about a launcher's harness. NULL is every
 -- turn answered before this, and every answer an older supervisor sent: the note then falls back to the probed version.
 ALTER TABLE turn ADD COLUMN answer_tool INTEGER CHECK (answer_tool IS NULL OR answer_tool IN (0,1));
-`}, {146, `
--- Attachment paths within the current data root are stored relative to it.
--- migrateAttachmentPaths performs the root-dependent rewrite in this transaction.
-`}}
+`}, {146, ""}} // Attachment paths are rewritten by migrateAttachmentPaths in Go.
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.
@@ -2509,7 +2506,7 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if err == nil && m.version == 112 {
 			err = moveCustomAdvisorRole(ctx, tx)
 		}
-		if err == nil && m.version != 146 { // This migration is implemented entirely in Go.
+		if err == nil && strings.TrimSpace(m.sql) != "" {
 			_, err = tx.ExecContext(ctx, m.sql)
 		}
 		if err == nil && m.version == 146 {
