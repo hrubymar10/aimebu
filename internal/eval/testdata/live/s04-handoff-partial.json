@@ -38,7 +38,14 @@
    "message_get",
    "room_history",
    "attachment_get"
-  ]
+  ],
+  "checkout": {
+   "commit": "rename the flag (part A) and update its test",
+   "files": {
+    "flag.go": "package main\n\n// flagName is the renamed flag (part A of the brief).\nconst flagName = \"--silent\"\n",
+    "flag_test.go": "package main\n\nimport \"testing\"\n\nfunc TestFlagName(t *testing.T) {\n\tif flagName != \"--silent\" {\n\t\tt.Fatal(flagName)\n\t}\n}\n"
+   }
+  }
  },
  "expect": {
   "parse": "valid",

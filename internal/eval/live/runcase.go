@@ -28,6 +28,10 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 		c.Attempts = []eval.Attempt{{Class: eval.ClassHarness, Err: "building the turn input: " + err.Error()}}
 		return c
 	}
+	if err := prepareCheckout(checkout, scenario.Input.Checkout); err != nil {
+		c.Attempts = []eval.Attempt{{Class: eval.ClassHarness, Err: "preparing the checkout: " + err.Error()}}
+		return c
+	}
 	session := ""
 	if target.Tool == eval.KindClaude || target.Tool == eval.KindPi {
 		session = uuid() // the run's own session: these harnesses take the id from the caller, and it is never an agent's
@@ -108,6 +112,11 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	// none. The key is random: the stand-in listens on every interface, and a key derived from the turn id could be guessed by a neighbour.
 	key := toolboxKey()
 	o.MCP.Register(key, scenario.Input.AllowedTools)
+	messages, err := scenario.Input.Messages()
+	if err != nil {
+		return fail("history: %v", err)
+	}
+	o.MCP.SetHistory(key, messages)
 	spec.AgentTools = &adapter.AgentToolsAccess{AgentID: eval.WorkerID, ServerURL: fmt.Sprintf("http://127.0.0.1:%d", o.MCP.Port()), Key: key, Command: "/usr/bin/aimebu"}
 	spec.AllowedTools = scenario.Input.AllowedTools
 	spec.Providers = providersFor(target)

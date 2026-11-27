@@ -86,7 +86,12 @@ A mock case is one JSON file in `internal/eval/testdata/cases/` with `layer: moc
 
 A live scenario is `internal/eval/testdata/live/<id>.json`: `input` (`notes` as the supervisor hands them over, an optional `preset` and
 `context` keys over it, `allowed_tools`, and `filler_tokens` for a long knowledge block), `expect.checks` and `expect.max_turns_to_valid`.
-Add an answer that passes it, and a typical wrong one, to `internal/eval/score_test.go`: the test fails for a scenario with no good answer, so a
+The scenario must be true to its own words, because a model checks: a scenario about finished work gives the checkout that work
+(`input.checkout`: a `commit` message and `files`, committed on top of the base project, a small Go module that builds and passes its test; every
+case starts from that base again) and a scenario that quotes or relies on an earlier message (a brief, a thread) gives it in `input.history`
+(`no`, `room_id`, `from`, `body`; a number must not repeat a note's). An empty checkout or an empty history makes the agent ask instead of
+answer, which reads as a prompt failure and is a fixture one. `internal/eval/live/fixture_test.go` reads, through the stand-in's own tools, what
+each corrected scenario shows a model. Add an answer that passes it, and a typical wrong one, to `internal/eval/score_test.go`: the test fails for a scenario with no good answer, so a
 check that always passes or never does is found without a model. Some scenarios are contested on purpose and say so in their title (`s15`: an
 agent waiting on its own `run_command` ends the turn with no message, though the prompt also says never to end a turn silent while work is owed).
 
@@ -111,7 +116,9 @@ is asked for its version.
 
 **The toolbox.** A turn reaches an aimebu toolbox at `/api/agent/mcp`. The runner starts a stand-in on `0.0.0.0` and an ephemeral port (never a fixed
 one, never the real server): it offers the scenario's `allowed_tools`, answers each call with a canned text, and records the calls each turn made
-(the `tool_called` checks read them). Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
+(the `tool_called` checks read them). `room_history` and `message_get` are the exception to "canned": they answer from the scenario's messages,
+which are its input notes (each note is a message of its room) plus its `history`, so a model that looks for the brief, the thread or the
+note it was woken with finds it, and a number the scenario does not have is "Message not available", as in the real toolbox. Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
 adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the
 scenario's list, as the supervisor sets it. A container reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its
 gateway is another address. The stand-in listens on every interface (`0.0.0.0`), because the Docker bridge gateway address is not the same on every

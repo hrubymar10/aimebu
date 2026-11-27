@@ -66,6 +66,11 @@ type Input struct {
 	// FillerTokens adds a knowledge block of about that many tokens of deterministic filler, then FillerMarker as its last line.
 	FillerTokens int    `json:"filler_tokens,omitempty"`
 	FillerMarker string `json:"filler_marker,omitempty"`
+	// History is what the stand-in's room_history and message_get return besides the input notes themselves (each note is a message of its
+	// room): the earlier messages the scenario's situation implies, such as the brief a command was started for. See Messages.
+	History []HistoryMessage `json:"history,omitempty"`
+	// Checkout is what the agent's checkout holds for the case: a commit on top of the run's base project. See Checkout.
+	Checkout *Checkout `json:"checkout,omitempty"`
 }
 
 // Output is what the harness prints. Exactly one of StreamFile (a recorded stream, a path relative to the module root) and Candidate (the
@@ -148,6 +153,12 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("%s: input.allowed_tools is required (an empty list means no tools)", s.ID)
 		}
 		if _, _, err := s.Input.Build(); err != nil {
+			return fmt.Errorf("%s: %w", s.ID, err)
+		}
+		if _, err := s.Input.Messages(); err != nil {
+			return fmt.Errorf("%s: %w", s.ID, err)
+		}
+		if err := s.Input.Checkout.validate(); err != nil {
 			return fmt.Errorf("%s: %w", s.ID, err)
 		}
 	case LayerReplay, LayerMock:

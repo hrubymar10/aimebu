@@ -38,7 +38,14 @@
    "message_get",
    "room_history",
    "attachment_get"
-  ]
+  ],
+  "checkout": {
+   "commit": "make the change",
+   "files": {
+    "util.go": "package main\n\nfunc double(n int) int { return n * 2 }\n",
+    "util_test.go": "package main\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\tif double(2) != 4 {\n\t\tt.Fatal(double(2))\n\t}\n}\n"
+   }
+  }
  },
  "expect": {
   "parse": "valid",

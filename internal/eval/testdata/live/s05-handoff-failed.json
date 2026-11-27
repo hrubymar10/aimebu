@@ -38,7 +38,13 @@
    "message_get",
    "room_history",
    "attachment_get"
-  ]
+  ],
+  "checkout": {
+   "commit": "add the schema migration script",
+   "files": {
+    "migrate.sh": "#!/bin/sh\n# Applies the schema migration to ./data. Needs write access to the data directory.\nmkdir -p data && : > data/schema.version\n"
+   }
+  }
  },
  "expect": {
   "parse": "valid",

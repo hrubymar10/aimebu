@@ -38,6 +38,14 @@
    "message_get",
    "room_history",
    "attachment_get"
+  ],
+  "history": [
+   {
+    "no": 8400,
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "body": "Run the full test suite with run_command, then hand off the result when it wakes you."
+   }
   ]
  },
  "expect": {

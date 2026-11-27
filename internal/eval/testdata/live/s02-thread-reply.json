@@ -49,6 +49,20 @@
    "message_get",
    "room_history",
    "attachment_get"
+  ],
+  "history": [
+   {
+    "no": 7100,
+    "room_id": "{task_room}",
+    "from": "{person}",
+    "body": "Should we cache the lookups? Compare A and B."
+   },
+   {
+    "no": 7101,
+    "room_id": "{task_room}",
+    "from": "{worker}",
+    "body": "Option A reads the cache; option B recomputes it."
+   }
   ]
  },
  "expect": {

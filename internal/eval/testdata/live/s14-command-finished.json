@@ -38,6 +38,14 @@
    "message_get",
    "room_history",
    "attachment_get"
+  ],
+  "history": [
+   {
+    "no": 8300,
+    "room_id": "{task_room}",
+    "from": "{dispatcher}",
+    "body": "Run the eval tests and hand off the result."
+   }
   ]
  },
  "expect": {

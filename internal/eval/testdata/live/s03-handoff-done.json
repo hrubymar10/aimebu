@@ -38,7 +38,13 @@
    "message_get",
    "room_history",
    "attachment_get"
-  ]
+  ],
+  "checkout": {
+   "commit": "make the checkout build and vet clean",
+   "files": {
+    "util.go": "package main\n\nfunc double(n int) int { return n * 2 }\n"
+   }
+  }
  },
  "expect": {
   "parse": "valid",
