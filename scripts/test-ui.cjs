@@ -4091,8 +4091,8 @@ async function main() {
     await login(recoveryPage, `${origin}/?mock_recovery=1`);
     await recoveryPage.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '2');
     await domClick(recoveryPage, '#inbox-toggle');
-    assert.deepEqual(await recoveryPage.$$eval('[data-inbox-id="mock_recovery"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Resume', 'Retry', 'Abandon']);
-    assert.deepEqual(await recoveryPage.$$eval('[data-inbox-id="mock_budget"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Continue', 'Abandon']);
+    assert.deepEqual(await recoveryPage.$$eval('[data-inbox-id="mock_recovery"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Resume', 'Retry', 'Abandon', 'Abandon and stop']);
+    assert.deepEqual(await recoveryPage.$$eval('[data-inbox-id="mock_budget"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Continue', 'Abandon', 'Abandon and stop']);
     assert.equal(await recoveryPage.$eval('[data-inbox-id="mock_recovery"] .inbox-diagnostic pre', el => el.textContent.includes('files inspected')), true);
     assert.equal(await recoveryPage.$eval('[data-inbox-id="mock_recovery"] .inbox-retry-warning', el => el.textContent.includes('may repeat an action')), true);
     assert.equal(await recoveryPage.$eval('[data-inbox-id="mock_recovery"] .inbox-archived', el => el.textContent), 'In archived room');
@@ -4126,7 +4126,7 @@ async function main() {
     await login(waitingPage, `${origin}/?mock_quiescence=1`);
     await waitingPage.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '1');
     await domClick(waitingPage, '#inbox-toggle');
-    assert.deepEqual(await waitingPage.$$eval('.inbox-decisions button', els => els.map(el => el.textContent)), ['Override', 'Abandon']);
+    assert.deepEqual(await waitingPage.$$eval('.inbox-decisions button', els => els.map(el => el.textContent)), ['Override', 'Abandon', 'Abandon and stop']);
     assert.equal(await waitingPage.$eval('.inbox-retry-warning', el => el.textContent.includes('may still be running')), true);
     await domClick(waitingPage, '.inbox-decisions button:first-child');
     await waitingPage.waitForFunction(() => document.querySelector('.inbox-empty')?.textContent === 'All caught up');
@@ -5994,8 +5994,8 @@ async function main() {
     if (budgetSeed.status !== 0) throw new Error(`budget seed failed: ${budgetSeed.stderr}`);
     await first.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '3');
     await domClick(first, '#inbox-toggle');
-    await first.waitForFunction(() => document.querySelectorAll('[data-inbox-id="inb_smoke_budget"] .inbox-decisions button').length === 2);
-    assert.deepEqual(await first.$$eval('[data-inbox-id="inb_smoke_budget"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Continue', 'Abandon']);
+    await first.waitForFunction(() => document.querySelectorAll('[data-inbox-id="inb_smoke_budget"] .inbox-decisions button').length === 3);
+    assert.deepEqual(await first.$$eval('[data-inbox-id="inb_smoke_budget"] .inbox-decisions button', els => els.map(el => el.textContent)), ['Continue', 'Abandon', 'Abandon and stop']);
     await domClick(first, '[data-inbox-id="inb_smoke_budget"] .inbox-decisions button:first-child');
     await first.waitForFunction(() => !document.querySelector('[data-inbox-id="inb_smoke_budget"]') && document.querySelector('#inbox-count')?.textContent === '2');
     // The Inbox toggle is also the way back to the chat (the top-bar Rooms button is gone on desktop).
