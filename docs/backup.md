@@ -43,6 +43,8 @@ without `source_root`, restore uses the target root if every attachment path
 already points there or the snapshot has no attachment rows. Otherwise it
 infers the source root from the common `server/attachments/` path prefix and
 refuses archives whose attachment paths have no common source root.
+An attachment counts as already at the target only when its path is inside
+the target's own `server/attachments/` folder.
 
 Restore requires the server and supervisor to be stopped; use `aimebu server stop
 --with-supervisor` for a manually started installation or `brew services stop

@@ -80,7 +80,7 @@ func InferSnapshotAttachmentSourceRoot(ctx context.Context, snapshot, targetRoot
 		}
 		paths = append(paths, path)
 		rel, err := filepath.Rel(targetRoot, path)
-		if err != nil || !filepath.IsAbs(path) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if err != nil || !filepath.IsAbs(path) || !strings.HasPrefix(filepath.ToSlash(rel), "server/attachments/") {
 			allAtTarget = false
 		}
 	}
@@ -94,7 +94,7 @@ func InferSnapshotAttachmentSourceRoot(ctx context.Context, snapshot, targetRoot
 	marker := string(filepath.Separator) + filepath.Join("server", "attachments") + string(filepath.Separator)
 	var sourceRoot string
 	for _, path := range paths {
-		index := strings.Index(path, marker)
+		index := strings.LastIndex(path, marker)
 		if index < 0 || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return "", fmt.Errorf("%s", noCommonRoot)
 		}

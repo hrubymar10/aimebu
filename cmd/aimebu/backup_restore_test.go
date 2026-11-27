@@ -29,7 +29,11 @@ import (
 
 func backupFixture(t *testing.T) (string, string) {
 	t.Helper()
-	root := t.TempDir()
+	return backupFixtureIn(t, t.TempDir())
+}
+
+func backupFixtureIn(t *testing.T, root string) (string, string) {
+	t.Helper()
 	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	path := filepath.Join(root, "server", "aimebu.sqlite")
 	createFixtureDatabase(t, path)
@@ -280,6 +284,51 @@ func TestRestoreWithoutSourceRootInfersRoot(t *testing.T) {
 	}
 	if got, err := os.ReadFile(path); err != nil || string(got) != "data" {
 		t.Fatalf("attachment: %q %v", got, err)
+	}
+}
+
+func TestRestoreWithoutSourceRootNestedSource(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "aimebu")
+	root, archive := backupFixtureIn(t, filepath.Join(target, "old"))
+	assertLegacyRestoreRebases(t, root, archive, target)
+}
+
+func TestRestoreWithoutSourceRootMarkerInRoot(t *testing.T) {
+	root, archive := backupFixtureIn(t, filepath.Join(t.TempDir(), "server", "attachments", "root"))
+	assertLegacyRestoreRebases(t, root, archive, filepath.Join(t.TempDir(), "restored"))
+}
+
+func assertLegacyRestoreRebases(t *testing.T, root, archive, target string) {
+	t.Helper()
+	insertBackupAttachment(t, root, "kept", "data")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy.tar.gz")
+	rewriteArchive(t, archive, legacy, func(m *archiveManifest) { m.SourceRoot = "" })
+	if err := restoreArchive(context.Background(), target, legacy, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(target, "server", "aimebu.sqlite"), true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var path string
+	if err := db.QueryRow(`SELECT path FROM attachment WHERE id='kept'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(target, "server", "attachments", "kept.bin")
+	if path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "data" {
+		t.Fatalf("attachment = %q, %v", got, err)
 	}
 }
 
