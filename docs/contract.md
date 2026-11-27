@@ -1771,8 +1771,9 @@ its startup lock. No keys or environment variables are returned.
 requests without the current doctor key with HTTP 403. On success it returns
 HTTP 200, `Content-Type: application/octet-stream`, `Content-Length`, and one
 standalone SQLite snapshot as the response body; snapshot failures return HTTP
-500. The server creates the snapshot through its existing store connection and
-removes its temporary file after streaming. Only one snapshot request may run
+500. The server creates the snapshot through an independent connection owned by
+its existing store, closes that connection after the copy, and removes its
+temporary file after streaming. Only one snapshot request may run
 at a time; a concurrent request returns HTTP 429 `backup_busy`. While the server
 holds its startup writer lock, the backup CLI never opens the live database; it
 requests this snapshot from the server instead. With the server stopped, the

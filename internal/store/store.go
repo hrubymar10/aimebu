@@ -73,6 +73,8 @@ type Store struct {
 	// idle server commits none. A transaction counts when it changed rows (see
 	// Tx.wrote); a read-only transaction does not.
 	writeCommits atomic.Int64
+	// snapshotBeforeCopy is a test seam after the snapshot connection is reserved.
+	snapshotBeforeCopy func(*sql.DB)
 }
 
 // DoctorReadDB is the store-owned read pool used by the authenticated doctor
@@ -208,10 +210,26 @@ func (s *Store) Close() error {
 	return writeErr
 }
 
-// Snapshot writes a transactionally consistent copy from this server's own
-// connection. Callers must supply a new path outside the live database.
+// Snapshot writes a transactionally consistent copy through a dedicated
+// connection, leaving the single writer connection free. SQLite refuses
+// VACUUM INTO on the query-only read pool even though it does not modify the
+// source. Callers must supply a new path outside the live database.
 func (s *Store) Snapshot(ctx context.Context, path string) error {
-	_, err := s.db.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(path, `'`, `''`)+`'`)
+	copyDB, err := sql.Open(SQLDriverName, sqliteDSN(s.dbPath))
+	if err != nil {
+		return err
+	}
+	defer copyDB.Close()
+	copyDB.SetMaxOpenConns(1)
+	conn, err := copyDB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if s.snapshotBeforeCopy != nil {
+		s.snapshotBeforeCopy(copyDB)
+	}
+	_, err = conn.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(path, `'`, `''`)+`'`)
 	return err
 }
 

@@ -463,6 +463,74 @@ func testStore(t *testing.T, options Options) (*Store, string) {
 	return s, path
 }
 
+func TestSnapshotDoesNotHoldWriterConnection(t *testing.T) {
+	s, _ := testStore(t, Options{})
+	readPragmas := func(db *sql.DB) map[string]string {
+		result := map[string]string{}
+		for _, name := range []string{"journal_mode", "synchronous", "foreign_keys", "query_only"} {
+			var value string
+			if err := db.QueryRow(`PRAGMA ` + name).Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			result[name] = value
+		}
+		return result
+	}
+	before := readPragmas(s.db)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var copyDB *sql.DB
+	s.snapshotBeforeCopy = func(db *sql.DB) { copyDB = db; close(entered); <-release }
+	snapshotDone := make(chan error, 1)
+	snapshotPath := filepath.Join(t.TempDir(), "snapshot.sqlite")
+	go func() {
+		snapshotDone <- s.Snapshot(context.Background(), snapshotPath)
+	}()
+	<-entered
+	if copyDB == s.db || copyDB == s.readDB {
+		close(release)
+		<-snapshotDone
+		t.Fatal("snapshot did not open an independent connection")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- s.Tx(ctx, func(tx *Tx) error { _, err := tx.Exec(`CREATE TABLE snapshot_write_probe (value INTEGER)`); return err })
+	}()
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			close(release)
+			<-snapshotDone
+			t.Fatalf("write during snapshot: %v", err)
+		}
+	case <-ctx.Done():
+		close(release)
+		<-snapshotDone
+		t.Fatal("snapshot held writer connection until copy completed")
+	}
+	select {
+	case err := <-snapshotDone:
+		close(release)
+		t.Fatalf("snapshot ended before controlled copy release: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-snapshotDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := copyDB.PingContext(context.Background()); err == nil {
+		t.Fatal("snapshot connection remained open")
+	}
+	after := readPragmas(s.db)
+	for name, want := range before {
+		if after[name] != want {
+			t.Fatalf("main database %s changed from %q to %q", name, want, after[name])
+		}
+	}
+}
+
 func fixture(t *testing.T, s *Store) (Project, Room, Message) {
 	t.Helper()
 	ctx := context.Background()
