@@ -530,22 +530,53 @@ func TestQuotaGuardChecksOnlyTheTargetsToolsAndActiveProfiles(t *testing.T) {
 	}
 }
 
-// Every harness kind of the eval has an entry in the server's tool-to-provider mapping, and an entry with a provider names one /api/usages
-// can report: a new harness cannot reach the quota guard under a name the server never emits.
+const ollamaUsages = `{"providers":[
+{"provider_name":"ollama-cloud","profiles":[{"profile_name":"local","active":true,"windows":[{"key":"weekly","percent_used":100}]}]}]}`
+
+// pi and opencode draw from the provider their model id names (Target.Model, "<provider>/<model>"), so the guard reads that provider's window.
+func TestQuotaGuardFollowsTheModelPrefixOfPiAndOpenCode(t *testing.T) {
+	st := &stub{reply: func(adapter.TurnSpec, int) []adapter.Event { return []adapter.Event{answerEvent(`{"messages":[]}`)} }}
+	for _, tool := range []string{"pi", "opencode"} {
+		o := newOptions(t, st, "s18-fyi-silence")
+		o.Targets = []Target{{Name: "x", Tool: tool, LauncherID: "lch_1", Model: "ollama-cloud/glm-5.3"}}
+		o.Quota = &QuotaSource{URL: usagesServer(t, ollamaUsages).URL}
+		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "ollama-cloud/local/weekly") {
+			t.Fatalf("%s on an ollama-cloud model at 100%% must stop the run: %v", tool, err)
+		}
+	}
+	o := newOptions(t, st, "s18-fyi-silence")
+	o.Targets = []Target{{Name: "x", Tool: "pi", LauncherID: "lch_1", Model: "acme-llm/glm-5.3-flash"}}
+	o.Quota = &QuotaSource{URL: usagesServer(t, ollamaUsages).URL}
+	if _, err := o.Run(context.Background()); err != nil {
+		t.Fatalf("a model whose prefix is no usages provider is not guarded: %v", err)
+	}
+}
+
+// Every harness kind of the eval is classified: fixed to one usages provider by the harness, or model-dependent (pi, opencode: the provider is
+// the model id's prefix). A kind in neither class, or fixed to a name /api/usages never emits, cannot reach the quota guard.
 func TestEveryEvalKindMapsToAUsagesProvider(t *testing.T) {
 	for _, kind := range eval.Kinds {
 		if !providers.ToolKnown(kind) {
-			t.Errorf("eval kind %q has no entry in providers.toolProviders", kind)
+			t.Errorf("eval kind %q is not classified in providers.toolProviders", kind)
 			continue
 		}
-		if name, ok := providers.ProviderForTool(kind); ok && !providers.KnownProvider(name) {
-			t.Errorf("eval kind %q maps to %q, which is not a usages provider", kind, name)
+		fixed, ok := providers.ProviderFor(kind, "")
+		if ok && !providers.KnownProvider(fixed) {
+			t.Errorf("eval kind %q maps to %q, which is not a usages provider", kind, fixed)
+		}
+		if !ok {
+			// Model-dependent: a known provider prefix must resolve, an unknown one must not.
+			if name, ok := providers.ProviderFor(kind, providers.ProviderOllamaCloud+"/m"); !ok || name != providers.ProviderOllamaCloud {
+				t.Errorf("eval kind %q has no fixed provider and does not follow its model prefix: %q %v", kind, name, ok)
+			}
+			if _, ok := providers.ProviderFor(kind, "unknown-vendor/m"); ok {
+				t.Errorf("eval kind %q resolved an unknown prefix", kind)
+			}
 		}
 	}
-	if name, ok := providers.ProviderForTool(eval.KindClaude); !ok || name != providers.ProviderClaudeCode {
-		t.Errorf("claude maps to %q", name)
-	}
-	if name, ok := providers.ProviderForTool(eval.KindCodex); !ok || name != providers.ProviderCodex {
-		t.Errorf("codex maps to %q", name)
+	for kind, want := range map[string]string{eval.KindClaude: providers.ProviderClaudeCode, eval.KindCodex: providers.ProviderCodex, eval.KindVibe: providers.ProviderMistral} {
+		if name, ok := providers.ProviderFor(kind, "whatever/model"); !ok || name != want {
+			t.Errorf("%s maps to %q, want %q", kind, name, want)
+		}
 	}
 }

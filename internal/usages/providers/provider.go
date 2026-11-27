@@ -38,22 +38,33 @@ var knownProviders = []string{
 }
 
 // toolProviders maps a harness tool name (the eval's and the launchers' "claude", "codex", ...) to the provider name /api/usages reports its
-// quota under. A tool with an empty entry has no provider in /api/usages (its models vary by launcher), so no quota window can belong to it.
+// quota under, for the tools whose provider the harness fixes. A tool with an empty entry (pi, opencode) draws from the provider its model id
+// names; see ProviderFor.
 var toolProviders = map[string]string{
 	"claude":   ProviderClaudeCode,
 	"codex":    ProviderCodex,
+	"vibe":     ProviderMistral,
 	"pi":       "",
 	"opencode": "",
-	"vibe":     "",
 }
 
-// ProviderForTool is the /api/usages provider name of a harness tool, and false when the tool is unknown or has no provider there.
-func ProviderForTool(tool string) (string, bool) {
-	name := toolProviders[tool]
-	return name, name != ""
+// ProviderFor is the /api/usages provider a turn of tool on model draws its quota from, and false when there is none. The harness table comes
+// first (claude, codex, vibe). For a model-dependent tool it is the "<provider>/" prefix of the model id when that is a known usages provider
+// (so an ollama-cloud model is ollama-cloud whichever harness runs it); any other prefix, or none, has no window.
+func ProviderFor(tool, model string) (string, bool) {
+	if name := toolProviders[tool]; name != "" {
+		return name, true
+	}
+	if _, ok := toolProviders[tool]; !ok {
+		return "", false
+	}
+	if prefix, _, found := strings.Cut(model, "/"); found && KnownProvider(prefix) {
+		return prefix, true
+	}
+	return "", false
 }
 
-// ToolKnown says the mapping has an entry for tool, with or without a provider.
+// ToolKnown says the table classifies tool, fixed or model-dependent.
 func ToolKnown(tool string) bool {
 	_, ok := toolProviders[tool]
 	return ok
