@@ -34,9 +34,11 @@ and SHA-256 checksum, and refuses archives from a newer database schema.
 An older schema is restored and migrates when the server next starts. Before
 moving the current data root, restore rewrites attachment paths in the
 extracted database from the manifest's source root to the target data root.
-It refuses an attachment path outside the source root. Archives without a
-`source_root` manifest field must be recreated with a current binary before
-restore.
+It refuses an attachment path outside the source root. For older archives
+without `source_root`, restore uses the target root if every attachment path
+already points there or the snapshot has no attachment rows. Otherwise it
+infers the source root from the common `server/attachments/` path prefix and
+refuses archives whose attachment paths have no common source root.
 
 Restore requires the server and supervisor to be stopped; use `aimebu server stop
 --with-supervisor` for a manually started installation or `brew services stop

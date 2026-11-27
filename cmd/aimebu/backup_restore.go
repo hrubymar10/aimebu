@@ -462,9 +462,6 @@ func restoreArchive(ctx context.Context, root, archive string, yes bool, stdout 
 	if manifest.SchemaVersion > store.LatestSchemaVersion() {
 		return fmt.Errorf("archive schema v%d is newer than this binary supports (v%d)", manifest.SchemaVersion, store.LatestSchemaVersion())
 	}
-	if manifest.SourceRoot == "" {
-		return errors.New("archive manifest has no source_root; make a new backup with a current binary before restoring")
-	}
 	copyPath := filepath.Join(stage, "server", "aimebu.sqlite")
 	if _, err := os.Stat(copyPath); err == nil {
 		actual, schemaErr := snapshotSchema(ctx, copyPath)
@@ -474,7 +471,14 @@ func restoreArchive(ctx context.Context, root, archive string, yes bool, stdout 
 		if actual != manifest.SchemaVersion {
 			return fmt.Errorf("manifest schema v%d does not match database schema v%d", manifest.SchemaVersion, actual)
 		}
-		if err := store.RebaseSnapshotAttachments(ctx, copyPath, manifest.SourceRoot, root); err != nil {
+		sourceRoot := manifest.SourceRoot
+		if sourceRoot == "" {
+			sourceRoot, err = store.InferSnapshotAttachmentSourceRoot(ctx, copyPath, root)
+			if err != nil {
+				return err
+			}
+		}
+		if err := store.RebaseSnapshotAttachments(ctx, copyPath, sourceRoot, root); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {

@@ -57,3 +57,55 @@ func RebaseSnapshotAttachments(ctx context.Context, snapshot, sourceRoot, target
 	}
 	return tx.Commit()
 }
+
+// InferSnapshotAttachmentSourceRoot finds the data root encoded in attachment
+// paths of an older archive whose manifest omitted source_root.
+func InferSnapshotAttachmentSourceRoot(ctx context.Context, snapshot, targetRoot string) (string, error) {
+	db, err := sql.Open(SQLDriverName, sqliteutil.DSN(snapshot, true))
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `SELECT path FROM attachment`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var paths []string
+	allAtTarget := true
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return "", err
+		}
+		paths = append(paths, path)
+		rel, err := filepath.Rel(targetRoot, path)
+		if err != nil || !filepath.IsAbs(path) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			allAtTarget = false
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if allAtTarget {
+		return targetRoot, nil
+	}
+	const noCommonRoot = "archive manifest has no source_root and attachment paths do not share a common server/attachments root"
+	marker := string(filepath.Separator) + filepath.Join("server", "attachments") + string(filepath.Separator)
+	var sourceRoot string
+	for _, path := range paths {
+		index := strings.Index(path, marker)
+		if index < 0 || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return "", fmt.Errorf("%s", noCommonRoot)
+		}
+		candidate := path[:index]
+		if candidate == "" {
+			candidate = string(filepath.Separator)
+		}
+		if sourceRoot != "" && sourceRoot != candidate {
+			return "", fmt.Errorf("%s", noCommonRoot)
+		}
+		sourceRoot = candidate
+	}
+	return sourceRoot, nil
+}

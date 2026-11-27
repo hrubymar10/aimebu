@@ -214,7 +214,7 @@ func TestRestoreRebasesAttachmentPaths(t *testing.T) {
 	}
 }
 
-func TestRestoreRefusesArchiveWithoutSourceRoot(t *testing.T) {
+func TestRestoreWithoutSourceRootAndAttachments(t *testing.T) {
 	root, archive := backupFixture(t)
 	config, err := resolveServerConfig()
 	if err != nil {
@@ -225,8 +225,143 @@ func TestRestoreRefusesArchiveWithoutSourceRoot(t *testing.T) {
 	}
 	legacy := filepath.Join(t.TempDir(), "legacy.tar.gz")
 	rewriteArchive(t, archive, legacy, func(m *archiveManifest) { m.SourceRoot = "" })
-	if err := restoreArchive(context.Background(), root, legacy, true, io.Discard); err == nil || !strings.Contains(err.Error(), "no source_root") {
+	if err := restoreArchive(context.Background(), root, legacy, true, io.Discard); err != nil {
 		t.Fatalf("legacy manifest: %v", err)
+	}
+}
+
+func TestRestoreWithoutSourceRootAtSameRoot(t *testing.T) {
+	root, archive := backupFixture(t)
+	insertBackupAttachment(t, root, "kept", "data")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy.tar.gz")
+	rewriteArchive(t, archive, legacy, func(m *archiveManifest) { m.SourceRoot = "" })
+	if err := restoreArchive(context.Background(), root, legacy, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "server", "attachments", "kept.bin")); err != nil || string(got) != "data" {
+		t.Fatalf("attachment: %q %v", got, err)
+	}
+}
+
+func TestRestoreWithoutSourceRootInfersRoot(t *testing.T) {
+	root, archive := backupFixture(t)
+	insertBackupAttachment(t, root, "kept", "data")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy.tar.gz")
+	rewriteArchive(t, archive, legacy, func(m *archiveManifest) { m.SourceRoot = "" })
+	target := filepath.Join(t.TempDir(), "restored")
+	if err := restoreArchive(context.Background(), target, legacy, true, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(target, "server", "aimebu.sqlite"), true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var path string
+	if err := db.QueryRow(`SELECT path FROM attachment WHERE id='kept'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(target, "server", "attachments", "kept.bin") {
+		t.Fatalf("path: %s", path)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "data" {
+		t.Fatalf("attachment: %q %v", got, err)
+	}
+}
+
+func TestRestoreWithoutSourceRootRefusesMixedPrefixes(t *testing.T) {
+	root, archive := backupFixture(t)
+	insertBackupAttachment(t, root, "first", "one")
+	insertBackupAttachment(t, root, "second", "two")
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	manifest, err := extractVerified(archive, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.SourceRoot = ""
+	dbPath := filepath.Join(stage, "server", "aimebu.sqlite")
+	db, err := sql.Open("sqlite", sqliteutil.DSN(dbPath, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "server", "attachments", "second.bin")
+	if _, err := db.Exec(`UPDATE attachment SET path=? WHERE id='second'`, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "mixed.tar.gz")
+	writeArchiveFromStage(t, stage, manifest, legacy)
+	target := filepath.Join(t.TempDir(), "restored")
+	want := "archive manifest has no source_root and attachment paths do not share a common server/attachments root"
+	if err := restoreArchive(context.Background(), target, legacy, true, io.Discard); err == nil || err.Error() != want {
+		t.Fatalf("restore error = %v, want %q", err, want)
+	}
+}
+
+func writeArchiveFromStage(t *testing.T, stage string, manifest archiveManifest, dest string) {
+	t.Helper()
+	file, err := os.Create(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(file)
+	tw := tar.NewWriter(gz)
+	for i := range manifest.Files {
+		entry := &manifest.Files[i]
+		data, err := os.ReadFile(filepath.Join(stage, filepath.FromSlash(entry.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(data)
+		entry.SHA256, entry.Size = hex.EncodeToString(hash[:]), int64(len(data))
+		if err := tw.WriteHeader(&tar.Header{Name: entry.Path, Mode: 0600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
