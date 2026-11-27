@@ -32,7 +32,35 @@ func SnapshotAttachments(ctx context.Context, snapshot string) (map[string]strin
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT id,path FROM attachment WHERE removed_at IS NULL ORDER BY id`)
+	columns, err := db.QueryContext(ctx, `PRAGMA table_info(attachment)`)
+	if err != nil {
+		return nil, err
+	}
+	hasRemovedAt := false
+	for columns.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue sql.NullString
+		if err := columns.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			columns.Close()
+			return nil, err
+		}
+		if name == "removed_at" {
+			hasRemovedAt = true
+		}
+	}
+	if err := columns.Err(); err != nil {
+		columns.Close()
+		return nil, err
+	}
+	if err := columns.Close(); err != nil {
+		return nil, err
+	}
+	query := `SELECT id,path FROM attachment ORDER BY id`
+	if hasRemovedAt {
+		query = `SELECT id,path FROM attachment WHERE removed_at IS NULL ORDER BY id`
+	}
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

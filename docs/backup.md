@@ -17,6 +17,9 @@ access to this installation. Harness homes such as `~/.claude` and `~/.codex`
 are outside the data root and are not included. Neither are backups, logs,
 temporary files, or runtime lock and PID files.
 
+Backups of databases created before attachment retention include every
+attachment row, because those databases have no removal marker.
+
 When the server is running, it makes a SQLite snapshot through its own
 connection. The CLI requests it over the same-host, doctor-key-authenticated
 HTTP channel used by `aimebu supervisor restart`. The CLI never opens the live

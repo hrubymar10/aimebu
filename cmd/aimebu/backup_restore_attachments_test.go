@@ -77,6 +77,45 @@ func TestBackupOmitsAttachmentRemovedByRetention(t *testing.T) {
 	}
 }
 
+func TestBackupOlderAttachmentSchema(t *testing.T) {
+	root, archive := backupFixture(t)
+	path := insertBackupAttachment(t, root, "kept", "older data")
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "server", "aimebu.sqlite"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{`DROP TABLE attachment`, `CREATE TABLE attachment(id TEXT PRIMARY KEY, path TEXT NOT NULL)`} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO attachment(id,path) VALUES ('kept', ?)`, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rewriteSchemaVersion(t, filepath.Join(root, "server", "aimebu.sqlite"), 59)
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	manifest, err := extractVerified(archive, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.MissingAttachments) != 0 {
+		t.Fatalf("missing attachments: %v", manifest.MissingAttachments)
+	}
+	if got, err := os.ReadFile(filepath.Join(stage, "server", "attachments", "kept.bin")); err != nil || string(got) != "older data" {
+		t.Fatalf("archived attachment = %q, %v", got, err)
+	}
+}
+
 func TestBackupAttachmentRowsDetermineArchive(t *testing.T) {
 	root, archive := backupFixture(t)
 	insertBackupAttachment(t, root, "present", "present data")
