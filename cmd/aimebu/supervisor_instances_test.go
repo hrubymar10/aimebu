@@ -62,6 +62,14 @@ func newInstanceRig(t *testing.T) *instanceRig {
 		},
 		startOf: func(int) string { return "start" },
 	}
+	// A handover the manager started (stopInstanceSignal) polls the journal's lock file in the rig's directory, which creates it, and may still be
+	// at it when the test returns: wait for it before t.TempDir is removed. The test's context is cancelled by then, so each one returns at
+	// its next wait.
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { r.m.stopWG.Wait(); close(done) }()
+		receive(t, "the handover goroutines of the manager", done, time.Minute)
+	})
 	return r
 }
 

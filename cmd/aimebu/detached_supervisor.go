@@ -204,6 +204,9 @@ type detachedSupervisorManager struct {
 	replaceOverdue func(context.Context) (bool, error)
 	stopMu         sync.Mutex
 	stopWatched    map[int]bool // the pids a stop was sent to and whose exit is being waited for
+	// stopWG counts the goroutines that wait for those exits (killIfStuckOn): they poll the journal's lock file, which creates it, so a test
+	// waits for them before its temporary directory is removed.
+	stopWG sync.WaitGroup
 	// instances is what the manager keeps of each supervisor instance of the machine, one journal each (supervisor_instances.go); the
 	// functions after it are what its tests replace.
 	instancesMu sync.Mutex
@@ -279,7 +282,9 @@ func (m *detachedSupervisorManager) killIfStuckOn(pid int, start, journal string
 		}
 		return err
 	}
+	m.stopWG.Add(1)
 	go func() {
+		defer m.stopWG.Done()
 		defer func() {
 			m.stopMu.Lock()
 			delete(m.stopWatched, pid)
