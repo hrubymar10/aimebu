@@ -171,6 +171,54 @@ func TestPrepareCheckoutResetsBetweenCases(t *testing.T) {
 	}
 }
 
+func TestPrepareCheckoutIgnoresGlobalGitExclude(t *testing.T) {
+	dir := t.TempDir()
+	ignore := filepath.Join(t.TempDir(), "global-ignore")
+	if err := os.WriteFile(ignore, []byte(".aimebu\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte("[core]\n\texcludesFile = "+ignore+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".aimebu"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".aimebu", "state"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareCheckout(dir, &eval.Checkout{Commit: "scenario", Files: map[string]string{"work.go": "package main\n"}}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "ls-files", ".aimebu").Output(); err != nil || len(out) != 0 {
+		t.Fatalf("runtime state was staged: %q, %v", out, err)
+	}
+}
+
+func TestScratchGitCallsUseHelper(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "git.go" {
+			continue
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `exec.Command("git"`) || strings.Contains(string(data), `exec.CommandContext("git"`) {
+			t.Errorf("%s runs git outside gitCommand", name)
+		}
+	}
+}
+
 func TestCheckoutAndHistoryAreValidated(t *testing.T) {
 	for _, bad := range []string{"../escape", "/abs", ".git/hooks/x", ".aimebu/x", "a//b"} {
 		in := &eval.Input{Checkout: &eval.Checkout{Commit: "c", Files: map[string]string{bad: "x"}}}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -199,9 +198,12 @@ func (o *Options) checkout(target Target) (string, error) {
 		return "", err
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		if out, err := gitCommand(dir, "init", "-q").CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git init: %v: %s", err, out)
 		}
+	}
+	if err := ensureScratchExclude(dir); err != nil {
+		return "", err
 	}
 	return dir, nil
 }

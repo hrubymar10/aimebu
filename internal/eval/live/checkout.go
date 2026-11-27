@@ -3,7 +3,6 @@ package live
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
@@ -23,9 +22,11 @@ const baseTag = "eval-base"
 // (when it has one) on top. Whatever an earlier case left behind is removed first (reset and clean), except .aimebu, where a harness keeps
 // its own state. The checkout is a git repository made by Options.checkout.
 func prepareCheckout(dir string, want *eval.Checkout) error {
+	if err := ensureScratchExclude(dir); err != nil {
+		return err
+	}
 	git := func(args ...string) error {
-		full := append([]string{"-C", dir, "-c", "user.name=eval", "-c", "user.email=eval@example.invalid", "-c", "commit.gpgsign=false"}, args...)
-		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+		if out, err := gitCommand(dir, args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("git %v: %v: %s", args, err, out)
 		}
 		return nil
@@ -42,11 +43,11 @@ func prepareCheckout(dir string, want *eval.Checkout) error {
 		}
 		return nil
 	}
-	if exec.Command("git", "-C", dir, "rev-parse", "--verify", "-q", baseTag).Run() != nil {
+	if gitCommand(dir, "rev-parse", "--verify", "-q", baseTag).Run() != nil {
 		if err := write(baseProject); err != nil {
 			return err
 		}
-		if err := git("add", "-A", "--", ".", ":(exclude).aimebu"); err != nil {
+		if err := git("add", "-A"); err != nil {
 			return err
 		}
 		if err := git("commit", "-q", "-m", "initial project"); err != nil {
@@ -68,7 +69,7 @@ func prepareCheckout(dir string, want *eval.Checkout) error {
 	if err := write(want.Files); err != nil {
 		return err
 	}
-	if err := git("add", "-A", "--", ".", ":(exclude).aimebu"); err != nil {
+	if err := git("add", "-A"); err != nil {
 		return err
 	}
 	return git("commit", "-q", "-m", want.Commit)
