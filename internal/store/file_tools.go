@@ -8,7 +8,7 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 )
 
-// The two helpers below open a SQLite file by path for the backup and restore commands. They live here because the store package owns the
+// These helpers open a SQLite file by path for the backup and restore commands. They live here because the store package owns the
 // opening of aimebu databases (internal/testenv scans every other package for a second process opening one).
 
 // VacuumFileInto writes a standalone snapshot of the SQLite file source to dest. source may be the live server database only while the
@@ -22,6 +22,30 @@ func VacuumFileInto(ctx context.Context, source, dest string) error {
 	defer db.Close()
 	_, err = db.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(dest, `'`, `''`)+`'`)
 	return err
+}
+
+// SnapshotAttachments lists the files named by attachment rows in a private
+// snapshot. The caller never opens the live database from another process.
+func SnapshotAttachments(ctx context.Context, snapshot string) (map[string]string, error) {
+	db, err := sql.Open(SQLDriverName, sqliteutil.DSN(snapshot, true))
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `SELECT id,path FROM attachment ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	paths := make(map[string]string)
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		paths[id] = path
+	}
+	return paths, rows.Err()
 }
 
 // FileSchemaVersion reads the highest applied schema version of a SQLite file, read-only. It is for a private copy (a snapshot taken for an

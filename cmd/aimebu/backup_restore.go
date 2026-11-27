@@ -33,11 +33,13 @@ type archiveFile struct {
 }
 
 type archiveManifest struct {
-	Version         string        `json:"version"`
-	CreatedAt       string        `json:"created_at"`
-	SchemaVersion   int           `json:"schema_version"`
-	Files           []archiveFile `json:"files"`
-	SkippedJournals []string      `json:"skipped_journals,omitempty"`
+	Version            string        `json:"version"`
+	CreatedAt          string        `json:"created_at"`
+	SchemaVersion      int           `json:"schema_version"`
+	SourceRoot         string        `json:"source_root,omitempty"`
+	Files              []archiveFile `json:"files"`
+	MissingAttachments []string      `json:"missing_attachments,omitempty"`
+	SkippedJournals    []string      `json:"skipped_journals,omitempty"`
 }
 
 func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -82,6 +84,10 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 }
 
 func makeBackup(ctx context.Context, config serverConfig, root, output string, stdout io.Writer) (err error) {
+	return makeBackupWithSnapshotHook(ctx, config, root, output, stdout, nil)
+}
+
+func makeBackupWithSnapshotHook(ctx context.Context, config serverConfig, root, output string, stdout io.Writer, afterSnapshot func()) (err error) {
 	if err = os.MkdirAll(filepath.Dir(output), 0700); err != nil {
 		return err
 	}
@@ -158,9 +164,17 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 	} else if !os.IsNotExist(statErr) {
 		return statErr
 	}
-	manifest := archiveManifest{Version: resolveVersion(), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Files: []archiveFile{}}
+	if afterSnapshot != nil {
+		afterSnapshot()
+	}
+	manifest := archiveManifest{Version: resolveVersion(), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), SourceRoot: root, Files: []archiveFile{}}
+	attachmentPaths := map[string]string{}
 	if _, statErr := os.Stat(snapshot); statErr == nil {
 		manifest.SchemaVersion, err = snapshotSchema(ctx, snapshot)
+		if err != nil {
+			return err
+		}
+		attachmentPaths, err = store.SnapshotAttachments(ctx, snapshot)
 		if err != nil {
 			return err
 		}
@@ -241,6 +255,9 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 			if base == "backups" || base == "tmp" || base == "temp" {
 				return filepath.SkipDir
 			}
+			if name == "server/attachments" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if name == "server/aimebu.sqlite" || name == "server/aimebu.sqlite-wal" || name == "server/aimebu.sqlite-shm" || name == "server/doctor.key" || name == "server/aimebu.pid" || strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, ".log") || strings.HasSuffix(base, ".tmp") || strings.HasPrefix(base, ".backup-snapshot-") {
@@ -269,6 +286,41 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 	if err != nil {
 		return err
 	}
+	attachmentIDs := make([]string, 0, len(attachmentPaths))
+	for id := range attachmentPaths {
+		attachmentIDs = append(attachmentIDs, id)
+	}
+	sort.Strings(attachmentIDs)
+	writtenAttachments := map[string]bool{}
+	for _, id := range attachmentIDs {
+		attachmentPath := attachmentPaths[id]
+		rel, relErr := filepath.Rel(root, attachmentPath)
+		if relErr != nil || !filepath.IsAbs(attachmentPath) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || !strings.HasPrefix(filepath.ToSlash(rel), "server/attachments/") {
+			return fmt.Errorf("attachment %s has path outside the backup attachments folder: %s", id, attachmentPath)
+		}
+		info, statErr := os.Lstat(attachmentPath)
+		if os.IsNotExist(statErr) {
+			manifest.MissingAttachments = append(manifest.MissingAttachments, id)
+			continue
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsafe attachment file %s", attachmentPath)
+		}
+		if writtenAttachments[rel] {
+			continue
+		}
+		if err := write(filepath.ToSlash(rel), attachmentPath, int64(info.Mode().Perm())); err != nil {
+			if os.IsNotExist(err) {
+				manifest.MissingAttachments = append(manifest.MissingAttachments, id)
+				continue
+			}
+			return err
+		}
+		writtenAttachments[rel] = true
+	}
 	sort.Slice(manifest.Files, func(i, j int) bool { return manifest.Files[i].Path < manifest.Files[j].Path })
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -296,6 +348,9 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 	complete = true
 	if len(manifest.SkippedJournals) > 0 {
 		fmt.Fprintf(stdout, "Skipped %d running supervisor journal(s); their owner must snapshot them.\n", len(manifest.SkippedJournals))
+	}
+	if len(manifest.MissingAttachments) > 0 {
+		fmt.Fprintf(stdout, "Warning: %d attachment(s) missing from the snapshot: %s.\n", len(manifest.MissingAttachments), strings.Join(manifest.MissingAttachments, ", "))
 	}
 	return nil
 }
@@ -478,6 +533,9 @@ func restoreArchive(ctx context.Context, root, archive string, yes bool, stdout 
 		return err
 	}
 	fmt.Fprintf(stdout, "Restored %s. Original data kept at %s. Start the server to apply any older schema migrations.\n", root, old)
+	if len(manifest.MissingAttachments) > 0 {
+		fmt.Fprintf(stdout, "Warning: %d attachment(s) were missing when backed up: %s.\n", len(manifest.MissingAttachments), strings.Join(manifest.MissingAttachments, ", "))
+	}
 	return nil
 }
 

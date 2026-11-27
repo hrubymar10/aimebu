@@ -5,9 +5,13 @@ archive to `<data root>/backups/aimebu-<version>-<UTC timestamp>.tar.gz`.
 `aimebu backup --out <file>` chooses another path. The data root is
 `~/.aimebu` by default or `AIMEBU_CONFIG_DIR` when set.
 
-The archive contains the server database, config, keys and attachments, plus a
-`manifest.json` with the binary version, time, schema version and a SHA-256
-checksum for each file. **Treat it as a secret:** the keys inside can grant
+The archive contains the server database, config, keys and the attachments
+named by rows in the database snapshot. Files in the attachments folder with
+no row in that snapshot are excluded. If a row's file has disappeared, the
+manifest lists its ID under `missing_attachments`; backup prints a warning and
+restore reports the same list. The `manifest.json` also records the source
+data root, binary version, time, schema version and a SHA-256 checksum for
+each archived file. **Treat it as a secret:** the keys inside can grant
 access to this installation. Harness homes such as `~/.claude` and `~/.codex`
 are outside the data root and are not included. Neither are backups, logs,
 temporary files, or runtime lock and PID files.
