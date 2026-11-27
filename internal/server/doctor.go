@@ -303,9 +303,10 @@ func (s *Server) doctorSelfTest(w http.ResponseWriter, r *http.Request) {
 		}
 		answer.Launchers = append(answer.Launchers, row)
 		for _, model := range models {
-			name := strings.Trim(selfTestNameUnsafe.ReplaceAllString(row.Tool+"-"+row.Name+"-"+model.Slug, "-"), "-")
+			base := strings.Trim(selfTestNameUnsafe.ReplaceAllString(row.Tool+"-"+row.Name+"-"+model.Slug, "-"), "-")
+			name := base
 			for n := 2; used[name]; n++ {
-				name = fmt.Sprintf("%s-%d", name, n)
+				name = fmt.Sprintf("%s-%d", base, n)
 			}
 			used[name] = true
 			answer.Targets = append(answer.Targets, protocol.DoctorSelfTestTarget{Name: name, Tool: row.Tool, LauncherID: row.ID, Model: model.Slug, Providers: custom})

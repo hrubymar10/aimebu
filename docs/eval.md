@@ -221,7 +221,7 @@ aimebu self-test --full     # every scenario, every target, 3 repetitions
 
 It spends subscription quota, so before it starts it prints the targets, the scenarios, the repetitions, the number of cases and turns (at most two per
 case), the cost cap and the hottest weekly window, then asks `Run it? [y/N]`. `--yes` skips the question. Without a terminal and without `--yes` it
-refuses (exit 1) and runs nothing. A server that has no usage snapshot yet (a fresh install) sends `usages: null`: the quota guard is skipped with one
+refuses (exit 1) and runs nothing. A server with no usage snapshot, or without a usable weekly window for the chosen providers, skips the quota guard with one
 warning line, and `--max-usd` is then the only limit.
 
 | flag | meaning |
@@ -231,7 +231,8 @@ warning line, and `--max-usd` is then the only limit.
 | `--targets a,b` | only these target names (an unknown name is an error that lists the names) |
 | `--max-usd N` | stop when the cost the harnesses report passes N (default 30; 0 is no cap) |
 | `--stop-above PCT` | stop when a weekly window of an active profile of a target's provider passes PCT (default 90) |
-| `--scratch DIR` | the folder for the run's checkouts; default: `aimebu-self-test` in the first visible root every chosen launcher mounts |
+| `--scratch DIR` | the folder for the run's checkouts; default: `aimebu-self-test` in a visible root every chosen launcher mounts, including nested roots |
+| `--visible-host HOST` | container-visible address of this host for the MCP stand-in; defaults to the selected launchers' common `agent_server_url` host, then `host.docker.internal` |
 
 The terminal gets one block per target: PASS or FAIL (PASS when every case is correct after its repair, no harness failure), the correct rate on the
 first try and after repairs, and the three most common errors. The full report, `report.md` and `results.json`, is in

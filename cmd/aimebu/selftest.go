@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,9 +24,10 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 	"github.com/hrubymar10/aimebu/v2/internal/eval/live"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
-const selfTestUsage = "usage: aimebu self-test [--full] [--yes] [--targets a,b] [--max-usd N] [--stop-above PCT] [--scratch DIR]"
+const selfTestUsage = "usage: aimebu self-test [--full] [--yes] [--targets a,b] [--max-usd N] [--stop-above PCT] [--scratch DIR] [--visible-host HOST]"
 
 // selfTestMaxBody bounds the answer of the server's self-test route; it holds a launcher row and a model list per target.
 const selfTestMaxBody = 8 << 20
@@ -60,6 +62,7 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 	maxUSD := flags.Float64("max-usd", 30, "")
 	stopAbove := flags.Float64("stop-above", 90, "")
 	scratchFlag := flags.String("scratch", "", "")
+	visibleHost := flags.String("visible-host", "", "")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, selfTestUsage)
 		return 2
@@ -102,12 +105,15 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 		mode, reps = "full run", 3
 	}
 	rows := doc.Launchers
+	if *visibleHost == "" {
+		*visibleHost = selfTestVisibleHost(chosen, rows)
+	}
 	scratch, err := selfTestScratch(*scratchFlag, chosen, rows)
 	if err != nil {
 		fmt.Fprintln(stderr, "self-test:", err)
 		return 1
 	}
-	// A server with no usage snapshot yet (a fresh install) sends null: the quota guard is skipped, with a warning, and the run goes on.
+	// A null snapshot or one with no usable weekly window cannot guard the run.
 	hasUsages := selfTestHasUsages(doc.Usages)
 	var reading live.Reading
 	if hasUsages {
@@ -115,8 +121,10 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 			fmt.Fprintln(stderr, "self-test: the usage snapshot of the server is unreadable:", err)
 			return 1
 		}
-	} else {
-		fmt.Fprintln(stderr, "warning: the server has no usage snapshot yet, so the quota guard (--stop-above) is skipped; only --max-usd limits the run")
+		hasUsages = selfTestHasUsableQuota(reading, chosen)
+	}
+	if !hasUsages {
+		fmt.Fprintln(stderr, "warning: the server has no usable weekly usage window for these targets, so the quota guard (--stop-above) is skipped; only --max-usd limits the run")
 	}
 	cases := selfTestCaseCount(selected, chosen, reps)
 	fmt.Fprint(stdout, selfTestSummary(mode, selected, chosen, reps, cases, *maxUSD, *stopAbove, hasUsages, reading, scratch))
@@ -154,11 +162,17 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 	}
 	_ = os.Chmod(filepath.Dir(dir), 0o700)
 	_ = os.Chmod(dir, 0o700)
+	_, scratchErr := os.Lstat(scratch)
+	createdScratch := os.IsNotExist(scratchErr)
+	if scratchErr != nil && !createdScratch {
+		fmt.Fprintln(stderr, "self-test: scratch folder:", scratchErr)
+		return 1
+	}
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
 		fmt.Fprintln(stderr, "self-test: scratch folder:", err)
 		return 1
 	}
-	defer selfTestCleanScratch(scratch, runID)
+	defer selfTestCleanScratch(scratch, runID, createdScratch)
 	mcp, err := live.StartMCP()
 	if err != nil {
 		fmt.Fprintln(stderr, "self-test:", err)
@@ -168,7 +182,7 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	options := &live.Options{RunID: runID, ScratchDir: scratch, Targets: chosen, Launchers: rows, Scenarios: selected, Reps: reps,
-		MaxUSD: *maxUSD, StopAbovePct: *stopAbove, MCP: mcp, Log: stdout,
+		MaxUSD: *maxUSD, StopAbovePct: *stopAbove, VisibleHost: *visibleHost, MCP: mcp, Log: stdout,
 		NewAdapter: selfTestNewAdapter, Preflight: selfTestPreflight}
 	if hasUsages {
 		options.Quota = &live.QuotaSource{ReadFn: func(ctx context.Context) (live.Reading, error) {
@@ -200,6 +214,51 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 func selfTestHasUsages(raw json.RawMessage) bool {
 	text := strings.TrimSpace(string(raw))
 	return text != "" && text != "null"
+}
+
+// The configured agent server address names the container-visible host for the same machine.
+// Mixed hosts need an explicit --visible-host so one stand-in address works for every target.
+func selfTestVisibleHost(targets []live.Target, rows []protocol.LauncherRow) string {
+	byID := map[string]string{}
+	for _, row := range rows {
+		if row.AgentServerURL != "" {
+			if parsed, err := url.Parse(row.AgentServerURL); err == nil {
+				byID[row.ID] = parsed.Hostname()
+			}
+		}
+	}
+	host := ""
+	for _, target := range targets {
+		candidate := byID[target.LauncherID]
+		if candidate == "" {
+			return ""
+		}
+		if host != "" && candidate != host {
+			return ""
+		}
+		host = candidate
+	}
+	return host
+}
+
+// A snapshot without a weekly window for a chosen provider cannot guard this run.
+func selfTestHasUsableQuota(reading live.Reading, targets []live.Target) bool {
+	used := map[string]bool{}
+	for _, target := range targets {
+		if name, ok := providers.ProviderFor(target.Tool, target.Model, target.Provider); ok {
+			used[name] = true
+		}
+	}
+	for key := range reading.Usage {
+		parts := strings.SplitN(key, "/", 3)
+		if len(parts) != 3 || !used[parts[0]] || !(strings.HasPrefix(parts[2], "weekly") || strings.HasPrefix(parts[2], "seven_day")) {
+			continue
+		}
+		if active, ok := reading.Active[parts[0]]; !ok || active == parts[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchSelfTest reads GET /api/doctor/self-test of the server the config names, with the doctor key.
@@ -274,25 +333,25 @@ func selfTestScratch(flagValue string, targets []live.Target, rows []protocol.La
 	for _, row := range rows {
 		byID[row.ID] = row
 	}
-	var common []string
-	for i, t := range targets {
+	var candidates []string
+	for _, t := range targets {
 		row, ok := byID[t.LauncherID]
 		if !ok {
 			return "", fmt.Errorf("target %s: the server did not send its launcher %s", t.Name, t.LauncherID)
 		}
-		if i == 0 {
-			common = append(common, row.VisibleRoots...)
-			continue
-		}
-		var keep []string
-		for _, root := range common {
-			if rootsHold(row.VisibleRoots, root) {
-				keep = append(keep, root)
+		candidates = append(candidates, row.VisibleRoots...)
+	}
+	for _, root := range candidates {
+		shared := true
+		for _, t := range targets {
+			if !rootsHold(byID[t.LauncherID].VisibleRoots, root) {
+				shared = false
+				break
 			}
 		}
-		common = keep
-	}
-	for _, root := range common {
+		if !shared {
+			continue
+		}
 		if info, err := os.Stat(root); err == nil && info.IsDir() {
 			return filepath.Join(root, "aimebu-self-test"), nil
 		}
@@ -310,13 +369,15 @@ func rootsHold(roots []string, path string) bool {
 	return false
 }
 
-// selfTestCleanScratch removes the checkouts of this run (aimebu-self-test/aimebu-eval-<run>-*) and the scratch folder when it is then empty.
-func selfTestCleanScratch(scratch, runID string) {
+// selfTestCleanScratch removes this run's checkouts, and its scratch folder only if this run created it.
+func selfTestCleanScratch(scratch, runID string, created bool) {
 	matches, _ := filepath.Glob(filepath.Join(scratch, "aimebu-eval-"+runID+"-*"))
 	for _, m := range matches {
 		_ = os.RemoveAll(m)
 	}
-	_ = os.Remove(scratch) // only when empty
+	if created {
+		_ = os.Remove(scratch) // only when empty
+	}
 }
 
 // selfTestCaseCount is the number of cases of a run: a scenario that runs on some harnesses only (only_kinds) skips the other targets.
@@ -362,7 +423,7 @@ func selfTestSummary(mode string, scenarios []eval.Scenario, targets []live.Targ
 		b.WriteString("Cost cap: none.\n")
 	}
 	if !hasUsages {
-		b.WriteString("Quota guard: skipped, the server has no usage snapshot yet.\n")
+		b.WriteString("Quota guard: skipped, the server has no usable weekly usage window for these targets.\n")
 	} else {
 		fmt.Fprintf(&b, "Quota guard: the run stops when a weekly window of an active profile of these targets' providers passes %.0f%%.\n", stopAbove)
 	}

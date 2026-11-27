@@ -197,6 +197,68 @@ func TestSelfTestWithoutAUsageSnapshotWarnsOnceAndRuns(t *testing.T) {
 	}
 }
 
+func TestSelfTestEmptyUsageWindowsAlsoWarns(t *testing.T) {
+	s := newSelfTestServer(t, "alpha")
+	s.usages = json.RawMessage(`{"providers":[]}`)
+	fake := &fakeRun{}
+	fake.install(t)
+	code, stdout, stderr := runSelfTest(t, "", "--yes", "--scratch", s.scratch)
+	if code != 0 || fake.calls != 1 || fake.options.Quota != nil || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stdout, "Quota guard: skipped") {
+		t.Fatalf("code %d calls %d quota %v stdout %q stderr %q", code, fake.calls, fake.options.Quota, stdout, stderr)
+	}
+}
+
+func TestSelfTestKeepsExistingScratchPath(t *testing.T) {
+	s := newSelfTestServer(t, "alpha")
+	fake := &fakeRun{}
+	fake.install(t)
+	for _, path := range []string{s.scratch, filepath.Join(t.TempDir(), "scratch-link")} {
+		if strings.HasSuffix(path, "scratch-link") {
+			if err := os.Symlink(s.scratch, path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		code, _, stderr := runSelfTest(t, "", "--yes", "--scratch", path)
+		if code != 0 || stderr != "" {
+			t.Fatalf("code %d stderr %q", code, stderr)
+		}
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("scratch path %q removed: %v", path, err)
+		}
+	}
+}
+
+func TestSelfTestFindsNestedSharedVisibleRoot(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "project")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rows := []protocol.LauncherRow{
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "outer", VisibleRoots: []string{root}}},
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "inner", VisibleRoots: []string{nested}}},
+	}
+	targets := []live.Target{{LauncherID: "outer"}, {LauncherID: "inner"}}
+	got, err := selfTestScratch("", targets, rows)
+	if err != nil || got != filepath.Join(nested, "aimebu-self-test") {
+		t.Fatalf("scratch=%q err=%v", got, err)
+	}
+}
+
+func TestSelfTestUsesLaunchersContainerVisibleHost(t *testing.T) {
+	rows := []protocol.LauncherRow{
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "one", AgentServerURL: "http://gateway.internal:8877"}},
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "two", AgentServerURL: "http://gateway.internal:8878"}},
+	}
+	if got := selfTestVisibleHost([]live.Target{{LauncherID: "one"}, {LauncherID: "two"}}, rows); got != "gateway.internal" {
+		t.Fatalf("visible host=%q", got)
+	}
+	rows[1].AgentServerURL = "http://another.internal:8878"
+	if got := selfTestVisibleHost([]live.Target{{LauncherID: "one"}, {LauncherID: "two"}}, rows); got != "" {
+		t.Fatalf("mixed visible hosts=%q", got)
+	}
+}
+
 func TestSelfTestFullRunsEveryScenarioThreeTimesWithTheFlagsGiven(t *testing.T) {
 	s := newSelfTestServer(t, "alpha")
 	fake := &fakeRun{}
