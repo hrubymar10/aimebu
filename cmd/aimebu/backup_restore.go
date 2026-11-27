@@ -730,6 +730,12 @@ func restoreArchive(ctx context.Context, root, archive string, yes bool, stdout 
 	if len(manifest.MissingAttachments) > 0 {
 		fmt.Fprintf(stdout, "Warning: %d attachment(s) were missing when backed up: %s.\n", len(manifest.MissingAttachments), strings.Join(manifest.MissingAttachments, ", "))
 	}
+	if len(manifest.SkippedConversationLogs) > 0 {
+		fmt.Fprintf(stdout, "Warning: the archive was made without %d conversation log(s): %s.\n", len(manifest.SkippedConversationLogs), strings.Join(manifest.SkippedConversationLogs, ", "))
+	}
+	if len(manifest.SkippedJournals) > 0 {
+		fmt.Fprintf(stdout, "Warning: the archive was made without %d running supervisor journal(s): %s.\n", len(manifest.SkippedJournals), strings.Join(manifest.SkippedJournals, ", "))
+	}
 	return nil
 }
 

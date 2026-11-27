@@ -762,3 +762,43 @@ func TestRestoreRejectsUnsafeTarEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreWarnsAboutSkippedConversationLogsAndJournals(t *testing.T) {
+	root, archive := backupFixture(t)
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := makeBackup(context.Background(), config, root, archive, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	flagged := filepath.Join(t.TempDir(), "flagged.tar.gz")
+	rewriteArchive(t, archive, flagged, func(m *archiveManifest) {
+		m.SkippedConversationLogs = []string{"gone.log"}
+		m.SkippedJournals = []string{"supervisor/journal.sqlite"}
+	})
+	target := filepath.Join(t.TempDir(), "restored")
+	var out bytes.Buffer
+	if err := restoreArchive(context.Background(), target, flagged, true, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Warning: the archive was made without 1 conversation log(s): gone.log.",
+		"Warning: the archive was made without 1 running supervisor journal(s): supervisor/journal.sqlite.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("restore output lacks %q: %q", want, out.String())
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(target, "server", "secret.key")); err != nil || string(got) != "private" {
+		t.Fatalf("restored key: %q %v", got, err)
+	}
+	clean := filepath.Join(t.TempDir(), "restored-clean")
+	out.Reset()
+	if err := restoreArchive(context.Background(), clean, archive, true, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "made without") {
+		t.Fatalf("an archive without skipped items warned: %q", out.String())
+	}
+}

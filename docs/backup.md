@@ -24,7 +24,8 @@ named by active rows in the database snapshot. Files in the attachments folder w
 no active row in that snapshot are excluded. Attachments already removed by
 retention are excluded. If an active row's file has disappeared, the
 manifest lists its ID under `missing_attachments`; backup prints a warning and
-restore reports the same list. The `manifest.json` also records the source
+restore reports the same list. Restore likewise warns about any conversation logs
+and running supervisor journals the manifest lists as skipped; an older archive without those fields stays silent. The `manifest.json` also records the source
 data root, binary version, time, schema version and a SHA-256 checksum for
 each archived file. **Treat it as a secret:** the keys inside can grant
 access to this installation. Harness homes such as `~/.claude` and `~/.codex`
