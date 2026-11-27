@@ -370,6 +370,41 @@ func TestCommandCwdMayNotLeaveTheCheckout(t *testing.T) {
 	waitCommandExit(t, sink)
 }
 
+// A directory symlink in the checkout that points outside it does not carry a native command out: containment is checked on the resolved
+// path, and the command starts in the directory that was checked. A symlink that stays inside is fine.
+func TestCommandCwdSymlinkMayNotLeaveTheCheckout(t *testing.T) {
+	c, _, _ := commandTestClient(t)
+	checkout, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(checkout, "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(checkout, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", filepath.Join(checkout, "in")); err != nil {
+		t.Fatal(err)
+	}
+	for i, cwd := range []string{"out", "out/.", "in/../out"} {
+		result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_link" + strconv.Itoa(i), AgentID: "agt_one", Generation: 1,
+			CheckoutPath: checkout, Cmd: "true", Cwd: cwd, TimeoutSeconds: 60})
+		if result.Result != "error" || !strings.Contains(result.Message, "cwd") {
+			t.Fatalf("cwd %q through a symlink to outside: %+v", cwd, result)
+		}
+	}
+	sink := make(chan protocol.CommandExit, 1)
+	c.commandSink = func(exit protocol.CommandExit) { sink <- exit }
+	result := c.commandStart(t.Context(), protocol.CommandSpec{JobID: "cmd_link_ok", AgentID: "agt_one", Generation: 1,
+		CheckoutPath: checkout, Cmd: "pwd -P > where", Cwd: "in", TimeoutSeconds: 60})
+	if result.Result != "ok" {
+		t.Fatalf("a symlink that stays inside the checkout: %+v", result)
+	}
+	waitCommandExit(t, sink)
+	want, _ := filepath.EvalSymlinks(filepath.Join(checkout, "real"))
+	if got, err := os.ReadFile(filepath.Join(checkout, "real", "where")); err != nil || strings.TrimSpace(string(got)) != want {
+		t.Fatalf("the command ran in %q (%v), want %q", got, err, want)
+	}
+}
+
 // A supervisor that is being replaced does not wait for a long command: its exit ends the command and reports the end with exit code -1
 // and the reason supervisor_replaced (journaled, so a replacement replays it if this connection is gone), which wakes the agent.
 func TestReplacedSupervisorEndsItsCommandsAsSupervisorReplaced(t *testing.T) {

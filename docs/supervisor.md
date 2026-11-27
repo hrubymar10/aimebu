@@ -1402,7 +1402,15 @@ one instance while another owns it. The supervisor runs a native
 one in a session of its own (a container one in its own process group), in
 the agent's own checkout (`cwd` may not leave it: it is
 cleaned first, so `..`, `./..` or `a/../..` is refused on the server and again
-on the machine), with
+on the machine; a native
+command is also checked on the resolved path: the checkout and the cwd are
+resolved through every symlink, a cwd whose real directory lies outside the
+checkout is refused, and the process starts in exactly that resolved directory,
+so nothing is followed again between the check and the start. A container
+command is not resolved on the host: the launcher is given the cwd relative to
+the checkout, and a symlink in it resolves inside the container, against the
+container's own filesystem, so it can reach nothing the agent's own container
+could not), with
 the same rights that agent's own Bash has there and nothing more: none of the
 agent's keys is in its environment. It is not a turn: no turn row, no usage,
 and the turn limits do not apply to it.

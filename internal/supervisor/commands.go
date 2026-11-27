@@ -366,6 +366,14 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 	if c.runner().has(spec.JobID) {
 		return fail(errors.New("that command is already running here"))
 	}
+	// A native command starts in the directory that was checked, not in a spelling of it: a directory symlink inside the checkout that
+	// points outside it would pass the lexical check above, and the start would follow it.
+	workDir := ""
+	if docker == nil {
+		if workDir, err = resolveCommandDir(spec.CheckoutPath, spec.Cwd); err != nil {
+			return fail(err)
+		}
+	}
 	logger := ""
 	if docker == nil && c.CommandLogger != nil {
 		if path, err := c.CommandLogger(); err == nil && filepath.IsAbs(path) {
@@ -399,11 +407,11 @@ func (c *Client) commandStart(ctx context.Context, spec protocol.CommandSpec) pr
 		wrapped := `{ ( eval "$3" ); printf %s "$?" > "$1.part"; } 2>&1 | "$4" command-log "$2"; mv -f "$1.part" "$1"; ` +
 			`rc=$(cat "$1" 2>/dev/null); exit "${rc:-1}"`
 		cmd = exec.Command("sh", "-c", wrapped, "sh", marker, spec.LogPath, spec.Cmd, logger)
-		cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
+		cmd.Dir = workDir
 	case docker == nil:
 		wrapped := `( eval "$2" ); rc=$?; printf %s "$rc" > "$1"; exit $rc`
 		cmd = exec.Command("sh", "-c", wrapped, "sh", visibleMarker, spec.Cmd)
-		cmd.Dir = filepath.Join(spec.CheckoutPath, spec.Cwd)
+		cmd.Dir = workDir
 	default:
 		cmd = dockerCommand(docker, spec, visibleMarker)
 		// The launcher's exit is the command's end: a host-side process it left in its group (a `docker exec` client that outlived it) may
@@ -789,6 +797,24 @@ func commandProcessAlive(pid int) bool {
 	}
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// resolveCommandDir is the directory a native command starts in: the cwd under the checkout with every symlink resolved, which must
+// still lie inside the checkout with its own symlinks resolved. The caller uses the returned path as the process's directory, so no
+// symlink is followed again between the check and the start.
+func resolveCommandDir(checkout, cwd string) (string, error) {
+	root, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		return "", fmt.Errorf("the agent's checkout cannot be resolved: %w", err)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Join(checkout, cwd))
+	if err != nil {
+		return "", fmt.Errorf("cwd %q cannot be resolved: %w", cwd, err)
+	}
+	if !withinDir(root, dir) {
+		return "", errors.New("cwd must stay inside the agent's checkout (it resolves outside through a symlink)")
+	}
+	return dir, nil
 }
 
 func withinDir(dir, path string) bool {
