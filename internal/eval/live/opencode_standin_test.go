@@ -17,6 +17,7 @@ import (
 // probe and then runs body (a shell fragment) for the turn. No Docker, network or credential is involved.
 func opencodeOptions(t *testing.T, body string) *Options {
 	t.Helper()
+	t.Setenv("OPENAI_API_KEY", "test-key") // the key of the built-in provider (builtinProviderKey)
 	root := t.TempDir()
 	launcher := filepath.Join(root, "opencode-docker")
 	script := "#!/bin/sh\nif [ \"$HARNESS_DOCKER_PRINT_FEATURES\" = 1 ]; then echo forward_env; exit 0; fi\ncat >/dev/null\n" + body
@@ -70,3 +71,41 @@ func TestHarnessFailureCarriesStderrOrSaysItWasEmpty(t *testing.T) {
 		t.Fatalf("an empty failure must say so: %q", got)
 	}
 }
+
+// OpenCode prints "UnknownError: Unexpected server error" in about two seconds for a built-in provider it cannot use (reproduced with a model
+// that does not exist and with one whose key is missing), so a run 3 with no key in the eval's environment failed every case of the target alike.
+// The target is refused before a turn starts, and the failure that does get through says what the text can mean.
+func TestOpenCodeBuiltinProviderNeedsAKeyInThisProcess(t *testing.T) {
+	o := opencodeOptions(t, "exit 1\n")
+	for _, name := range adapterKnownKeys() {
+		t.Setenv(name, "")
+	}
+	_, err := o.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "opencode-x") || !strings.Contains(err.Error(), "OLLAMA_API_KEY") || !strings.Contains(err.Error(), "custom provider") {
+		t.Fatalf("a built-in provider without a key is refused before a turn, naming the variable: %v", err)
+	}
+	// A custom provider needs no built-in key (its own key variable is checked by the adapter).
+	o.Targets[0].Providers = []adapter.CustomProvider{{ID: "my-provider", NPM: adapter.CustomProviderNPM, BaseURL: "https://llm.example/v1"}}
+	if err := builtinProviderKey(o.Targets[0], o.Launchers[0]); err != nil {
+		t.Fatalf("a custom provider: %v", err)
+	}
+	// Any tool but OpenCode, and a model with no provider prefix, are not its business.
+	if err := builtinProviderKey(Target{Tool: "pi", Model: "ollama-cloud/glm"}, o.Launchers[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := builtinProviderKey(Target{Tool: "opencode", Model: "glm"}, o.Launchers[0]); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnknownErrorFailureCarriesAHint(t *testing.T) {
+	got := harnessFailure(adapter.ExitInfo{ExitCode: 1, ErrorEvent: "OpenCode error: UnknownError: Unexpected server error. Check server logs for details."}, nil)
+	if !strings.Contains(got, "hint:") || !strings.Contains(got, "no key") {
+		t.Fatalf("%q", got)
+	}
+	if strings.Contains(harnessFailure(adapter.ExitInfo{ExitCode: 1, ErrorEvent: "OpenCode error: ProviderModelNotFoundError: x"}, nil), "hint:") {
+		t.Fatal("the hint is for the one ambiguous text")
+	}
+}
+
+func adapterKnownKeys() []string { return adapter.KnownProviderKeys }

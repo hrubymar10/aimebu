@@ -253,6 +253,9 @@ func harnessFailure(exit adapter.ExitInfo, err error) string {
 	if !said {
 		out += ", no output on stdout or stderr"
 	}
+	if strings.Contains(exit.ErrorEvent, "UnknownError: Unexpected server error") {
+		out += ", hint: OpenCode prints this for a built-in provider it cannot use (no key in the environment of this process, or an unknown model), not only for a fault of its own"
+	}
 	return out
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -118,6 +119,9 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 		row, ok := rows[target.LauncherID]
 		if !ok || !row.Containerized {
 			return cases, fmt.Errorf("target %s: launcher %q is not in the launchers file or is not a Docker launcher (the eval runs through the containers agents run in)", target.Name, target.LauncherID)
+		}
+		if err := builtinProviderKey(target, row); err != nil {
+			return cases, fmt.Errorf("target %s: %w", target.Name, err)
 		}
 		impl, err := o.NewAdapter(target.Tool)
 		if err != nil {
@@ -278,4 +282,22 @@ func heldNote(noteNo int, reason string) json.RawMessage {
 		"message_id": fmt.Sprintf("msg_01EVALHELD%04d", noteNo), "no": noteNo, "body": "Your previous reply was held: " + reason, "why": "your reply was held"}
 	out, _ := json.Marshal([]any{note})
 	return out
+}
+
+// builtinProviderKey refuses an OpenCode target on one of OpenCode's own providers (a "<provider>/" model that is not one of the target's custom
+// providers) when this process has none of the keys such a provider reads (adapter.KnownProviderKeys). The container is handed only the
+// variables this process has, as for a native turn, so without one OpenCode fails in about two seconds with "UnknownError: Unexpected server
+// error", the same text it prints for an unknown model, which is what every case of an OpenCode target did in run 3. The supervisor of a real
+// agent has the owner's keys in its environment; the eval's process may not.
+func builtinProviderKey(target Target, row protocol.LauncherRow) error {
+	if target.Tool != eval.KindOpenCode || !strings.Contains(target.Model, "/") || len(providersFor(target)) > 0 {
+		return nil
+	}
+	for _, name := range adapter.KnownProviderKeys {
+		if adapter.EnvValue(name, row.EnvRefs) != "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %s is on one of OpenCode's own providers, which read their key from the environment of this process, and none of %s is set here; export the provider's key (OLLAMA_API_KEY for ollama-cloud), or give the model a custom provider, or leave the target out",
+		target.Model, strings.Join(adapter.KnownProviderKeys, ", "))
 }

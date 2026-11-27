@@ -113,6 +113,13 @@ Codex, Pi, OpenCode and Vibe always get the full text, so the marker never reach
 adapter's `error_summary`, its `error_event` (OpenCode and Claude report a failure as an event on stdout and leave stderr empty) and the
 stderr tail; a failure that said nothing anywhere says "no output on stdout or stderr".
 
+**An OpenCode target on its own provider.** For a model on one of OpenCode's built-in providers (`ollama-cloud/...`, not one of the target's custom
+`providers`), the key comes from the environment of the process that starts the launcher, as for a native turn (`adapter.KnownProviderKeys`): a real agent's
+supervisor has the owner's keys, the eval's process may not. OpenCode then fails in about two seconds with `UnknownError: Unexpected server error`, the same text it
+prints for an unknown model (run 3: every OpenCode case). The runner therefore refuses such a target before any turn when none of those variables is set
+(`builtinProviderKey`), naming them; export the provider's key (`OLLAMA_API_KEY` for `ollama-cloud`), give the model a custom provider, or leave the target out.
+A failure that still reads `UnknownError` carries a hint with the two meanings.
+
 **Switches.** It refuses to run unless `AIMEBU_EVAL=1` is exported. Without `--full` it is a **smoke**: scenarios `s01` and `s15`, the first target,
 one repetition. Run the smoke first. Run `--full` only with the quota switcher on and outside peak hours.
 
