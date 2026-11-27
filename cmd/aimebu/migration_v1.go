@@ -560,5 +560,13 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 	if version != 1 {
 		return false, fmt.Errorf("unsupported v1 schema %d", version)
 	}
+	// A v2 database that also holds v1's schema_meta, with the backup already in place, is the mixed database a v1 server started on a
+	// moved root leaves behind. It is not a root awaiting cutover; doctor classifies it as the mixed failure.
+	if _, err := os.Lstat(filepath.Join(root, v1BackupName)); err == nil {
+		var v2 int
+		if e := query("SELECT COALESCE(MAX(version),0) FROM schema_version", &v2); e == nil && v2 > 0 {
+			return false, nil
+		}
+	}
 	return true, nil
 }

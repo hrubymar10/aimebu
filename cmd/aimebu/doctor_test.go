@@ -85,7 +85,7 @@ func rewriteSchemaVersion(t *testing.T, path string, version int) {
 }
 
 // addV1SchemaMeta mimics a v1 server started on a v2 folder: v1 creates its
-// own schema_meta table next to v2's tables.
+// own schema_meta table next to v2's tables. The shape is v1's real one (scripts/v1-fixture.cjs): schema_meta(version INTEGER) holding 1.
 func addV1SchemaMeta(t *testing.T, path string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", sqliteutil.DSN(path, false))
@@ -93,7 +93,7 @@ func addV1SchemaMeta(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE schema_meta(version INTEGER); INSERT INTO schema_meta VALUES (1)`); err != nil {
 		t.Fatal(err)
 	}
 }

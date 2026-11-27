@@ -139,6 +139,28 @@ func TestDoctorStoppedV1RootWritesNothing(t *testing.T) {
 	}
 }
 
+// A v2 database that also holds v1's real schema_meta(version)=1, with the backup in place, is the mixed case: doctor must say so, not
+// call it a v1 root awaiting cutover.
+func TestDoctorStoppedMixedDatabaseIsTheMixedFailure(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	createFixtureDatabase(t, path)
+	addV1SchemaMeta(t, path)
+	if err := os.Mkdir(filepath.Join(root, v1BackupName), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "server", ".writer.lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stoppedEnv(t, root)
+	before := treeSnapshot(t, root)
+	check := doctorDatabaseCheck(t)
+	requireTreeUnchanged(t, root, before)
+	if check.Status != statusFail || !strings.Contains(check.Description, "restore the backup into a new folder") {
+		t.Fatalf("database finding = %+v", check)
+	}
+}
+
 func TestSessionsStoppedV1RootWritesNothing(t *testing.T) {
 	root := v1RootFixture(t)
 	stoppedEnv(t, root)
