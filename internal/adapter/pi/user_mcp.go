@@ -1,12 +1,14 @@
 package pi
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
@@ -27,6 +29,19 @@ func userAgentDir() string {
 	return ""
 }
 
+// skippedWarnings holds what has been logged: a turn rebuilds the private mcp.json from the person's file, so a server left out is left out again
+// on every turn of the session, and the line would otherwise repeat with each one.
+var skippedWarnings sync.Map
+
+// warnOnce logs a line once per session and message (the message names the server and the reason, so a new reason of the same server logs
+// again), the pattern of the Claude adapter's skipped-transcript warning (internal/adapter/claude/transcript.go).
+func warnOnce(session, format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	if _, seen := skippedWarnings.LoadOrStore(session+"\x00"+line, struct{}{}); !seen {
+		log.Print(line)
+	}
+}
+
 var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // userMCPServers returns the entries of the person's mcp.json, without the one called skip and the ones that are aimebu's own bus of v1 (see
@@ -36,7 +51,7 @@ var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // path, never the content). A container turn carries only the entries that are safe to carry into one (containerServers): the config file
 // lands in the shared checkout, where a co-tenant could read it, so an entry that holds more than a url is left out entirely rather than
 // carried in a weaker form.
-func userMCPServers(dir, skip string, container bool) (servers map[string]json.RawMessage, envVars []string) {
+func userMCPServers(dir, skip, session string, container bool) (servers map[string]json.RawMessage, envVars []string) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -44,7 +59,7 @@ func userMCPServers(dir, skip string, container bool) (servers map[string]json.R
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("pi: the person's MCP servers in %s are not carried: %v", path, err)
+			warnOnce(session, "pi: the person's MCP servers in %s are not carried: %v", path, err)
 		}
 		return nil, nil
 	}
@@ -52,7 +67,7 @@ func userMCPServers(dir, skip string, container bool) (servers map[string]json.R
 		Servers map[string]json.RawMessage `json:"mcpServers"`
 	}
 	if json.Unmarshal(data, &parsed) != nil {
-		log.Printf("pi: the person's MCP servers in %s are not carried: the file is not valid JSON", path)
+		warnOnce(session, "pi: the person's MCP servers in %s are not carried: the file is not valid JSON", path)
 		return nil, nil
 	}
 	servers = map[string]json.RawMessage{}
@@ -62,15 +77,15 @@ func userMCPServers(dir, skip string, container bool) (servers map[string]json.R
 			continue
 		}
 		if adapter.LooksLikeV1Bus(name, string(entry)) {
-			log.Printf("pi: the MCP server %q is not carried: it is aimebu's own bus of v1", name)
+			warnOnce(session, "pi: the MCP server %q is not carried: it is aimebu's own bus of v1", name)
 			continue
 		}
 		var fields map[string]json.RawMessage
 		if json.Unmarshal(entry, &fields) != nil {
-			log.Printf("pi: the MCP server %q of %s is not carried: the entry is not an object", name, path)
+			warnOnce(session, "pi: the MCP server %q of %s is not carried: the entry is not an object", name, path)
 			continue
 		}
-		if container && !containerServer(name, fields) {
+		if container && !containerServer(session, name, fields) {
 			continue
 		}
 		var exposure string
@@ -97,12 +112,12 @@ func userMCPServers(dir, skip string, container bool) (servers map[string]json.R
 // readable by a co-tenant: only a plain HTTP server with nothing but its url (and its exposure, which is rewritten above) is. A command
 // points at a binary the container does not have, and a header, an environment variable or an OAuth field is a credential or a setting the
 // checkout file must not hold; the entry is left out with the reason, never carried in a weaker form.
-func containerServer(name string, fields map[string]json.RawMessage) bool {
+func containerServer(session, name string, fields map[string]json.RawMessage) bool {
 	for key := range fields {
 		switch key {
 		case "url", "exposure":
 		default:
-			log.Printf("pi: the MCP server %q is not carried to the container: its %s does not belong in the shared checkout", name, key)
+			warnOnce(session, "pi: the MCP server %q is not carried to the container: its %s does not belong in the shared checkout", name, key)
 			return false
 		}
 	}
@@ -110,11 +125,11 @@ func containerServer(name string, fields map[string]json.RawMessage) bool {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(fields["url"], &entry.URL); err != nil || entry.URL == "" {
-		log.Printf("pi: the MCP server %q is not carried to the container: a server without a url has no remote form", name)
+		warnOnce(session, "pi: the MCP server %q is not carried to the container: a server without a url has no remote form", name)
 		return false
 	}
 	if reason, unsafe := adapter.UnsafeContainerURL(entry.URL); unsafe {
-		log.Printf("pi: the MCP server %q is not carried to the container: %s", name, reason)
+		warnOnce(session, "pi: the MCP server %q is not carried to the container: %s", name, reason)
 		return false
 	}
 	return true

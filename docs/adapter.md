@@ -624,7 +624,7 @@ in the inline config and forwards the `{env:NAME}` variables by name like the pr
 Vibe writes them into the private home, with their `api_key_env` variables forwarded; Pi
 Docker carries only an entry that holds nothing but a `url`, which is written into the
 private `mcp.json` under the mirrored checkout, and leaves one with a header, a command or
-any other field out entirely (see [Pi](#pi-native-and-docker-adapters)). A variable a server names is passed to the harness, except one that would
+any other field out entirely, logging the server and the reason once per session, not on every turn (see [Pi](#pi-native-and-docker-adapters)). A variable a server names is passed to the harness, except one that would
 undo the isolation: the tool's own homes and config locations, `AIMEBU*`,
 `CLAUDE*`, `XDG_*`, `HOME` and `PATH`, `SSH_AUTH_SOCK` and `GIT_*`, and what injects code
 (`LD_*`, `DYLD_*`, `NODE_OPTIONS` and `NODE_PATH`, the interpreters' own option and path

@@ -216,7 +216,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		}
 		// The person's own servers (see user_mcp.go), then aimebu's entry, which replaces one of that name.
 		servers := map[string]any{}
-		own, envVars := userMCPServers(userAgentDir(), "aimebu", a.variant() == "docker")
+		own, envVars := userMCPServers(userAgentDir(), "aimebu", spec.NativeSessionHandle, a.variant() == "docker")
 		for name, entry := range own {
 			servers[name] = entry
 		}

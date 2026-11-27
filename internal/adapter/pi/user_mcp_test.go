@@ -1,9 +1,11 @@
 package pi
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +22,7 @@ func TestUserMCPServersAreCopiedWithoutAimebu(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	servers, env := userMCPServers(dir, "aimebu", false)
+	servers, env := userMCPServers(dir, "aimebu", "ses", false)
 	if _, ok := servers["aimebu"]; ok || len(servers) != 2 {
 		t.Fatalf("servers = %v", servers)
 	}
@@ -33,7 +35,7 @@ func TestUserMCPServersAreCopiedWithoutAimebu(t *testing.T) {
 	if strings.Join(env, ",") != "DOCS_TOKEN,TOOL_KEY" {
 		t.Fatalf("env = %v", env)
 	}
-	if got, _ := userMCPServers(filepath.Join(dir, "missing"), "aimebu", false); len(got) != 0 {
+	if got, _ := userMCPServers(filepath.Join(dir, "missing"), "aimebu", "ses", false); len(got) != 0 {
 		t.Fatal("a person without a config has no servers")
 	}
 	items := strings.Join(childEnv("/tmp/agent", env...), "\n")
@@ -111,7 +113,7 @@ func TestUserMCPServersAreMadeSafeToCarry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	servers, env := userMCPServers(dir, "aimebu", false)
+	servers, env := userMCPServers(dir, "aimebu", "ses", false)
 	if !strings.Contains(string(servers["loud"]), `"exposure":"codemode"`) {
 		t.Fatalf("an exposure is decoded before it is compared: %s", servers["loud"])
 	}
@@ -130,7 +132,7 @@ func TestUserMCPServersAreMadeSafeToCarry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(`{"mcpServers": {`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got, vars := userMCPServers(dir, "aimebu", false); len(got) != 0 || len(vars) != 0 {
+	if got, vars := userMCPServers(dir, "aimebu", "ses", false); len(got) != 0 || len(vars) != 0 {
 		t.Fatalf("a file that is not JSON carries nothing: %v %v", got, vars)
 	}
 }
@@ -150,7 +152,7 @@ func TestContainerCarriesOnlyPlainRemoteServers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	servers, env := userMCPServers(dir, "aimebu", true)
+	servers, env := userMCPServers(dir, "aimebu", "ses", true)
 	if len(servers) != 2 || servers["plain"] == nil || servers["exposed"] == nil ||
 		servers["header"] != nil || servers["referenced"] != nil || servers["stdio"] != nil || servers["loopback"] != nil {
 		t.Fatalf("only the plain remote servers are carried: %v", servers)
@@ -160,5 +162,40 @@ func TestContainerCarriesOnlyPlainRemoteServers(t *testing.T) {
 	}
 	if len(env) != 0 {
 		t.Fatalf("a carried entry names no variable: %v", env)
+	}
+}
+
+// A turn rebuilds the private mcp.json from the person's file, so a server that cannot go into a container is skipped on every turn: its line
+// is logged once per session and reason, and a session of its own logs it again.
+func TestSkippedServerWarningIsOncePerSessionAndReason(t *testing.T) {
+	dir := t.TempDir()
+	write := func(config string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(config), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+	count := func(text string) int { return strings.Count(logged.String(), text) }
+	session := t.Name() + "-a"
+	write(`{"mcpServers":{"incident":{"url":"https://a.example/mcp","directTools":["x"]}}}`)
+	for range 3 {
+		userMCPServers(dir, "aimebu", session, true)
+	}
+	if got := count(`"incident" is not carried to the container: its directTools`); got != 1 {
+		t.Fatalf("the same reason in one session logged %d times, want 1:\n%s", got, logged.String())
+	}
+	write(`{"mcpServers":{"incident":{"command":"/usr/bin/tool"}}}`)
+	userMCPServers(dir, "aimebu", session, true)
+	userMCPServers(dir, "aimebu", session, true)
+	if got := count(`"incident" is not carried to the container: its command`); got != 1 {
+		t.Fatalf("a new reason of the same server logged %d times, want 1:\n%s", got, logged.String())
+	}
+	write(`{"mcpServers":{"incident":{"url":"https://a.example/mcp","directTools":["x"]}}}`)
+	userMCPServers(dir, "aimebu", t.Name()+"-b", true)
+	if got := count(`its directTools`); got != 2 {
+		t.Fatalf("another session logged %d times in all, want 2:\n%s", got, logged.String())
 	}
 }
