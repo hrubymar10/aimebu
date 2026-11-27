@@ -51,11 +51,17 @@ func teamSetupError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) teamSetupPreview(w http.ResponseWriter, r *http.Request) {
+	// Who may set the team up is decided before the document is read or validated, as teamSetupCreate does: a person outside the project
+	// learns nothing from the shape errors.
+	projectID, actorID := r.PathValue("project"), userID(r)
+	if role, err := s.Store.UserProjectRole(r.Context(), actorID, projectID); err != nil || role != "owner" && role != "operator" {
+		teamSetupError(w, store.ErrForbidden)
+		return
+	}
 	var input store.TeamSetupInput
 	if !readJSON(w, r, &input) {
 		return
 	}
-	projectID, actorID := r.PathValue("project"), userID(r)
 	if err := s.Store.ValidateTeamSetup(r.Context(), projectID, actorID, input); err != nil {
 		teamSetupError(w, err)
 		return
