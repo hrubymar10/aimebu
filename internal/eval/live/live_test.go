@@ -544,7 +544,14 @@ func TestQuotaGuardFollowsTheModelPrefixOfPiAndOpenCode(t *testing.T) {
 			t.Fatalf("%s on an ollama-cloud model at 100%% must stop the run: %v", tool, err)
 		}
 	}
+	// An explicit Target.Provider that /api/usages knows wins over the model id (the turn spec carries it, runcase.go:102).
 	o := newOptions(t, st, "s18-fyi-silence")
+	o.Targets = []Target{{Name: "x", Tool: "pi", LauncherID: "lch_1", Model: "glm-5.3", Provider: "ollama-cloud"}}
+	o.Quota = &QuotaSource{URL: usagesServer(t, ollamaUsages).URL}
+	if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "ollama-cloud/local/weekly") {
+		t.Fatalf("a pi target with Provider ollama-cloud and an unprefixed model must stop the run: %v", err)
+	}
+	o = newOptions(t, st, "s18-fyi-silence")
 	o.Targets = []Target{{Name: "x", Tool: "pi", LauncherID: "lch_1", Model: "acme-llm/glm-5.3-flash"}}
 	o.Quota = &QuotaSource{URL: usagesServer(t, ollamaUsages).URL}
 	if _, err := o.Run(context.Background()); err != nil {
@@ -560,22 +567,22 @@ func TestEveryEvalKindMapsToAUsagesProvider(t *testing.T) {
 			t.Errorf("eval kind %q is not classified in providers.toolProviders", kind)
 			continue
 		}
-		fixed, ok := providers.ProviderFor(kind, "")
+		fixed, ok := providers.ProviderFor(kind, "", "")
 		if ok && !providers.KnownProvider(fixed) {
 			t.Errorf("eval kind %q maps to %q, which is not a usages provider", kind, fixed)
 		}
 		if !ok {
 			// Model-dependent: a known provider prefix must resolve, an unknown one must not.
-			if name, ok := providers.ProviderFor(kind, providers.ProviderOllamaCloud+"/m"); !ok || name != providers.ProviderOllamaCloud {
+			if name, ok := providers.ProviderFor(kind, providers.ProviderOllamaCloud+"/m", ""); !ok || name != providers.ProviderOllamaCloud {
 				t.Errorf("eval kind %q has no fixed provider and does not follow its model prefix: %q %v", kind, name, ok)
 			}
-			if _, ok := providers.ProviderFor(kind, "unknown-vendor/m"); ok {
+			if _, ok := providers.ProviderFor(kind, "unknown-vendor/m", ""); ok {
 				t.Errorf("eval kind %q resolved an unknown prefix", kind)
 			}
 		}
 	}
 	for kind, want := range map[string]string{eval.KindClaude: providers.ProviderClaudeCode, eval.KindCodex: providers.ProviderCodex, eval.KindVibe: providers.ProviderMistral} {
-		if name, ok := providers.ProviderFor(kind, "whatever/model"); !ok || name != want {
+		if name, ok := providers.ProviderFor(kind, "whatever/model", ""); !ok || name != want {
 			t.Errorf("%s maps to %q, want %q", kind, name, want)
 		}
 	}

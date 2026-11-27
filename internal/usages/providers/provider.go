@@ -48,15 +48,20 @@ var toolProviders = map[string]string{
 	"opencode": "",
 }
 
-// ProviderFor is the /api/usages provider a turn of tool on model draws its quota from, and false when there is none. The harness table comes
-// first (claude, codex, vibe). For a model-dependent tool it is the "<provider>/" prefix of the model id when that is a known usages provider
-// (so an ollama-cloud model is ollama-cloud whichever harness runs it); any other prefix, or none, has no window.
-func ProviderFor(tool, model string) (string, bool) {
-	if name := toolProviders[tool]; name != "" {
-		return name, true
-	}
-	if _, ok := toolProviders[tool]; !ok {
+// ProviderFor is the /api/usages provider a turn of tool draws its quota from, and false when there is none. An explicit provider (the
+// turn's Agent.Provider) that KnownProvider accepts wins; then the harness table (claude, codex, vibe); then, for a model-dependent tool
+// (pi, opencode), the "<provider>/" prefix of the model id when that is a known usages provider. Anything else has no window. An unknown
+// tool has none either.
+func ProviderFor(tool, model, provider string) (string, bool) {
+	fixed, known := toolProviders[tool]
+	if !known {
 		return "", false
+	}
+	if KnownProvider(provider) {
+		return provider, true
+	}
+	if fixed != "" {
+		return fixed, true
 	}
 	if prefix, _, found := strings.Cut(model, "/"); found && KnownProvider(prefix) {
 		return prefix, true

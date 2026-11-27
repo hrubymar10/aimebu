@@ -167,11 +167,11 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 }
 
 // targetTools are the /api/usages provider names of the run's targets (providers.ProviderFor, the server's own mapping): the only
-// providers whose quota windows the guard looks at. A target with no provider there (Target.Model names no usages provider, runcase.go:102) adds none.
+// providers whose quota windows the guard looks at. A target with no provider there (neither Target.Provider nor Target.Model names a usages provider; both reach the turn spec at runcase.go:102) adds none.
 func (o *Options) targetTools() map[string]bool {
 	tools := map[string]bool{}
 	for _, t := range o.Targets {
-		if name, ok := providers.ProviderFor(t.Tool, t.Model); ok {
+		if name, ok := providers.ProviderFor(t.Tool, t.Model, t.Provider); ok {
 			tools[name] = true
 		}
 	}
