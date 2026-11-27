@@ -2363,6 +2363,10 @@ const roomLimitsMarker = "room daily limits are dropped here"
 
 func migrate(ctx context.Context, db *sql.DB) error { return migrateUpTo(ctx, db, 0) }
 
+// evalSymlinks is filepath.EvalSymlinks; tests replace it to simulate a filesystem error the process cannot otherwise provoke while still
+// reading the database.
+var evalSymlinks = filepath.EvalSymlinks
+
 func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
 	var dbPath string
 	if err := tx.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&dbPath); err != nil {
@@ -2373,17 +2377,23 @@ func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
 	}
 	root := dataRootForDB(dbPath)
 	dir := filepath.Join(filepath.Dir(dbPath), "attachments")
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	// The conversion is an optimisation: absolute rows still resolve through AttachmentPath. No filesystem condition may fail the open, so
+	// any error here skips the conversion, logs once and lets the migration be recorded as applied.
+	resolvedRoot, err := evalSymlinks(root)
 	if err != nil {
-		return err
+		log.Printf("migration 146: attachment paths left absolute: cannot resolve the data root: %v", err)
+		return nil
 	}
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	resolvedDir, err := evalSymlinks(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("migration 146: attachment paths left absolute: cannot resolve the attachments directory: %v", err)
+		}
+		return nil
 	}
 	// A symlinked attachments directory may point outside this data root.
 	// Such paths cannot be safely converted to root-relative paths.
-	trustedDir := err == nil && resolvedDir == filepath.Join(resolvedRoot, "server", "attachments")
+	trustedDir := resolvedDir == filepath.Join(resolvedRoot, "server", "attachments")
 	rows, err := tx.QueryContext(ctx, `SELECT id,path FROM attachment`)
 	if err != nil {
 		return err
@@ -2401,12 +2411,12 @@ func migrateAttachmentPaths(ctx context.Context, tx *sql.Tx) error {
 		}
 		storedDir := filepath.Dir(stored)
 		if storedDir != dir {
-			resolvedStoredDir, resolveErr := filepath.EvalSymlinks(storedDir)
+			resolvedStoredDir, resolveErr := evalSymlinks(storedDir)
 			if resolveErr != nil || resolvedStoredDir != resolvedDir {
 				continue
 			}
 		}
-		if resolvedStored, resolveErr := filepath.EvalSymlinks(stored); resolveErr == nil {
+		if resolvedStored, resolveErr := evalSymlinks(stored); resolveErr == nil {
 			if resolvedStored != filepath.Join(resolvedDir, id+".bin") {
 				continue
 			}

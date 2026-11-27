@@ -235,3 +235,91 @@ func attachmentPathStore(t *testing.T) (*Store, string) {
 	t.Cleanup(func() { _ = s.Close() })
 	return s, path
 }
+
+// attachmentRowsUntouchedAfterMigration seeds one absolute attachment row inside root, forces migration 146 to run again and checks that Open
+// succeeds, records the migration and leaves the row absolute.
+func attachmentRowsUntouchedAfterMigration(t *testing.T, root, path string) {
+	t.Helper()
+	s, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, _ := fixture(t, s)
+	stored := filepath.Join(root, "server", "attachments", "att_fs.bin")
+	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_fs',?,'','text/plain',0,?,'owner','now')`, project.ID, stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatalf("Open failed because of a filesystem condition: %v", err)
+	}
+	defer reopened.Close()
+	var applied int
+	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM schema_version WHERE version=146`).Scan(&applied); err != nil || applied != 1 {
+		t.Fatalf("migration 146 recorded %d times: %v", applied, err)
+	}
+	var got string
+	if err := reopened.db.QueryRow(`SELECT path FROM attachment WHERE id='att_fs'`).Scan(&got); err != nil || got != stored {
+		t.Fatalf("path %q, want %q: %v", got, stored, err)
+	}
+}
+
+func newFilesystemErrorRoot(t *testing.T) (root, path string) {
+	t.Helper()
+	root = filepath.Join(t.TempDir(), "root")
+	if err := os.MkdirAll(filepath.Join(root, "server"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path = filepath.Join(root, "server", "aimebu.sqlite")
+	if err := os.WriteFile(path, blankTestDB, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return root, path
+}
+
+func TestAttachmentPathMigrationSurvivesUnreadableRoot(t *testing.T) {
+	root, path := newFilesystemErrorRoot(t)
+	// A real chmod would also hide the database, so the failure is injected for the data root only.
+	original := evalSymlinks
+	t.Cleanup(func() { evalSymlinks = original })
+	evalSymlinks = func(p string) (string, error) {
+		if p == root {
+			return "", &os.PathError{Op: "lstat", Path: p, Err: os.ErrPermission}
+		}
+		return original(p)
+	}
+	attachmentRowsUntouchedAfterMigration(t, root, path)
+}
+
+func TestAttachmentPathMigrationSurvivesUnreadableAttachmentsDirectory(t *testing.T) {
+	root, path := newFilesystemErrorRoot(t)
+	dir := filepath.Join(root, "server", "attachments")
+	original := evalSymlinks
+	t.Cleanup(func() { evalSymlinks = original })
+	evalSymlinks = func(p string) (string, error) {
+		if p == dir {
+			return "", &os.PathError{Op: "lstat", Path: p, Err: os.ErrPermission}
+		}
+		return original(p)
+	}
+	attachmentRowsUntouchedAfterMigration(t, root, path)
+}
+
+func TestAttachmentPathMigrationSurvivesAttachmentsFile(t *testing.T) {
+	root, path := newFilesystemErrorRoot(t)
+	if err := os.WriteFile(filepath.Join(root, "server", "attachments"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	attachmentRowsUntouchedAfterMigration(t, root, path)
+}
+
+func TestAttachmentPathMigrationSurvivesMissingAttachmentsDirectory(t *testing.T) {
+	root, path := newFilesystemErrorRoot(t)
+	attachmentRowsUntouchedAfterMigration(t, root, path)
+}
