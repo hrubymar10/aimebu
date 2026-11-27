@@ -97,7 +97,7 @@ func TestCommandRouting(t *testing.T) {
 		wantStderr string
 	}{
 		{"version", []string{"version"}, 0, resolveVersion() + "\n", ""},
-		{"missing command", nil, 2, "", "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>\n"},
+		{"missing command", nil, 2, "", "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|sessions|usages|fe|version|help>\n"},
 		{"sessions bad flag", []string{"sessions", "--bogus"}, 2, "", "usage: aimebu sessions\n"},
 		{"sessions empty", []string{"sessions"}, 0, "No agent sessions found.\n", ""},
 		{"doctor bad flag", []string{"doctor", "--bogus"}, 2, "", "usage: aimebu doctor [--json] [--strict] [--live | --machine]\n"},

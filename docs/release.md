@@ -56,6 +56,12 @@ changes, while the previous supervisor drains its active work on its old
 journal. Neither the formula nor the server saves a Cellar binary path as
 installation state. The server's data remains under `~/.aimebu` by default.
 
+Before upgrading an existing installation, run `aimebu backup`. The archive
+contains the data root, including keys and attachments; see [backup and
+restore](backup.md). A running supervisor's journal is omitted and reported by
+the backup command, so stop the server and supervisor first when that journal
+must be preserved.
+
 The rest of this document is the original release planning record; Homebrew
 instructions above supersede its older clone-first and HEAD-only formula
 proposals.

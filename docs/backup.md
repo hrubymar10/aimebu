@@ -1,0 +1,40 @@
+# Backup and restore
+
+Run `aimebu backup` before upgrading. It writes a private (`0600`) gzip tar
+archive to `<data root>/backups/aimebu-<version>-<UTC timestamp>.tar.gz`.
+`aimebu backup --out <file>` chooses another path. The data root is
+`~/.aimebu` by default or `AIMEBU_CONFIG_DIR` when set.
+
+The archive contains the server database, config, keys and attachments, plus a
+`manifest.json` with the binary version, time, schema version and a SHA-256
+checksum for each file. **Treat it as a secret:** the keys inside can grant
+access to this installation. Harness homes such as `~/.claude` and `~/.codex`
+are outside the data root and are not included. Neither are backups, logs,
+temporary files, or runtime lock and PID files.
+
+When the server is running, it makes a SQLite snapshot through its own
+connection. The CLI requests it over the same-host, doctor-key-authenticated
+HTTP channel used by `aimebu supervisor restart`. The CLI never opens the live
+database. When the server is stopped, the CLI holds the server writer lock
+while it makes the snapshot. A running supervisor owns its journals; backup
+skips those journals and prints a warning. Stop both processes first if their
+journals matter to the backup. A stopped journal is copied with its WAL under
+its lock.
+The doctor key is a mode-0600 file in the data root, so anyone who can read it
+already has file-system access to the database; this route grants no new data
+access. Snapshot temporary files stay inside the data root and are removed
+after use, including when a client disconnects.
+
+Restore with `aimebu restore <file>`. The command checks every manifest entry
+and SHA-256 checksum, and refuses archives from a newer database schema.
+An older schema is restored and migrates when the server next starts. Restore
+requires the server and supervisor to be stopped; use `aimebu server stop
+--with-supervisor` for a manually started installation or `brew services stop
+aimebu` for a Homebrew service. Restore asks for confirmation on a terminal;
+`--yes` allows unattended use. It moves the existing data root to
+`<data root>.pre-restore-<UTC timestamp>` and prints that path. It never
+deletes the original.
+
+Only regular archive files with safe relative paths are accepted. Symlinks,
+duplicate paths, mismatched checksums and missing manifest entries are
+refused before the current data root is moved.

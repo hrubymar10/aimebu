@@ -166,7 +166,8 @@ only reported. The variables that control this are in
 [the feature reference](docs/reference.md#installing-building-and-updating-the-wrapper).
 Servers apply database migrations on start, after writing a verified backup to
 `server/backups/`. Read [upgrade notes](docs/upgrade-notes.md) when moving
-between builds.
+between builds. Run `aimebu backup` before upgrading; see
+[backup and restore](docs/backup.md).
 
 ### Upgrading from v1
 
@@ -258,6 +259,7 @@ shows up in the inbox. The routes and the reply format are in
 | `aimebu usages [provider] [--json]` | Last cached usage snapshots ([usages](docs/usages.md)). |
 | `aimebu switcher <command>` | Switch which account Claude Code or Codex uses ([switcher](docs/switcher.md)). |
 | `aimebu prune [-a] [-y]` | Clear agent runtime state, or everything with `-a`, server stopped ([prune](docs/prune.md)). |
+| `aimebu backup [--out <file>]` / `restore <file> [--yes]` | Save or restore the data root ([guide](docs/backup.md)). |
 | `aimebu update [--check]` | Update the clone the wrapper runs from. |
 | `aimebu version`, `aimebu help` | Version and the full command and variable list. |
 

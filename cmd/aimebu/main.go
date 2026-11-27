@@ -115,7 +115,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	warnLegacyEnvironment(stderr)
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>")
+		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|sessions|usages|fe|version|help>")
 		return 2
 	}
 	if args[0] != "help" && args[0] != "-h" && args[0] != "--help" && args[0] != "version" {
@@ -130,6 +130,10 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 0
 	case "prune":
 		return pruneCommand(ctx, args[1:], os.Stdin, stdout, stderr)
+	case "backup":
+		return backupCommand(ctx, args[1:], stdout, stderr)
+	case "restore":
+		return restoreCommand(ctx, args[1:], stdout, stderr)
 	case "import-v1":
 		if os.Getenv("AIMEBU_DEV_IMPORT_V1") != "1" {
 			fmt.Fprintln(stderr, "import-v1 is available only in development tests")
@@ -272,6 +276,8 @@ Utilities:
   usages [provider] [--json|--plain]  Print the usage snapshots the server last cached
   switcher <command>                  Manage Claude Code / Codex credential profiles (works with the server stopped)
   prune [-a] [-y]                     Clear runtime agent state, or everything with -a (stop the server first)
+  backup [--out <file>]               Save a verified data-root archive (contains secrets)
+  restore <file> [--yes]               Replace a stopped data root and keep the original
   fe                                  Open the web UI in the browser (prints the address where there is no browser)
 
 Other:
