@@ -60,8 +60,11 @@ type TurnSpec struct {
 	// KeepAlive marks a turn that is not work: it keeps the harness's prompt cache warm and nothing else. The adapter asks the model to answer with
 	// no messages, and the supervisor throws the answer away; no turn exists for it on the server. Never journaled. Only an adapter that is a
 	// KeepAliver runs one.
-	KeepAlive    bool `json:"-"`
-	CheckoutPath string
+	KeepAlive bool `json:"-"`
+	// IsolateUserMCP keeps the person's own MCP servers and connectors out of a turn: it gets the aimebu toolbox and nothing else. Only the eval
+	// runner sets it (docs/eval.md), so a model is measured on the prompt and not on whatever the machine it runs on has configured.
+	IsolateUserMCP bool `json:"-"`
+	CheckoutPath   string
 	// LaunchPath, when set, is the folder the harness is started in instead of CheckoutPath: another spelling of the same directory, which a
 	// Claude Code session was saved under. The supervisor sets it only after checking it resolves to CheckoutPath.
 	LaunchPath            string

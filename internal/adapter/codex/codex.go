@@ -115,7 +115,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	// The person's own MCP servers, read once for the turn: the tables for the private config and the variables to pass go together.
 	var own userMCP
-	if a.variant() == "native" && spec.Mode == adapter.ModeNormal {
+	if a.variant() == "native" && spec.Mode == adapter.ModeNormal && !spec.IsolateUserMCP {
 		own = readUserMCP(a.AuthPath)
 	}
 	runtimeDir, err := a.prepareRuntime(spec, own)
@@ -148,8 +148,10 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		config := "mcp_servers.aimebu_docker={url=" + strconv.Quote(endpoint) + ",bearer_token_env_var=" + strconv.Quote(adapter.AgentKeyEnv) + "}"
 		// The person's own remote servers, as overrides of their own (the container's config.toml is ignored, see below), then aimebu's own two
 		// entries, last, so nothing before them can replace either.
-		for _, override := range userDockerOverrides() {
-			args = append(args, "-c", override)
+		if !spec.IsolateUserMCP {
+			for _, override := range userDockerOverrides() {
+				args = append(args, "-c", override)
+			}
 		}
 		args = append(args, "-c", `mcp_servers.aimebu={command="true",enabled=false}`, "-c", config)
 	}

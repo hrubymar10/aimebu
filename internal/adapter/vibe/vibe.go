@@ -153,6 +153,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		if docker {
 			scope = mcpRemote
 		}
+		if spec.IsolateUserMCP {
+			scope = mcpNone
+		}
 	}
 	providerEnv, err := seedHome(home, a.userHome(), scope)
 	if err != nil {

@@ -100,7 +100,9 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		return eval.Attempt{Class: eval.ClassHarness, Err: fmt.Sprintf(format, args...)}, "", used
 	}
 	spec := adapter.TurnSpec{TurnID: turnID, Agent: adapter.AgentSpec{ID: eval.WorkerID, Tool: target.Tool, Variant: "docker", LauncherID: row.ID, Model: target.Model, Provider: target.Provider},
-		NativeSessionHandle: session, NativeSessionStarted: started, CheckoutPath: checkout, Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: turnContext}
+		NativeSessionHandle: session, NativeSessionStarted: started, CheckoutPath: checkout, Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: turnContext,
+		// Only the aimebu toolbox and the stand-in's tools: the machine the eval runs on has MCP servers of its own, which would show in the answers.
+		IsolateUserMCP: true}
 	if _, err := supervisor.ApplyLauncher(&spec, row, checkout); err != nil {
 		return fail("launcher: %v", err)
 	}

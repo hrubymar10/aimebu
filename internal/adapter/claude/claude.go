@@ -297,6 +297,10 @@ func (a *Adapter) prepare(spec adapter.TurnSpec, warm bool) (*launch, error) {
 			// Not strict: the person's own MCP servers and connectors stay available to the agent, as in their terminal. The --mcp-config entry
 			// is toolboxServer, and a v1 bus named aimebu, of any scope, is denied (see toolboxServer).
 			args = append(args, "--disallowedTools", normalDisallowedTools)
+			if spec.IsolateUserMCP {
+				// The eval: only the --mcp-config entry below, none of the person's connectors or servers.
+				args = append(args, "--strict-mcp-config")
+			}
 			if a.variant() == "docker" {
 				endpoint, header, err := adapter.DockerMCPAt(spec.AgentTools, spec.Agent.ID, spec.AgentServerURL)
 				if err != nil {

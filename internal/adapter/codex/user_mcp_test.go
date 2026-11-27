@@ -433,3 +433,67 @@ func TestDockerTurnPassesThePersonsRemoteServersAsOverrides(t *testing.T) {
 		t.Fatalf("a read-only turn gets no server:\n%s", args)
 	}
 }
+
+// The eval isolates a turn from the person's own MCP servers (TurnSpec.IsolateUserMCP): a Docker turn gets aimebu's two entries and no override of
+// theirs, and a native turn's private config holds aimebu's table alone.
+func TestIsolatedTurnCarriesNoneOfThePersonsServers(t *testing.T) {
+	t.Setenv("AIMEBU_ALLOW_NATIVE", "1")
+	root := t.TempDir()
+	userHome := filepath.Join(root, "user-codex")
+	if err := os.MkdirAll(userHome, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"auth.json": `{"auth_mode":"chatgpt"}`} {
+		if err := os.WriteFile(filepath.Join(userHome, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CODEX_HOME", userHome)
+	tools := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
+	argsPath, tomlPath := filepath.Join(root, "args"), filepath.Join(root, "config.toml")
+	script := filepath.Join(root, "codex")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat \"$CODEX_HOME/config.toml\" > " + tomlPath + " 2>/dev/null\ncat >/dev/null\n" +
+		"printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"messages\\\":[]}\"}}' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}'\n"
+	if err := testenv.WriteExecutable(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(variant string, isolate bool) (args, config string) {
+		t.Helper()
+		person := userConfig // the person's file, as a native turn reads it
+		if variant == "docker" {
+			person = dockerConfig // and as a Docker turn reads it
+		}
+		if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(person), 0600); err != nil {
+			t.Fatal(err)
+		}
+		a := New(filepath.Join(root, "runtime-"+variant))
+		a.Command, a.Variant, a.AuthPath = script, variant, filepath.Join(userHome, "auth.json")
+		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "iso-" + variant, Agent: adapter.AgentSpec{ID: "agt_test", Tool: "codex", Variant: variant, Model: "gpt-6-sol"}, Mode: adapter.ModeNormal,
+			CheckoutPath: root, AgentTools: tools, NotesJSON: json.RawMessage(`[]`), IsolateUserMCP: isolate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		if _, err := turn.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		a1, _ := os.ReadFile(argsPath)
+		c, _ := os.ReadFile(tomlPath)
+		_ = os.Remove(tomlPath)
+		return string(a1), string(c)
+	}
+	if args, _ := run("docker", false); !strings.Contains(args, "mcp_servers.docs=") {
+		t.Fatalf("without isolation the person's remote server reaches the container (the control of this test):\n%s", args)
+	}
+	args, _ := run("docker", true)
+	if strings.Contains(args, "mcp_servers.docs") || !strings.Contains(args, "mcp_servers.aimebu_docker=") {
+		t.Fatalf("an isolated Docker turn has aimebu's entries and none of the person's:\n%s", args)
+	}
+	if _, config := run("native", false); !strings.Contains(config, "docs") {
+		t.Fatalf("without isolation a native turn carries the person's servers (the control):\n%s", config)
+	}
+	if _, config := run("native", true); strings.Contains(config, "docs") || strings.Count(config, "[mcp_servers.aimebu]") != 1 {
+		t.Fatalf("an isolated native turn's config holds aimebu's table alone:\n%s", config)
+	}
+}

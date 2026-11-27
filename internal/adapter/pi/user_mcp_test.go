@@ -199,3 +199,53 @@ func TestSkippedServerWarningIsOncePerSessionAndReason(t *testing.T) {
 		t.Fatalf("another session logged %d times in all, want 2:\n%s", got, logged.String())
 	}
 }
+
+// The eval isolates a turn from the person's own MCP servers (TurnSpec.IsolateUserMCP): the private mcp.json holds aimebu's entry alone, and the
+// allowlist does not name codemode, which only a person's server needs.
+func TestIsolatedTurnCarriesNoneOfThePersonsServers(t *testing.T) {
+	root := t.TempDir()
+	userDir := filepath.Join(root, "user-agent")
+	if err := os.MkdirAll(userDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, "mcp.json"), []byte(`{"mcpServers":{"incident":{"url":"https://incident.example/mcp"},"docs":{"url":"https://docs.example/mcp"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_CODING_AGENT_DIR", userDir)
+	path, argsPath := filepath.Join(root, "pi"), filepath.Join(root, "args")
+	fixture, err := filepath.Abs(filepath.Join("testdata", "print.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testenv.WriteExecutable(path, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argsPath+"\ncat "+fixture+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	mcpOf := func(isolate bool) (string, string) {
+		t.Helper()
+		a := &Adapter{Command: path, AllowNative: true, RuntimeRoot: filepath.Join(root, "runtime")}
+		turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "iso", Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
+			CheckoutPath: t.TempDir(), AgentTools: testToolsConfig(t, "agt_test"), NativeSessionHandle: testSession, Mode: adapter.ModeNormal, IsolateUserMCP: isolate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		if _, err := turn.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte("agt_test"))
+		data, err := os.ReadFile(filepath.Join(root, "runtime", hex.EncodeToString(sum[:]), "mcp.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		args, _ := os.ReadFile(argsPath)
+		return string(data), string(args)
+	}
+	if data, _ := mcpOf(false); !strings.Contains(data, "incident.example") {
+		t.Fatalf("without isolation the person's servers are carried (the control of this test): %s", data)
+	}
+	data, args := mcpOf(true)
+	if strings.Contains(data, "incident") || strings.Contains(data, "docs.example") || !strings.Contains(data, "/api/agent/mcp") || strings.Contains(args, "codemode") {
+		t.Fatalf("an isolated turn has aimebu's entry alone: %s\nargs: %s", data, args)
+	}
+}

@@ -205,3 +205,45 @@ func TestDockerStartCarriesTheRemoteServersAndForwardsTheirVariables(t *testing.
 		t.Fatalf("the variable the remote server names is forwarded by name:\n%s", got)
 	}
 }
+
+// The eval isolates a turn from the person's own MCP servers (TurnSpec.IsolateUserMCP): the inline config holds aimebu's entry alone.
+func TestIsolatedTurnCarriesNoneOfThePersonsServers(t *testing.T) {
+	root := t.TempDir()
+	userConfig := filepath.Join(root, "user-config")
+	if err := os.MkdirAll(filepath.Join(userConfig, "opencode"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"mcp":{"docs":{"type":"remote","url":"https://docs.example/mcp","headers":{"Authorization":"Bearer {env:DOCS_TOKEN}"}},"local":{"type":"local","command":["tool"]}}}`
+	if err := os.WriteFile(filepath.Join(userConfig, "opencode", "opencode.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", userConfig)
+	t.Setenv("DOCS_TOKEN", "tok")
+	path, record := dockerLauncher(t, root, true, "cat "+fixture(t, "ok.jsonl")+"\n")
+	inlineOf := func(isolate bool) string {
+		t.Helper()
+		turnSpec := dockerSpec(t, t.TempDir())
+		turnSpec.IsolateUserMCP = isolate
+		a := &Adapter{Command: path, Variant: "docker"}
+		turn, err := a.Start(context.Background(), turnSpec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exit, err := drain(t, turn); err != nil || !exit.TerminalEvent {
+			t.Fatalf("exit=%+v err=%v", exit, err)
+		}
+		data, _ := os.ReadFile(record)
+		for _, l := range strings.Split(string(data), "\n") {
+			if rest, ok := strings.CutPrefix(l, "OPENCODE_CONFIG_CONTENT="); ok {
+				return rest
+			}
+		}
+		return ""
+	}
+	if inline := inlineOf(false); !strings.Contains(inline, "docs.example/mcp") {
+		t.Fatalf("without isolation the person's remote server is carried (the control of this test):\n%s", inline)
+	}
+	if inline := inlineOf(true); strings.Contains(inline, "docs.example") || strings.Contains(inline, `"local"`) || !strings.Contains(inline, "host.docker.internal") {
+		t.Fatalf("an isolated turn has aimebu's entry alone:\n%s", inline)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,12 @@ import (
 // launchArgs runs one normal turn through a scripted launcher and returns its argument list and the environment it was given.
 func launchArgs(t *testing.T, variant, agentServerURL string) (args []string, env map[string]string) {
 	t.Helper()
+	return launchArgsFor(t, variant, agentServerURL, false)
+}
+
+// launchArgsFor is launchArgs for a turn that is (or is not) isolated from the person's own MCP servers.
+func launchArgsFor(t *testing.T, variant, agentServerURL string, isolate bool) (args []string, env map[string]string) {
+	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
 	argsPath, envPath := filepath.Join(root, "args"), filepath.Join(root, "env")
@@ -30,7 +37,7 @@ func launchArgs(t *testing.T, variant, agentServerURL string) (args []string, en
 	}
 	access := &adapter.AgentToolsAccess{AgentID: "agt_test", ServerURL: "http://127.0.0.1:9897", Key: "aak_secret", Command: "/usr/bin/aimebu"}
 	a := &Adapter{Command: path, Variant: variant, AllowNative: true}
-	spec := adapter.TurnSpec{TurnID: "entry", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: variant, Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentTools: access, AgentServerURL: agentServerURL, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
+	spec := adapter.TurnSpec{TurnID: "entry", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: variant, Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentTools: access, AgentServerURL: agentServerURL, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`), IsolateUserMCP: isolate}
 	turn, err := a.Start(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -343,6 +350,23 @@ func TestLiveToolboxSurvivesADisabledV1Bus(t *testing.T) {
 			}
 			if !toolbox {
 				t.Fatalf("the toolbox tool is not listed: %v", report.Tools)
+			}
+		})
+	}
+}
+
+// The eval isolates a turn from the person's own MCP servers and connectors (TurnSpec.IsolateUserMCP): Claude is told to read only the
+// --mcp-config entry. A person's turn is not strict: their servers stay, as in their terminal.
+func TestIsolatedTurnReadsOnlyTheToolboxEntry(t *testing.T) {
+	for _, variant := range []string{"native", "docker"} {
+		t.Run(variant, func(t *testing.T) {
+			args, _ := launchArgsFor(t, variant, "", false)
+			if slices.Contains(args, "--strict-mcp-config") {
+				t.Fatalf("a person's own turn must keep their MCP servers: %q", args)
+			}
+			args, _ = launchArgsFor(t, variant, "", true)
+			if !slices.Contains(args, "--strict-mcp-config") || !slices.Contains(args, "--mcp-config") {
+				t.Fatalf("an isolated turn is strict and still carries the toolbox entry: %q", args)
 			}
 		})
 	}

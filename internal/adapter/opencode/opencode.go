@@ -169,9 +169,13 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		}
 		servers := map[string]any{}
 		// The person's own servers (see user_mcp.go); a container gets the remote ones only, since a command on the host is not in it.
-		entries, envVars := userMCPEntries(userConfigDir(), "aimebu")
-		if docker {
-			entries, envVars = remoteOnly(entries)
+		var entries map[string]json.RawMessage
+		var envVars []string
+		if !spec.IsolateUserMCP {
+			entries, envVars = userMCPEntries(userConfigDir(), "aimebu")
+			if docker {
+				entries, envVars = remoteOnly(entries)
+			}
 		}
 		for name, entry := range entries {
 			servers[name] = entry

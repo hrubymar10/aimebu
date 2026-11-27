@@ -131,6 +131,13 @@ minimum measures the text-only path, as the same agent would run it. A call is h
 for the turn (it takes the tool's input when it is valid) is scored as always, and each attempt in `results.json` has `via`: `tool` when it is the
 answer the toolbox accepted, `text` when it is the final text. The report counts the two per model.
 
+**Only the aimebu toolbox.** Every turn the runner starts carries `TurnSpec.IsolateUserMCP` (`internal/adapter/adapter.go`), so a model is measured on the
+prompt and not on the MCP servers and connectors of the machine it runs on. Claude is started with `--strict-mcp-config` and reads only the `--mcp-config` entry
+(the toolbox); Codex's Docker turn gets none of the overrides it builds from the person's `config.toml`, and a native turn's private config holds aimebu's table
+alone; OpenCode's inline config and Pi's private `mcp.json` hold aimebu's entry alone (Pi then does not list `codemode`); Vibe seeds no server of the person's. A
+person's own agents are unchanged: the field is never journaled and only the eval sets it. Each adapter has a test, `TestIsolatedTurn...`, that puts a server in
+the isolated user config and checks that it does not reach the harness (and that it does without the field, so the test can fail).
+
 Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
 adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the
 scenario's list, as the supervisor sets it. A container reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its
