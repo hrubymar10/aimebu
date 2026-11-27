@@ -99,6 +99,9 @@ func TestDoctorSelfTestListsEnabledDockerLauncherModelsBehindTheDoctorGuard(t *t
 	if status != 200 {
 		t.Fatalf("status %d", status)
 	}
+	if len(answer.Skipped) != 1 || answer.Skipped[0].ID != "lch_native" || answer.Skipped[0].Tool != "pi" || answer.Skipped[0].Name != "st-native" || answer.Skipped[0].Reason != "not a Docker launcher" {
+		t.Fatalf("an enabled native launcher is reported as skipped, a disabled or empty Docker one is not: %+v", answer.Skipped)
+	}
 	if len(answer.Launchers) != 1 || answer.Launchers[0].ID != "lch_a" || answer.Launchers[0].ResolvedCommand != "/bin/lch_a" {
 		t.Fatalf("launchers: %+v", answer.Launchers)
 	}

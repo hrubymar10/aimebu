@@ -91,6 +91,17 @@ type DoctorSelfTest struct {
 	Launchers []LauncherRow          `json:"launchers"`
 	Targets   []DoctorSelfTestTarget `json:"targets"`
 	Usages    json.RawMessage        `json:"usages"`
+	// Skipped are the enabled, available launchers of that machine the eval cannot run through (not Docker), so a person is told why a launcher
+	// they have is not in the run.
+	Skipped []DoctorSelfTestSkipped `json:"skipped"`
+}
+
+// DoctorSelfTestSkipped is one launcher left out of Launchers and Targets, with the reason in words.
+type DoctorSelfTestSkipped struct {
+	ID     string `json:"id"`
+	Tool   string `json:"tool"`
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // DoctorSelfTestTarget is one model on one launcher. Name is a plain word that is unique in the answer. Providers are the custom providers

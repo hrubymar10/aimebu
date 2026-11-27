@@ -94,6 +94,10 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 		fmt.Fprintln(stderr, "self-test: the scenarios this build carries are invalid:", err)
 		return 1
 	}
+	// A launcher the person has but the eval cannot run through is said so, whatever else happens: a run is never silently short of it.
+	for _, s := range doc.Skipped {
+		fmt.Fprintf(stdout, "skipped: %s/%s is not a Docker launcher; the live eval runs Docker launchers only\n", s.Tool, s.Name)
+	}
 	chosen, err := selfTestTargets(doc, *targetsFlag)
 	if err != nil {
 		fmt.Fprintln(stderr, "self-test:", err)

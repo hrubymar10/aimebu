@@ -267,7 +267,7 @@ func (s *Server) doctorSelfTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	answer := protocol.DoctorSelfTest{Launchers: []protocol.LauncherRow{}, Targets: []protocol.DoctorSelfTestTarget{}, Usages: rawUsages}
+	answer := protocol.DoctorSelfTest{Launchers: []protocol.LauncherRow{}, Targets: []protocol.DoctorSelfTestTarget{}, Usages: rawUsages, Skipped: []protocol.DoctorSelfTestSkipped{}}
 	machineID := s.localSupervisorID()
 	conn, err := s.machineForID(machineID)
 	if machineID == "" || err != nil {
@@ -285,6 +285,10 @@ func (s *Server) doctorSelfTest(w http.ResponseWriter, r *http.Request) {
 	conn.harnessMu.Unlock()
 	used := map[string]bool{}
 	for _, row := range observed {
+		if row.Enabled && row.Available && !row.Containerized {
+			answer.Skipped = append(answer.Skipped, protocol.DoctorSelfTestSkipped{ID: row.ID, Tool: row.Tool, Name: row.Name, Reason: "not a Docker launcher"})
+			continue
+		}
 		if !row.Enabled || !row.Containerized || !row.Available {
 			continue
 		}

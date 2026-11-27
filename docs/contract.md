@@ -1835,7 +1835,8 @@ supervisor's machine last reported that are enabled, available and Docker (`cont
 launcher, with a `name` that is a plain word and unique in the answer. `providers` are that launcher's custom providers (names, base
 URLs and `key_env` names, never a key value). `usages` has the shape of `GET /api/usages` without any account name, or `null` when usage tracking is disabled.
 An empty usage snapshot has no usable weekly window, so the CLI warns and skips the quota guard. A machine that is not the local supervisor's, a disconnected supervisor, or no local supervisor yields
-empty `launchers` and `targets`. `aimebu self-test` reads this route instead of a config file and a session cookie.
+empty `launchers` and `targets`. `skipped:[{id,tool,name,reason}]` names the enabled, available launchers of that machine that are not Docker
+(`reason` `not a Docker launcher`), so `aimebu self-test` can say why one is not in the run. `aimebu self-test` reads this route instead of a config file and a session cookie.
 `GET /api/backup/database` accepts an empty request from the server host with
 `Authorization: Bearer <server/doctor.key>`. It rejects forwarded requests and
 requests without the current doctor key with HTTP 403. On success it returns

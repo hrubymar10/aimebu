@@ -236,6 +236,9 @@ aimebu self-test            # smoke: s01 and s15, every target, 1 repetition
 aimebu self-test --full     # every scenario, every target, 3 repetitions
 ```
 
+A launcher the person has that the eval cannot run through is named, one line each, before anything else: `skipped: claude/native is not a Docker launcher; the live
+eval runs Docker launchers only` (the route's `skipped`, `docs/contract.md`). A run with nothing left says so and exits 1.
+
 It spends subscription quota, so before it starts it prints the targets, the scenarios, the repetitions, the number of cases and turns (at most two per
 case), the cost cap and the hottest weekly window, then asks `Run it? [y/N]`. `--yes` skips the question. Without a terminal and without `--yes` it
 refuses (exit 1) and runs nothing. A server with no usage snapshot, or without a usable weekly window for the chosen providers, skips the quota guard with one

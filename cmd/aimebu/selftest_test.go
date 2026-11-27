@@ -31,6 +31,7 @@ type selfTestServer struct {
 	root    string
 	scratch string
 	usages  json.RawMessage
+	skipped []protocol.DoctorSelfTestSkipped
 	hits    atomic.Int32
 }
 
@@ -53,6 +54,7 @@ func newSelfTestServer(t *testing.T, targets ...string) *selfTestServer {
 		}
 		doc := doc
 		doc.Usages = s.usages
+		doc.Skipped = s.skipped
 		_ = json.NewEncoder(w).Encode(doc)
 	}))
 	t.Cleanup(srv.Close)
@@ -289,6 +291,30 @@ func TestSelfTestTargetsFlagFilters(t *testing.T) {
 	code, _, stderr = runSelfTest(t, "", "--yes", "--scratch", s.scratch, "--targets", "alpha,nope")
 	if code != 1 || !strings.Contains(stderr, `no target "nope"`) || !strings.Contains(stderr, "alpha, beta, gamma") || fake.calls != 0 {
 		t.Fatalf("unknown target: code %d stderr %q", code, stderr)
+	}
+}
+
+func TestSelfTestSaysWhichLaunchersItSkipped(t *testing.T) {
+	s := newSelfTestServer(t, "alpha")
+	s.skipped = []protocol.DoctorSelfTestSkipped{{ID: "lch_n", Tool: "claude", Name: "native", Reason: "not a Docker launcher"}, {ID: "lch_p", Tool: "pi", Name: "local", Reason: "not a Docker launcher"}}
+	fake := &fakeRun{}
+	fake.install(t)
+	code, stdout, stderr := runSelfTest(t, "", "--yes", "--scratch", s.scratch)
+	for _, want := range []string{"skipped: claude/native is not a Docker launcher; the live eval runs Docker launchers only\n", "skipped: pi/local is not a Docker launcher; the live eval runs Docker launchers only\n"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	if code != 0 || stderr != "" || fake.calls != 1 || strings.Index(stdout, "skipped:") > strings.Index(stdout, "Targets (") {
+		t.Fatalf("the run goes on with the Docker target, after the skipped lines: code %d calls %d stderr %q", code, fake.calls, stderr)
+	}
+	// Only native launchers: the lines come first, then the error, never a silent empty run.
+	s2 := newSelfTestServer(t)
+	s2.skipped = s.skipped[:1]
+	fake.calls = 0
+	code, stdout, stderr = runSelfTest(t, "", "--yes")
+	if code != 1 || fake.calls != 0 || !strings.Contains(stdout, "skipped: claude/native is not a Docker launcher") || !strings.Contains(stderr, "nothing to test") {
+		t.Fatalf("code %d calls %d stdout %q stderr %q", code, fake.calls, stdout, stderr)
 	}
 }
 
