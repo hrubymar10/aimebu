@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/buildversion"
 	"github.com/hrubymar10/aimebu/v2/internal/doctorcheck"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
@@ -149,7 +150,9 @@ func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
 		if machine.RevokedAt.Valid {
 			continue
 		}
-		item := protocol.DoctorMachine{ID: machine.ID, Name: machine.Name, Approved: machine.Approved, Launchers: []protocol.DoctorLauncher{}}
+		item := protocol.DoctorMachine{ID: machine.ID, Name: machine.Name, Approved: machine.Approved,
+			SupervisorVersion: machine.SupervisorVersion.String, ServerVersion: s.Version,
+			OlderBuild: buildversion.Older(machine.SupervisorVersion.String, s.Version), Launchers: []protocol.DoctorLauncher{}}
 		if machine.ID == s.localSupervisorID() {
 			item.RestartPending = s.localSupervisorPending.Load()
 			item.UpgradeRequired = s.localSupervisorUpgradeRequired.Load()

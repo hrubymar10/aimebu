@@ -287,3 +287,22 @@ func TestDoctorLiveSendsNoKeyToAServerThatDoesNotAnswerLikeAimebu(t *testing.T) 
 		t.Fatalf("live checks ran against a server that is not aimebu:\n%s", stdout.String())
 	}
 }
+
+func TestDoctorWarnsForEachOlderMachineBuild(t *testing.T) {
+	checks := liveMachineChecks(protocol.DoctorLive{Machines: []protocol.DoctorMachine{
+		{ID: "old", Name: "Old box", Approved: true, Connected: true, OlderBuild: true, SupervisorVersion: "v2.0.0-alpha.15", ServerVersion: "v2.0.0-alpha.17"},
+		{ID: "new", Name: "New box", Approved: true, Connected: true, SupervisorVersion: "v2.0.0-alpha.17", ServerVersion: "v2.0.0-alpha.17"},
+	}})
+	found := 0
+	for _, check := range checks {
+		if strings.Contains(check.Description, "older build than the server") {
+			found++
+			if check.Status != statusWarn || !strings.Contains(check.Description, "alpha.15") || !strings.Contains(check.Description, "alpha.17") {
+				t.Fatalf("older-build warning: %+v", check)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("got %d older-build warnings, checks=%+v", found, checks)
+	}
+}

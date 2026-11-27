@@ -295,14 +295,17 @@ func TestInstanceRoutesServeARevokedMachine(t *testing.T) {
 	}
 }
 
-func TestInstanceRoutesRefuseTheHostMachine(t *testing.T) {
+func TestHostInstancesCanBeListedButNotWrittenOff(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	for _, call := range [][2]string{{"GET", "/api/machines/" + f.machineID + "/instances"}, {"POST", "/api/machines/" + f.machineID + "/instances/j/gone"}} {
-		resp := f.request(call[0], call[1], nil, call[0] == "POST")
+	for _, call := range []struct {
+		method, path string
+		want         int
+	}{{"GET", "/api/machines/" + f.machineID + "/instances", http.StatusOK}, {"POST", "/api/machines/" + f.machineID + "/instances/j/gone", http.StatusConflict}} {
+		resp := f.request(call.method, call.path, nil, call.method == "POST")
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusConflict {
-			t.Fatalf("%s %s on the host: %d", call[0], call[1], resp.StatusCode)
+		if resp.StatusCode != call.want {
+			t.Fatalf("%s %s on the host: %d", call.method, call.path, resp.StatusCode)
 		}
 	}
 	resp := f.request("GET", "/api/machines/mch_nope/instances", nil, false)

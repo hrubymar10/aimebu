@@ -122,6 +122,11 @@ func liveMachineChecks(live protocol.DoctorLive) []doctorCheck {
 			label = machine.ID
 		}
 		name := "machine " + label
+		if machine.OlderBuild {
+			checks = append(checks, doctorCheck{Name: name + " build", Status: statusWarn,
+				Description: fmt.Sprintf("older build than the server: supervisor %s, server %s", machine.SupervisorVersion, machine.ServerVersion),
+				Hint:        "Install the server's version on that machine and start `aimebu supervisor` again (or restart its service); the old instance retires."})
+		}
 		if machine.UpgradeRequired {
 			checks = append(checks, doctorCheck{Name: "local supervisor upgrade", Status: statusWarn, Description: "the supervisor is newer than the running server", Hint: "Restart the server to finish the upgrade."})
 		}

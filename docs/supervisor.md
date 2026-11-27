@@ -68,6 +68,15 @@ retire as if the journal were settled.
 
 ### Side by side
 
+Settings → Machines labels a machine and each older supervisor instance
+"older build than the server" when the release tag in its hello precedes the
+server's release tag. The tooltip shows both builds. A development build with
+`-N-g<sha>` compares as its tag, and an unknown build has no badge. The label
+does not stop turns. `aimebu doctor --live` warns once for each such machine.
+To update, install the server's version on that machine and start `aimebu
+supervisor` again (or restart its service); the old instance retires after
+its work finishes.
+
 An upgrade starts a new supervisor instance next to the old one; nothing is
 replaced. The server tells instances apart by `journal_id` and routes new work
 to the one that matches its build and environment (see above). The local manager

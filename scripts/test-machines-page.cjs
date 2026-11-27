@@ -38,6 +38,7 @@ function installFetch(auto) {
     window.__requests.push(request);
     const rule = window.__auto[`${request.method} ${request.path}`];
     if (rule) request.answer(rule.status || 200, rule.status ? rule.body : rule);
+    else if (request.method === 'GET' && request.path === '/api/machines/mch_host/instances') request.answer(200, { instances: [] });
   });
   window.__answer = (index, status, body) => window.__requests[index].answer(status, body);
 }
@@ -291,6 +292,23 @@ async function main() {
       assert.deepEqual(await page.evaluate(index => window.__requests[index].body, pending), { scope_mode: 'listed', allowed_project_ids: ['p1'], disabled: true });
       await answer(page, pending, 409, { code: 'machine_scope_active', message: 'stop or move these active agents first: iris (Beta)' });
       await page.waitForFunction(() => document.querySelector('#machines-error').textContent.includes('iris (Beta)'));
+      await page.close();
+    }
+    // A connected older supervisor is labelled on its machine and only its
+    // older instance; the badge gives both builds and the manual update step.
+    {
+      const older = { ...away, connected: true, supervisor_version: 'v2.0.0-alpha.15', server_version: 'v2.0.0-alpha.17', older_build: true };
+      const page = await mount({ auto: { [MACHINES]: { machines: [older] },
+        'GET /api/machines/mch_away/instances': { instances: [
+          { journal_id: 'old-journal', build: 'v2.0.0-alpha.15', server_version: 'v2.0.0-alpha.17', older_build: true, state: 'retiring', connected: true, turns: 1, commands: 0, agents: [{ slug: 'worker' }] },
+          { journal_id: 'new-journal', build: 'v2.0.0-alpha.17', server_version: 'v2.0.0-alpha.17', older_build: false, state: 'active', connected: true, turns: 0, commands: 0, agents: [] },
+        ] },
+      } });
+      await cards(page);
+      await page.waitForSelector('.machine-instances');
+      assert.equal(await page.$eval('.machine-older-build', el => el.textContent), 'older build than the server');
+      assert.match(await page.$eval('.machine-older-build', el => el.title), /alpha\.15.*alpha\.17.*install.*aimebu supervisor/s);
+      assert.equal(await page.$$eval('.machine-instance-older-build', nodes => nodes.length), 1);
       await page.close();
     }
     // Two reads answered out of order: only the newer one draws.

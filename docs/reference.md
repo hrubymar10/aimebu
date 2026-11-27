@@ -1308,6 +1308,12 @@ adapter.
 
 ## The standalone supervisor and the agent tools
 
+Settings → Machines shows an "older build than the server" badge for a
+supervisor with an older parseable release tag. It also labels the individual
+older instances; the badge is informational. The tooltip shows both builds
+and links to [the side-by-side update steps](supervisor.md#side-by-side).
+`aimebu doctor --live` prints one warning for each affected machine.
+
 `aimebu supervisor` remains available as a standalone remote-machine mode.
 Both modes use a separate SQLite journal under `~/.aimebu/supervisor/`,
 authenticate with a private machine key, and maintain the machine WebSocket.

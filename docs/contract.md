@@ -681,6 +681,11 @@ Machines and workspace
   returns 409 `machine_scope_active`, listing each agent slug and project and
   saying to stop or move them first. Invalid project IDs, scope mode, or
   disabling a remote machine return 400 `invalid_request`.
+  The machines API also returns `server_version` and `older_build` beside
+  `supervisor_version`. `older_build` is true only when the supervisor's
+  parseable release tag in its hello is older than the server's parseable
+  release tag. A describe-style `-N-g<sha>` suffix counts as its tag, so a
+  development build of the same tag is equal; an unknown build has no badge.
 - **supervisor_instance**(machine_id, journal_id, build, environment,
   state[active|retiring|gone], first_seen_at, last_seen_at, gone_at?) — PK
   (machine_id, journal_id) (migration 140). A machine can run several
@@ -693,7 +698,11 @@ Machines and workspace
   work it holds; `gone` is one whose journal is finished or lost, and marking
   one gone loses only the open turns and jobs it owns. The migration creates one
   active instance per machine that has a `journal_id` and gives every open turn
-  and job that journal as owner.
+  and job that journal as owner. `GET /api/machines/{id}/instances` lists the
+  host and remote instances, including each instance's `server_version` and
+  `older_build`. The badge is informational: it does not change dispatch,
+  drain, or an instance's open turns. Only a remote instance can be marked
+  gone by hand.
 - **machine_harness_setting**(machine_id, tool, variant, enabled,
   override_path) and **machine_harness_activity**(machine_id, tool, variant,
   actor, old/new enabled and path, created_at) — owner settings and their

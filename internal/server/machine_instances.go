@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/hrubymar10/aimebu/v2/internal/buildversion"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
@@ -15,17 +16,19 @@ type instanceAgentRow struct {
 
 // instanceRow is one supervisor instance of a machine as Settings → Machines shows it, with what marking it gone would lose.
 type instanceRow struct {
-	JournalID   string             `json:"journal_id"`
-	Build       string             `json:"build,omitempty"`
-	Environment string             `json:"environment,omitempty"`
-	State       string             `json:"state"`
-	Connected   bool               `json:"connected"`
-	FirstSeenAt string             `json:"first_seen_at"`
-	LastSeenAt  string             `json:"last_seen_at"`
-	GoneAt      string             `json:"gone_at,omitempty"`
-	Turns       int                `json:"turns"`
-	Commands    int                `json:"commands"`
-	Agents      []instanceAgentRow `json:"agents"`
+	JournalID     string             `json:"journal_id"`
+	Build         string             `json:"build,omitempty"`
+	ServerVersion string             `json:"server_version,omitempty"`
+	OlderBuild    bool               `json:"older_build"`
+	Environment   string             `json:"environment,omitempty"`
+	State         string             `json:"state"`
+	Connected     bool               `json:"connected"`
+	FirstSeenAt   string             `json:"first_seen_at"`
+	LastSeenAt    string             `json:"last_seen_at"`
+	GoneAt        string             `json:"gone_at,omitempty"`
+	Turns         int                `json:"turns"`
+	Commands      int                `json:"commands"`
+	Agents        []instanceAgentRow `json:"agents"`
 }
 
 // instanceConnected says whether a supervisor of the machine holding this journal is connected right now.
@@ -52,10 +55,6 @@ func (s *Server) machineForInstances(w http.ResponseWriter, r *http.Request) (st
 		fail(w, err)
 		return "", false
 	}
-	if machine.IsHost {
-		apiError(w, 409, "host_machine", "the server's own supervisor instances are kept by the server; only a remote machine's instance is written off by hand")
-		return "", false
-	}
 	return machine.ID, true
 }
 
@@ -73,7 +72,7 @@ func (s *Server) machineInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]instanceRow, 0, len(items))
 	for _, item := range items {
-		row := instanceRow{JournalID: item.JournalID, Build: item.Build, Environment: item.Environment, State: item.State, FirstSeenAt: item.FirstSeenAt,
+		row := instanceRow{JournalID: item.JournalID, Build: item.Build, ServerVersion: s.Version, OlderBuild: buildversion.Older(item.Build, s.Version), Environment: item.Environment, State: item.State, FirstSeenAt: item.FirstSeenAt,
 			LastSeenAt: item.LastSeenAt, GoneAt: item.GoneAt, Connected: s.instanceConnected(machineID, item.JournalID), Agents: []instanceAgentRow{}}
 		if item.State != "gone" {
 			load, err := s.Store.SupervisorInstanceLoad(r.Context(), machineID, item.JournalID)
@@ -101,6 +100,15 @@ func (s *Server) machineInstances(w http.ResponseWriter, r *http.Request) {
 func (s *Server) machineInstanceGone(w http.ResponseWriter, r *http.Request) {
 	machineID, ok := s.machineForInstances(w, r)
 	if !ok {
+		return
+	}
+	machine, err := s.Store.MachineByID(r.Context(), machineID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if machine.IsHost {
+		apiError(w, 409, "host_machine", "the server's own supervisor instances are kept by the server; only a remote machine's instance is written off by hand")
 		return
 	}
 	journalID := r.PathValue("journal")

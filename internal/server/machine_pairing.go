@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/auth"
+	"github.com/hrubymar10/aimebu/v2/internal/buildversion"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/tlsclient"
 	"github.com/hrubymar10/aimebu/v2/internal/worktree"
@@ -27,6 +28,8 @@ type machineRow struct {
 	RevokedAt         string   `json:"revoked_at,omitempty"`
 	LastSeen          string   `json:"last_seen,omitempty"`
 	SupervisorVersion string   `json:"supervisor_version,omitempty"`
+	ServerVersion     string   `json:"server_version,omitempty"`
+	OlderBuild        bool     `json:"older_build"`
 	Connected         bool     `json:"connected"`
 	RestartPending    bool     `json:"restart_pending,omitempty"`
 	UpgradeRequired   bool     `json:"upgrade_required,omitempty"`
@@ -148,7 +151,8 @@ func (s *Server) machineRow(m store.Machine) machineRow {
 		allowed = []string{}
 	}
 	row := machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, ScopeMode: m.ScopeMode, AllowedProjects: allowed, Disabled: m.Disabled, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
-		LastSeen: m.LastSeen.String, SupervisorVersion: m.SupervisorVersion.String, Connected: connected}
+		LastSeen: m.LastSeen.String, SupervisorVersion: m.SupervisorVersion.String, ServerVersion: s.Version,
+		OlderBuild: buildversion.Older(m.SupervisorVersion.String, s.Version), Connected: connected}
 	if m.ID == s.localSupervisorID() {
 		row.RestartPending = s.localSupervisorPending.Load()
 		row.UpgradeRequired = s.localSupervisorUpgradeRequired.Load()
