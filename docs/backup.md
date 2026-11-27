@@ -24,8 +24,14 @@ restore reports the same list. The `manifest.json` also records the source
 data root, binary version, time, schema version and a SHA-256 checksum for
 each archived file. **Treat it as a secret:** the keys inside can grant
 access to this installation. Harness homes such as `~/.claude` and `~/.codex`
-are outside the data root and are not included. Neither are backups, logs,
-temporary files, or runtime lock and PID files.
+are outside the data root and are not included. Also left out, wherever they
+sit in the data root: the `backups/`, `tmp/` and `temp/` folders; log files
+named `*.log` and their rotated backups `*.log.<N>` (the server log
+`server/aimebu.log` and the agents' logs under `supervisor/agent-logs/`; the
+rotation writes only numbered files, never compressed ones); `*.tmp` files;
+runtime `*.lock` and PID files; and `server/doctor.key`. Logs are diagnostics, so
+a restore starts with fresh ones. That includes each agent's `conversation.log`,
+which the agent output view reads: that history is not restored.
 
 The v1 rollback copy `.old-v1-bkp/` that the v1 cutover leaves in the data
 root is **excluded by default**: it is a full second copy of the v1 data and

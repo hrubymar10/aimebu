@@ -102,6 +102,11 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return 0
 }
 
+// rotatedLogPattern matches a log and its rotated backups: logfile.Names writes name, name.1, name.2, ... with no compression.
+var rotatedLogPattern = regexp.MustCompile(`\.log(\.[0-9]+)?$`)
+
+func isLogFileName(base string) bool { return rotatedLogPattern.MatchString(base) }
+
 var backupStampPattern = regexp.MustCompile(`-(\d{8}T\d{6}(?:\.\d{9})?Z)\.tar\.gz$`)
 
 // pruneBackups deletes all but the keep newest aimebu-*.tar.gz regular files in <root>/backups. It runs only after a
@@ -384,7 +389,7 @@ func makeBackupOptions(ctx context.Context, config serverConfig, root, output st
 			}
 			return nil
 		}
-		if name == "server/aimebu.sqlite" || name == "server/aimebu.sqlite-wal" || name == "server/aimebu.sqlite-shm" || name == "server/doctor.key" || name == "server/aimebu.pid" || strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, ".log") || strings.HasSuffix(base, ".tmp") || strings.HasPrefix(base, ".backup-snapshot-") {
+		if name == "server/aimebu.sqlite" || name == "server/aimebu.sqlite-wal" || name == "server/aimebu.sqlite-shm" || name == "server/doctor.key" || name == "server/aimebu.pid" || strings.HasSuffix(base, ".lock") || isLogFileName(base) || strings.HasSuffix(base, ".tmp") || strings.HasPrefix(base, ".backup-snapshot-") {
 			return nil
 		}
 		for journal := range skipped {
