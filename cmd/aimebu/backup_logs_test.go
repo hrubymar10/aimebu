@@ -120,3 +120,75 @@ func TestBackupKeepsAgentConversationLog(t *testing.T) {
 		t.Fatalf("restored log not readable by the agent output reader: %+v %v", page, err)
 	}
 }
+
+func TestBackupSkipsDisappearingAgentConversationLog(t *testing.T) {
+	root, archive := backupFixture(t)
+	name := "supervisor/agent-logs/abc/conversation.log"
+	p := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("rotating"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := resolveServerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	removed := false
+	err = makeBackupOptions(context.Background(), config, root, archive, &output, nil, backupOptions{
+		beforeEntryInfo: func(got string) {
+			if got == name {
+				removed = true
+				if err := os.Remove(p); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+	})
+	if err != nil || !removed {
+		t.Fatalf("backup error %v; hook ran %v", err, removed)
+	}
+	if !strings.Contains(output.String(), "conversation.log") || !strings.Contains(output.String(), "incomplete") {
+		t.Fatalf("missing warning: %s", output.String())
+	}
+	for _, got := range archivePaths(t, archive) {
+		if got == name {
+			t.Fatal("disappearing log archived")
+		}
+	}
+}
+
+func TestBackupKeepPreservesArchivesForDisappearingConversationLog(t *testing.T) {
+	root, names := keepFixture(t)
+	name := "supervisor/agent-logs/abc/conversation.log"
+	p := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("rotating"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := backupCommandWithOptions(context.Background(), []string{"--keep", "1"}, &out, &errOut, backupOptions{
+		beforeEntryInfo: func(got string) {
+			if got == name {
+				if err := os.Remove(p); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+	})
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "--keep not applied: the backup is incomplete (skipped conversation logs)") {
+		t.Fatalf("missing incomplete backup notice: %s", out.String())
+	}
+	for _, old := range names {
+		if !exists(filepath.Join(root, "backups", old)) {
+			t.Fatalf("%s deleted after incomplete backup", old)
+		}
+	}
+}

@@ -35,20 +35,25 @@ type archiveFile struct {
 }
 
 type archiveManifest struct {
-	Version            string        `json:"version"`
-	CreatedAt          string        `json:"created_at"`
-	SchemaVersion      int           `json:"schema_version"`
-	SourceRoot         string        `json:"source_root,omitempty"`
-	Files              []archiveFile `json:"files"`
-	MissingAttachments []string      `json:"missing_attachments,omitempty"`
-	SkippedJournals    []string      `json:"skipped_journals,omitempty"`
+	Version                 string        `json:"version"`
+	CreatedAt               string        `json:"created_at"`
+	SchemaVersion           int           `json:"schema_version"`
+	SourceRoot              string        `json:"source_root,omitempty"`
+	Files                   []archiveFile `json:"files"`
+	MissingAttachments      []string      `json:"missing_attachments,omitempty"`
+	SkippedJournals         []string      `json:"skipped_journals,omitempty"`
+	SkippedConversationLogs []string      `json:"skipped_conversation_logs,omitempty"`
 }
 
 func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return backupCommandWithOptions(ctx, args, stdout, stderr, backupOptions{})
+}
+
+func backupCommandWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer, opts backupOptions) int {
 	flags := flag.NewFlagSet("backup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "", "archive path")
-	keep := flags.Int("keep", 0, "after a successful backup, delete all but the N newest aimebu-*.tar.gz files in the default backups folder (<data root>/backups); not applied when --out is outside that folder; default: delete nothing")
+	keep := flags.Int("keep", 0, "after a complete backup, delete all but the N newest aimebu-*.tar.gz files in the default backups folder (<data root>/backups); not applied when --out is outside that folder; default: delete nothing")
 	includeV1 := flags.Bool("include-v1-backup", false, "also archive "+v1BackupName+", the rollback copy of the v1 data; excluded by default")
 	keepSet := false
 	if err := flags.Parse(args); err != nil {
@@ -89,13 +94,28 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 		*out = filepath.Join(root, "backups", "aimebu-"+v+"-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".tar.gz")
 	}
-	if err := makeBackupOptions(ctx, config, root, *out, stdout, nil, backupOptions{includeV1Backup: *includeV1}); err != nil {
+	var manifest archiveManifest
+	opts.includeV1Backup = *includeV1
+	opts.manifest = &manifest
+	if err := makeBackupOptions(ctx, config, root, *out, stdout, nil, opts); err != nil {
 		fmt.Fprintln(stderr, "backup:", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Backup saved to %s (mode 0600). It contains secrets, including keys.\n", *out)
 	if keepSet {
-		if err := pruneBackups(root, *out, *keep, stdout); err != nil {
+		var reasons []string
+		if len(manifest.MissingAttachments) > 0 {
+			reasons = append(reasons, "missing attachments")
+		}
+		if len(manifest.SkippedJournals) > 0 {
+			reasons = append(reasons, "skipped journals")
+		}
+		if len(manifest.SkippedConversationLogs) > 0 {
+			reasons = append(reasons, "skipped conversation logs")
+		}
+		if len(reasons) > 0 {
+			fmt.Fprintf(stdout, "--keep not applied: the backup is incomplete (%s).\n", strings.Join(reasons, ", "))
+		} else if err := pruneBackups(root, *out, *keep, stdout); err != nil {
 			fmt.Fprintln(stderr, "backup: --keep:", err)
 			return 1
 		}
@@ -209,6 +229,8 @@ func sameDir(a, b string) bool {
 // backupOptions are the choices of one backup. The zero value is the default: the v1 rollback copy is not archived.
 type backupOptions struct {
 	includeV1Backup bool
+	beforeEntryInfo func(string)
+	manifest        *archiveManifest
 }
 
 func makeBackup(ctx context.Context, config serverConfig, root, output string, stdout io.Writer) (err error) {
@@ -416,14 +438,28 @@ func makeBackupOptions(ctx context.Context, config serverConfig, root, output st
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("symlink in data root: %s", name)
 		}
+		if opts.beforeEntryInfo != nil {
+			opts.beforeEntryInfo(name)
+		}
 		info, infoErr := entry.Info()
 		if infoErr != nil {
+			if os.IsNotExist(infoErr) && isAgentConversationLog(name) {
+				manifest.SkippedConversationLogs = append(manifest.SkippedConversationLogs, name)
+				return nil
+			}
 			return infoErr
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("non-regular file in data root: %s", name)
 		}
-		return write(name, p, int64(info.Mode().Perm()))
+		if writeErr := write(name, p, int64(info.Mode().Perm())); writeErr != nil {
+			if os.IsNotExist(writeErr) && isAgentConversationLog(name) {
+				manifest.SkippedConversationLogs = append(manifest.SkippedConversationLogs, name)
+				return nil
+			}
+			return writeErr
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -488,11 +524,17 @@ func makeBackupOptions(ctx context.Context, config serverConfig, root, output st
 		return err
 	}
 	complete = true
+	if opts.manifest != nil {
+		*opts.manifest = manifest
+	}
 	if len(manifest.SkippedJournals) > 0 {
 		fmt.Fprintf(stdout, "Skipped %d running supervisor journal(s); their owner must snapshot them.\n", len(manifest.SkippedJournals))
 	}
 	if len(manifest.MissingAttachments) > 0 {
 		fmt.Fprintf(stdout, "Warning: %d attachment(s) missing from the snapshot: %s.\n", len(manifest.MissingAttachments), strings.Join(manifest.MissingAttachments, ", "))
+	}
+	if len(manifest.SkippedConversationLogs) > 0 {
+		fmt.Fprintf(stdout, "Warning: %d conversation log(s) disappeared during backup: %s; backup is incomplete.\n", len(manifest.SkippedConversationLogs), strings.Join(manifest.SkippedConversationLogs, ", "))
 	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
 func writeBackupName(t *testing.T, dir, name string, mtime time.Time) string {
@@ -109,6 +111,44 @@ func TestBackupWithoutKeepDeletesNothing(t *testing.T) {
 	for _, n := range names {
 		if !exists(filepath.Join(root, "backups", n)) {
 			t.Fatalf("%s deleted without --keep", n)
+		}
+	}
+}
+
+func TestBackupKeepPreservesArchivesWhenAttachmentMissing(t *testing.T) {
+	root, names := keepFixture(t)
+	insertBackupAttachment(t, root, "missing", "")
+	code, out, errOut := runBackup(t, "--keep", "1")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "--keep not applied: the backup is incomplete (missing attachments)") {
+		t.Fatalf("missing incomplete backup notice: %s", out)
+	}
+	for _, name := range names {
+		if !exists(filepath.Join(root, "backups", name)) {
+			t.Fatalf("%s deleted after incomplete backup", name)
+		}
+	}
+}
+
+func TestBackupKeepPreservesArchivesWhenJournalSkipped(t *testing.T) {
+	root, names := keepFixture(t)
+	journal, err := supervisor.OpenJournal(context.Background(), filepath.Join(root, "supervisor", "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	code, out, errOut := runBackup(t, "--keep", "1")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "--keep not applied: the backup is incomplete (skipped journals)") {
+		t.Fatalf("missing incomplete backup notice: %s", out)
+	}
+	for _, name := range names {
+		if !exists(filepath.Join(root, "backups", name)) {
+			t.Fatalf("%s deleted after incomplete backup", name)
 		}
 	}
 }

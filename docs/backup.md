@@ -6,14 +6,18 @@ archive to `<data root>/backups/aimebu-<version>-<UTC timestamp>.tar.gz`.
 `~/.aimebu` by default or `AIMEBU_CONFIG_DIR` when set.
 
 `aimebu backup --keep N` (N of 1 or more; `0` and negative values are refused)
-deletes old backups after a **successful** backup: every regular
+deletes old backups after a **complete, successful** backup: every regular
 `aimebu-*.tar.gz` file in the default folder (`<data root>/backups`) except
 the N newest, counting the archive just written. Nothing is deleted without
-the flag, after any failure, or for files with another name, directories and
-symlinks. It does not apply when `--out` is outside the default folder (the
-CLI says so). "Newest" is the UTC timestamp in the file name, which backup
-always writes; a file whose name carries none is ordered by modification
-time. The command prints each deleted file.
+the flag, after any failure or incomplete backup, or for files with another
+name, directories and symlinks. It does not apply when `--out` is outside the
+default folder (the CLI says so). "Newest" is the UTC timestamp in the file
+name, which backup always writes; a file whose name carries none is ordered by
+modification time. The command prints each deleted file. A backup is incomplete
+if an active attachment is missing, a running supervisor journal is skipped,
+or an agent's current conversation log disappears while it is being read. It still exits
+successfully and writes an archive, but `--keep` preserves all older archives
+and prints why it was not applied.
 
 The archive contains the server database, config, keys and the attachments
 named by active rows in the database snapshot. Files in the attachments folder with
@@ -38,6 +42,8 @@ it, and restore puts it back at the same path, where that view looks. Its
 rotated copies `conversation.log.<N>` are not archived, so a restore keeps the
 newest file of each conversation (up to 4 MiB), not the older history. A
 `conversation.log` anywhere else is excluded like any other log.
+If the current log vanishes during backup rotation, backup warns, skips it and
+records it in `skipped_conversation_logs` in the manifest.
 
 The v1 rollback copy `.old-v1-bkp/` that the v1 cutover leaves in the data
 root is **excluded by default**: it is a full second copy of the v1 data and
