@@ -138,6 +138,14 @@ alone; OpenCode's inline config and Pi's private `mcp.json` hold aimebu's entry 
 person's own agents are unchanged: the field is never journaled and only the eval sets it. Each adapter has a test, `TestIsolatedTurn...`, that puts a server in
 the isolated user config and checks that it does not reach the harness (and that it does without the field, so the test can fail).
 
+**A command the model starts.** The prompt tells a model to end its turn after `run_command`, and the real server wakes it with a completion note. A scenario
+that offers `run_command` says how its commands end in `expect.command_done` (`exit_code`, `tail`). When a turn calls `run_command` and its answer is valid but does
+not pass the checks (typically `messages:[]`, or a message that says it will report), the runner sends the note (`Your command `...` finished with exit code N;
+output tail: '...'`, why `your command finished`) as a second turn of the same session and grades **that** answer. The attempt holds the second turn's answer and
+checks, and the time, tokens and cost of both turns; `turns` is 2 in `results.json`, and the report has a table of how many cases needed the second turn. A turn
+that answers correctly after starting a command, or that starts none, has no second turn, and a scenario with no `command_done` (s14, s15: their point is not to
+run the command) never gets one.
+
 Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
 adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the
 scenario's list, as the supervisor sets it. A container reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its

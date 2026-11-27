@@ -27,6 +27,7 @@ type MCPServer struct {
 	mu       sync.Mutex
 	tools    map[string][]string              // bearer key -> tool names offered
 	calls    map[string][]string              // bearer key -> tool names called, in order
+	commands map[string][]string              // bearer key -> the cmd of each run_command call, in order
 	history  map[string][]eval.HistoryMessage // bearer key -> the messages room_history and message_get know
 	answers  map[string][]byte                // bearer key -> the last answer submit_answer accepted, compacted
 }
@@ -37,7 +38,7 @@ func StartMCP() (*MCPServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, history: map[string][]eval.HistoryMessage{}, answers: map[string][]byte{}}
+	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, commands: map[string][]string{}, history: map[string][]eval.HistoryMessage{}, answers: map[string][]byte{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/agent/mcp", m.handle)
 	m.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -72,6 +73,13 @@ func (m *MCPServer) Submitted(key string) []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]byte(nil), m.answers[key]...)
+}
+
+// Commands lists the commands the turn that held key started with run_command, in order.
+func (m *MCPServer) Commands(key string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.commands[key]...)
 }
 
 // Calls lists the tools the turn that held key called.
@@ -141,6 +149,11 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 		name := req.Params.Name
 		m.mu.Lock()
 		m.calls[key] = append(m.calls[key], name)
+		if name == "run_command" {
+			var cmd string
+			_ = json.Unmarshal(req.Params.Arguments["cmd"], &cmd)
+			m.commands[key] = append(m.commands[key], cmd)
+		}
 		m.mu.Unlock()
 		if name == "submit_answer" {
 			// Production's own handler answers: the same validator, "unknown tool" when the connection did not ask for the tool.

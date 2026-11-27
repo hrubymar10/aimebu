@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -99,6 +100,16 @@ type Expect struct {
 	Checks         []Check `json:"checks,omitempty"`
 	// MaxTurnsToValid is, for a live run, the most turns (the first try plus repairs) the answer may take to be valid.
 	MaxTurnsToValid int `json:"max_turns_to_valid,omitempty"`
+	// CommandDone, for a live scenario that offers run_command, is how a command the model starts ends. A turn that starts a command and ends
+	// without an answer that passes is the turn that waits for it (the prompt tells it to end the turn): the runner then delivers the
+	// completion note the real server sends, as a second turn of the same session, and grades that turn's answer.
+	CommandDone *CommandDone `json:"command_done,omitempty"`
+}
+
+// CommandDone is the end of any command a live case starts: the exit code and the last lines of its output.
+type CommandDone struct {
+	ExitCode int    `json:"exit_code"`
+	Tail     string `json:"tail,omitempty"`
 }
 
 // Check is one predicate on the parsed answer. Value and Values may use {worker}, {dispatcher}, {other_agent}, {person}, {task_room}, {home_room}.
@@ -176,6 +187,9 @@ func (s Scenario) Validate() error {
 		}
 		if err := s.Input.Checkout.validate(); err != nil {
 			return fmt.Errorf("%s: %w", s.ID, err)
+		}
+		if s.Expect.CommandDone != nil && !slices.Contains(s.Input.AllowedTools, "run_command") {
+			return fmt.Errorf("%s: expect.command_done needs run_command in input.allowed_tools", s.ID)
 		}
 	case LayerReplay, LayerMock:
 		if s.Output == nil || len(s.Output.Kinds) == 0 {

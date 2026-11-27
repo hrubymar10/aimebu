@@ -37,29 +37,34 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 	if target.Tool == eval.KindClaude || target.Tool == eval.KindPi {
 		session = uuid() // the run's own session: these harnesses take the id from the caller, and it is never an agent's
 	}
-	started := false
+	started, completed := false, false
 	var previous adapter.Usage
 	for attempt := 0; attempt < scenario.Expect.MaxTurnsToValid; attempt++ {
 		o.turnCounter++
 		turnID := fmt.Sprintf("turn_eval_%s_%04d", o.RunID, o.turnCounter)
 		a, handle, usage := o.runTurn(ctx, impl, target, row, checkout, scenario, turnID, notes, turnContext, session, started)
-		a.Millis = usage.millis
-		if usage.tokensCumulative {
-			a.TokFresh = nonNegative(a.TokFresh - tokenValue(previous.TokensIn))
-			a.TokRead = nonNegative(a.TokRead - tokenValue(previous.TokensCacheRead))
-			a.TokWrite = nonNegative(a.TokWrite - tokenValue(previous.TokensCacheWrite))
-			a.TokIn = a.TokFresh + a.TokRead + a.TokWrite
-			a.TokOut = nonNegative(a.TokOut - usageOut(previous))
-		}
-		if usage.costCumulative {
-			a.CostUSD = nonNegativeF(a.CostUSD - usageCost(previous))
-		}
+		settleUsage(&a, usage, previous)
 		previous = usage.raw
 		o.spentUSD += a.CostUSD
-		c.Attempts = append(c.Attempts, a)
 		if handle != "" {
 			session = handle
 		}
+		// A turn that started a command and ended without an answer that passes is waiting for it, as the prompt asks. The real server wakes it
+		// with the command's completion note; so does the run, as a second turn of the same session, and that turn's answer is the one graded.
+		if done := scenario.Expect.CommandDone; done != nil && !completed && a.Valid && !a.Correct && a.Class != eval.ClassHarness && session != "" && contains(a.Tools, "run_command") {
+			completed = true
+			o.turnCounter++
+			second, handle2, usage2 := o.runTurn(ctx, impl, target, row, checkout, scenario, fmt.Sprintf("turn_eval_%s_%04d", o.RunID, o.turnCounter), completionNote(8800+attempt, usage.commands, *done), turnContext, session, true)
+			settleUsage(&second, usage2, previous)
+			previous = usage2.raw
+			o.spentUSD += second.CostUSD
+			if handle2 != "" {
+				session = handle2
+			}
+			a = mergeTurns(a, second)
+			started = true
+		}
+		c.Attempts = append(c.Attempts, a)
 		if a.Valid || a.Class == eval.ClassHarness || session == "" {
 			break
 		}
@@ -70,10 +75,60 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 	return c
 }
 
+// settleUsage puts a turn's time on its attempt and, for a harness that reports session running totals, takes the previous turn's total off its
+// tokens and cost, so an attempt counts only what its own turn used.
+func settleUsage(a *eval.Attempt, usage turnUsage, previous adapter.Usage) {
+	a.Millis = usage.millis
+	if usage.tokensCumulative {
+		a.TokFresh = nonNegative(a.TokFresh - tokenValue(previous.TokensIn))
+		a.TokRead = nonNegative(a.TokRead - tokenValue(previous.TokensCacheRead))
+		a.TokWrite = nonNegative(a.TokWrite - tokenValue(previous.TokensCacheWrite))
+		a.TokIn = a.TokFresh + a.TokRead + a.TokWrite
+		a.TokOut = nonNegative(a.TokOut - usageOut(previous))
+	}
+	if usage.costCumulative {
+		a.CostUSD = nonNegativeF(a.CostUSD - usageCost(previous))
+	}
+}
+
+// mergeTurns is the attempt of a turn that started a command and the turn that took its completion note: the second one's answer and scores,
+// with the time, tokens and cost of both and the tools of both.
+func mergeTurns(first, second eval.Attempt) eval.Attempt {
+	second.Millis += first.Millis
+	second.TokIn += first.TokIn
+	second.TokOut += first.TokOut
+	second.TokFresh += first.TokFresh
+	second.TokRead += first.TokRead
+	second.TokWrite += first.TokWrite
+	second.HasCacheWrite = second.HasCacheWrite || first.HasCacheWrite
+	second.CostUSD += first.CostUSD
+	second.Tools = append(append([]string(nil), first.Tools...), second.Tools...)
+	second.Turns = 2
+	return second
+}
+
+// completionNote is the system note a turn gets when the command it started ends, in the words of internal/store's command-finished note: the
+// command, its exit code and the last lines of its output, as the scenario defines how its commands end.
+func completionNote(noteNo int, commands []string, done eval.CommandDone) json.RawMessage {
+	command := "the command"
+	if len(commands) > 0 {
+		command = "`" + commands[len(commands)-1] + "`"
+	}
+	tail := "no output"
+	if done.Tail != "" {
+		tail = "'" + done.Tail + "'"
+	}
+	note := map[string]any{"note_id": fmt.Sprintf("note_01EVALDONE%04d", noteNo), "room_id": eval.TaskRoom, "from": "system", "message_id": fmt.Sprintf("msg_01EVALDONE%04d", noteNo), "no": noteNo,
+		"body": fmt.Sprintf("Your command %s finished with exit code %d; output tail: %s", command, done.ExitCode, tail), "why": "your command finished"}
+	out, _ := json.Marshal([]any{note})
+	return out
+}
+
 // turnUsage is what a turn reported beyond the attempt: its time, the raw report, and which of its figures are the session's running totals (a
 // harness may report either one so, as the store reads them: internal/store/usage.go).
 type turnUsage struct {
 	millis           int64
+	commands         []string // the commands the turn started with run_command
 	costCumulative   bool
 	tokensCumulative bool
 	raw              adapter.Usage
@@ -150,6 +205,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	exit, err := turn.Wait()
 	used.millis = time.Since(begin).Milliseconds()
 	tools := o.MCP.Calls(key)
+	used.commands = o.MCP.Commands(key)
 	a := eval.Attempt{Tools: tools}
 	if usage != nil {
 		a.TokIn = usageIn(*usage)

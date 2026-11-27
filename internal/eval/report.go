@@ -29,6 +29,9 @@ type Attempt struct {
 	// Via says how the answer arrived: ViaTool (the model called submit_answer and the stand-in toolbox accepted it, and it is the answer the
 	// adapter reported) or ViaText (the final text). Empty when the attempt had no answer, or the results are older than the field.
 	Via string `json:"via,omitempty"`
+	// Turns is 2 for an attempt that took the command's completion note as a second turn (Expect.CommandDone): the answer, its scores and its
+	// time, tokens and cost are of the pair, the cost and tokens being both turns' sums. Zero (one turn) otherwise.
+	Turns int `json:"turns,omitempty"`
 }
 
 // How an answer arrived.
@@ -102,6 +105,8 @@ type ModelSummary struct {
 	CostAll        float64
 	// ViaTool and ViaText count the first attempts by how their answer arrived (Attempt.Via); an attempt with no answer is in neither.
 	ViaTool, ViaText int
+	// SecondTurn counts the cases whose first attempt took the completion note as a second turn (Attempt.Turns).
+	SecondTurn int
 }
 
 // TokenBreakdown keeps the input categories behind a report's total token column.
@@ -153,6 +158,9 @@ func Summarize(cases []Case) []ModelSummary {
 				s.TokensAll += a.TokIn + a.TokOut
 				s.AllBreakdown.add(a)
 				s.CostAll += a.CostUSD
+			}
+			if f.Turns == 2 {
+				s.SecondTurn++
 			}
 			s.TokensFirst += f.TokIn + f.TokOut
 			s.FirstBreakdown.add(f)
@@ -223,6 +231,16 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	b.WriteString("\n## How the first answer was submitted\n\nThrough the submit_answer tool or as the final text. A harness that is not offered the tool can only answer in text.\n\n| model | submit_answer tool | final text |\n|---|---|---|\n")
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.ViaTool, s.ViaText)
+	}
+	b.WriteString("\n## Cases that needed the second turn\n\nA turn that started a command with `run_command` and ended without an answer that passes is the turn that waits for it, as the prompt asks. The run then delivers the command's completion note as a second turn of the same session and grades that turn. Its time, tokens and cost are added to the case's first attempt.\n\n| model | cases | of |\n|---|---|---|\n")
+	for _, s := range summaries {
+		total := 0
+		for _, c := range cases {
+			if c.Model == s.Model && len(c.Attempts) > 0 {
+				total++
+			}
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.SecondTurn, total)
 	}
 	b.WriteString("\n## Time and tokens\n\n| model | median first-attempt time | tokens (first attempts) | tokens (all attempts) | cost USD (first) | cost USD (all) |\n|---|---|---|---|---|---|\n")
 	for _, s := range summaries {
