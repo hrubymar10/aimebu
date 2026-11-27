@@ -42,7 +42,7 @@
   "checkout": {
    "commit": "add the schema migration script",
    "files": {
-    "migrate.sh": "#!/bin/sh\n# Applies the schema migration to ./data. Needs write access to the data directory.\nmkdir -p data && : > data/schema.version\n"
+    "migrate.sh": "#!/bin/sh\n# Applies the schema migration to ./data, which needs write access to it. This checkout's data directory is not writable.\necho 'migrate.sh: cannot write to ./data: permission denied' >&2\nexit 1\n"
    }
   }
  },
@@ -62,6 +62,10 @@
     "value": "permission denied"
    }
   ],
-  "max_turns_to_valid": 2
+  "max_turns_to_valid": 2,
+  "command_done": {
+   "exit_code": 1,
+   "tail": "migrate.sh: cannot write to ./data: permission denied"
+  }
  }
 }

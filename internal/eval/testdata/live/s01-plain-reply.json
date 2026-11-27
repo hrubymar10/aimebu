@@ -65,6 +65,10 @@
     "op": "no_handoff"
    }
   ],
-  "max_turns_to_valid": 2
+  "max_turns_to_valid": 2,
+  "command_done": {
+   "exit_code": 0,
+   "tail": "ok"
+  }
  }
 }

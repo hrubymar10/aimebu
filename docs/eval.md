@@ -88,7 +88,9 @@ A live scenario is `internal/eval/testdata/live/<id>.json`: `input` (`notes` as 
 `context` keys over it, `allowed_tools`, and `filler_tokens` for a long knowledge block), `expect.checks` and `expect.max_turns_to_valid`.
 The scenario must be true to its own words, because a model checks: a scenario about finished work gives the checkout that work
 (`input.checkout`: a `commit` message and `files`, committed on top of the base project, a small Go module that builds and passes its test; every
-case starts from that base again) and a scenario that quotes or relies on an earlier message (a brief, a thread) gives it in `input.history`
+case starts from that base again). What a brief claims, the checkout proves: s03 has `build.log` (the build and vet it says were run), s04 and s06 have
+`test.log` and the commit, and s05's `migrate.sh` really fails (`permission denied` on stderr, exit 1), so an honest agent can confirm each claim; a scenario whose
+point is a missing proof must say so in its title and a scenario that quotes or relies on an earlier message (a brief, a thread) gives it in `input.history`
 (`no`, `room_id`, `from`, `body`; a number must not repeat a note's). An empty checkout or an empty history makes the agent ask instead of
 answer, which reads as a prompt failure and is a fixture one. `internal/eval/live/fixture_test.go` reads, through the stand-in's own tools, what
 each corrected scenario shows a model. Add an answer that passes it, and a typical wrong one, to `internal/eval/score_test.go`: the test fails for a scenario with no good answer, so a

@@ -10,7 +10,7 @@
     "from": "{dispatcher}",
     "message_id": "msg_01EVALMSG7203",
     "no": 7203,
-    "body": "Task: confirm the checkout builds. Both checks were already run by you: `go build ./...` exited 0 and `go vet ./...` exited 0. Report the result to me as your handoff.",
+    "body": "Task: confirm the checkout builds. Both checks were already run by you: `go build ./...` exited 0 and `go vet ./...` exited 0; the log of both is in build.log. Report the result to me as your handoff.",
     "why": "you are mentioned",
     "entities": [
      {
@@ -42,7 +42,8 @@
   "checkout": {
    "commit": "make the checkout build and vet clean",
    "files": {
-    "util.go": "package main\n\nfunc double(n int) int { return n * 2 }\n"
+    "util.go": "package main\n\nfunc double(n int) int { return n * 2 }\n",
+    "build.log": "$ go build ./...\nexit 0\n$ go vet ./...\nexit 0\n"
    }
   }
  },
@@ -62,6 +63,9 @@
     "value": "{dispatcher}"
    }
   ],
-  "max_turns_to_valid": 2
+  "max_turns_to_valid": 2,
+  "command_done": {
+   "exit_code": 0
+  }
  }
 }

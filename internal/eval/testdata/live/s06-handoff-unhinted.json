@@ -10,7 +10,7 @@
     "from": "{dispatcher}",
     "message_id": "msg_01EVALMSG7506",
     "no": 7506,
-    "body": "Report back when you are done. Status: the change is made and its tests pass.",
+    "body": "Report back when you are done. Status: the change is made and its tests pass (test.log has the run).",
     "why": "you are mentioned",
     "entities": [
      {
@@ -43,7 +43,8 @@
    "commit": "make the change",
    "files": {
     "util.go": "package main\n\nfunc double(n int) int { return n * 2 }\n",
-    "util_test.go": "package main\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\tif double(2) != 4 {\n\t\tt.Fatal(double(2))\n\t}\n}\n"
+    "util_test.go": "package main\n\nimport \"testing\"\n\nfunc TestDouble(t *testing.T) {\n\tif double(2) != 4 {\n\t\tt.Fatal(double(2))\n\t}\n}\n",
+    "test.log": "$ go test ./...\nok  \texample.invalid/eval\t0.2s\n"
    }
   }
  },
@@ -59,6 +60,10 @@
     "value": "done"
    }
   ],
-  "max_turns_to_valid": 2
+  "max_turns_to_valid": 2,
+  "command_done": {
+   "exit_code": 0,
+   "tail": "ok  \texample.invalid/eval\t0.2s"
+  }
  }
 }
