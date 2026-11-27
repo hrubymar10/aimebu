@@ -138,6 +138,10 @@ func serverSessionRows(ctx context.Context, path string) ([]sessionRow, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
+	// v1's database lives at this same path: neither the lock file nor an open is ours to make there.
+	if err := refuseV1RootWrite(filepath.Dir(filepath.Dir(path))); err != nil {
+		return nil, err
+	}
 	lock, err := lockServerDirectory(filepath.Dir(path))
 	var source []protocol.DoctorSession
 	if err != nil {

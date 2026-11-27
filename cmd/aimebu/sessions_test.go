@@ -101,6 +101,8 @@ func TestSessionsMergesLocalAndServerViews(t *testing.T) {
 		CREATE TABLE session(agent_id TEXT,generation INTEGER,ended_at TEXT,native_session_started_at TEXT,native_session_id TEXT);
 		CREATE TABLE room_member(room_id TEXT,member_kind TEXT,member_id TEXT,left_at TEXT,joined_at TEXT);
 		CREATE TABLE turn(id TEXT,agent_id TEXT,started_at TEXT);
+		CREATE TABLE schema_version(version INTEGER,applied_at TEXT);
+		INSERT INTO schema_version VALUES (1,'2026-10-01T00:00:00Z');
 		INSERT INTO machine VALUES ('host',1);
 		INSERT INTO machine VALUES ('remote',0);
 		INSERT INTO machine_launcher VALUES ('launcher-one','host',0);

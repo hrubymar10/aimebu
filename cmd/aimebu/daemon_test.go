@@ -650,14 +650,14 @@ func TestServerDaemonAsksAboutAStartingServerByItsLock(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "running") || strings.Contains(errOut+out, "cannot identify") {
 		t.Fatalf("status of a server that is starting: %d %q %q", code, out, errOut)
 	}
-	// A v1 probe holds the startup lock while it reads the database.
+	// A v1 probe reads under the startup lock when there is one, and never creates the lock file in a root that is still v1's.
 	v1 := makeV1Root(t)
 	t.Setenv("AIMEBU_CONFIG_DIR", v1)
 	if code, out, _ := runServerAction("status"); code != 1 || !strings.Contains(out, "still holds v1's data") {
 		t.Fatalf("status over v1 data: %d %q", code, out)
 	}
-	if _, err := os.Stat(filepath.Join(v1, "server", ".writer.lock")); err != nil {
-		t.Fatalf("a v1 probe did not take the startup lock: %v", err)
+	if _, err := os.Stat(filepath.Join(v1, "server", ".writer.lock")); !os.IsNotExist(err) {
+		t.Fatalf("a v1 probe left the startup lock file in a v1 root: %v", err)
 	}
 }
 

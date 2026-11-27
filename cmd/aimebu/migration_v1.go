@@ -29,7 +29,9 @@ const v1BackupName = ".old-v1-bkp"
 var v1DatabaseOpener = openV1Database
 
 func openV1Database(path string) (*sql.DB, error) {
-	return sql.Open("sqlite", sqliteutil.DSN(path, true))
+	// The probe reads only the schema table, so it opens immutable when no log is pending: a probe of a stopped root must not leave
+	// -shm and -wal files behind.
+	return sql.Open("sqlite", sqliteutil.ImmutableWhenNoWAL(sqliteutil.DSN(path, true), path))
 }
 
 // Development builds can point at a v1 root while still listening on their

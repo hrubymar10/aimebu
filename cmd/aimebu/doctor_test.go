@@ -445,12 +445,12 @@ func TestDoctorRunningServerUsesRouteWithoutOpeningDatabase(t *testing.T) {
 	}
 	httpServer := httptest.NewServer(service.Handler())
 	defer httpServer.Close()
-	previous := doctorOpenStore
-	doctorOpenStore = func(context.Context, string, store.Options) (*store.Store, error) {
+	previous := doctorOpenReadOnly
+	doctorOpenReadOnly = func(string) (*sql.DB, error) {
 		t.Fatal("doctor opened a database owned by the running server")
 		return nil, nil
 	}
-	defer func() { doctorOpenStore = previous }()
+	defer func() { doctorOpenReadOnly = previous }()
 	t.Setenv("AIMEBU_CONFIG_DIR", root)
 	t.Setenv("AIMEBU_BIND", "127.0.0.1")
 	t.Setenv("AIMEBU_PORT", strconv.Itoa(testServerPort(t, httpServer.URL)))
@@ -478,15 +478,15 @@ func TestDoctorStoppedServerChecksOnlyUnderStartupLock(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "server", "aimebu.sqlite")
 	createFixtureDatabase(t, path)
-	previous := doctorOpenStore
-	doctorOpenStore = func(ctx context.Context, gotPath string, opts store.Options) (*store.Store, error) {
+	previous := doctorOpenReadOnly
+	doctorOpenReadOnly = func(gotPath string) (*sql.DB, error) {
 		if second, err := lockServerDirectory(filepath.Dir(gotPath)); err == nil {
 			unlockServerDirectory(second)
 			t.Fatal("doctor opened the database without the server startup lock")
 		}
-		return previous(ctx, gotPath, opts)
+		return previous(gotPath)
 	}
-	defer func() { doctorOpenStore = previous }()
+	defer func() { doctorOpenReadOnly = previous }()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

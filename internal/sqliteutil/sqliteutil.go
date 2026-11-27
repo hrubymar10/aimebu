@@ -5,6 +5,7 @@ package sqliteutil
 
 import (
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,6 +35,18 @@ func DSN(path string, readOnly bool) string {
 	query.Add("_pragma", "busy_timeout("+strconv.Itoa(int(BusyTimeout/time.Millisecond))+")")
 	u.RawQuery = query.Encode()
 	return u.String()
+}
+
+// ImmutableWhenNoWAL appends immutable=1 to a read-only dsn for path when no write-ahead log with content sits next to the file. A
+// read-only connection to a WAL-mode database otherwise creates (and leaves behind) the -shm and -wal files, which a question
+// about a database that nothing is writing must not do. Immutable is only right for a reader that knows nothing is changing the
+// file, or that reads only what no writer changes (a schema table); a leftover non-empty log is read the ordinary way so its
+// pages are not ignored.
+func ImmutableWhenNoWAL(dsn, path string) string {
+	if info, err := os.Stat(path + "-wal"); os.IsNotExist(err) || (err == nil && info.Size() == 0) {
+		return dsn + "&immutable=1"
+	}
+	return dsn
 }
 
 // IsBusy reports whether err is SQLite's "locked" or "busy" answer.

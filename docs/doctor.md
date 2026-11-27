@@ -39,11 +39,15 @@ server) or `machine` (a supervisor host).
   `AIMEBU_CONFIG_DIR=~/.aimebu2` to keep using it, or move that data into the
   default root. The warning also appears on stderr for ordinary CLI commands.
 - **sqlite database** — checked by the running server, or opened under the
-  startup lock while stopped, then `PRAGMA integrity_check` and
+  startup lock while stopped (read-only: doctor never migrates, switches the
+  journal mode, or writes a backup there), then `PRAGMA integrity_check` and
   the stored schema version compared against the newest migration this binary
   applies. A missing or empty database warns (the server may not have started
-  yet); a schema older than the binary warns (it forward-migrates on next
-  start); a failed integrity check or a schema newer than the binary fails.
+  yet); a schema older than the binary warns (doctor leaves it as it is; the
+  server forward-migrates it on its next start); a stopped root that still
+  holds v1's data, or an interrupted v1 move, warns and is not opened (start the
+  v2 server to finish cutover first); a failed integrity check or a schema
+  newer than the binary fails.
   It also fails when the v2 database holds v1's `schema_meta` table, which
   means a v1 server was started on the folder after v2 moved v1's files into
   `.old-v1-bkp` (see [migrating from v1](migrating-from-v1.md)).

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -83,8 +84,13 @@ func (s *Store) DoctorReadDB() *sql.DB { return s.readDB }
 
 // OpenReadOnly opens an existing store file without migrations. Callers must
 // first prove the server writer lock is free when they run in another process.
+// With the lock free and no write-ahead log left behind by a crash, nothing can
+// change the file under the reader, so it opens immutable: SQLite then creates
+// no -shm or -wal file next to a database that a clean shutdown left without
+// them. A leftover log is read through a plain read-only connection instead, so
+// its pages are not ignored.
 func OpenReadOnly(path string) (*sql.DB, error) {
-	db, err := sql.Open(SQLDriverName, readOnlyDSN(path))
+	db, err := sql.Open(SQLDriverName, sqliteutil.ImmutableWhenNoWAL(readOnlyDSN(path), path))
 	if err != nil {
 		return nil, err
 	}

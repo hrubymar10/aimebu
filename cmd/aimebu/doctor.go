@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,7 +24,8 @@ import (
 
 const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--live | --machine]"
 
-var doctorOpenStore = store.Open
+// doctorOpenReadOnly opens the stopped server's database for the checks. It must never migrate or write (store.Open does both).
+var doctorOpenReadOnly = store.OpenReadOnly
 
 // doctorCommand implements `aimebu doctor [--json] [--strict] [--machine]`:
 // health checks for a server installation, or with --machine for a
@@ -99,17 +101,22 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	} else {
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 			dbCheck = checkSQLiteDB(path, nil)
+		} else if v1Err := refuseV1RootWrite(config.root); v1Err != nil {
+			// v1's database lives at this same path. Opening it here would not be a read, and the lock file is not ours to create.
+			dbCheck = doctorV1RootCheck(config.root, v1Err)
 		} else {
 			lock, err := lockServerDirectory(filepath.Dir(path))
 			if err != nil {
 				dbCheck = doctorCheck{Name: "sqlite database", Status: statusWarn, Description: "server running or lock held; database check skipped"}
 			} else {
 				defer unlockServerDirectory(lock)
-				if _, err := os.Stat(path); err == nil {
-					s, openErr := doctorOpenStore(ctx, path, store.Options{})
+				if v1Err := refuseV1RootWriteHeld(config.root); v1Err != nil {
+					dbCheck = doctorV1RootCheck(config.root, v1Err)
+				} else if _, err := os.Stat(path); err == nil {
+					opened, openErr := doctorOpenReadOnly(path)
 					if openErr == nil {
-						db = s.DoctorReadDB()
-						closeOffline = func() { _ = s.Close() }
+						db = opened
+						closeOffline = func() { _ = opened.Close() }
 					} else {
 						dbCheck = doctorCheck{Name: "sqlite database", Status: statusFail, Description: "open " + path + ": " + openErr.Error()}
 					}
@@ -224,6 +231,16 @@ func checkConfigDir(root string) doctorCheck {
 // binary applies. A missing database warns instead of failing: on a machine
 // where the server has never started, doctor should still report the rest of
 // the installation.
+// doctorV1RootCheck is the database finding for a stopped root that still holds v1's data (or an interrupted v1 move): doctor leaves it
+// alone, and says the v2 server has not taken the root over yet.
+func doctorV1RootCheck(root string, err error) doctorCheck {
+	const name = "sqlite database"
+	if errors.Is(err, errV1RootWrite) {
+		return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("%s holds aimebu v1 data (or an interrupted v1 move); not opened, start the v2 server to finish cutover first", root)}
+	}
+	return doctorCheck{Name: name, Status: statusFail, Description: "cannot inspect " + root + ": " + err.Error()}
+}
+
 func checkSQLiteDB(path string, db *sql.DB) doctorCheck {
 	const name = "sqlite database"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
