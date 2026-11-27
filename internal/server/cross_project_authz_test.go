@@ -68,12 +68,14 @@ func init() {
 		"GET /api/switcher", "GET /api/sounds", "GET /api/usage-limit-default")
 	allow("an instance-wide setting or action for the owner and global admins (or the project owner when it creates something of its own): the answer to anyone else is 403 by the handler's own guard, and none of it takes a project id in the path",
 		"POST /api/projects", "POST /api/roles", "POST /api/cleanup", "GET /api/cleanup/log", "GET /api/cleanup/settings", "PUT /api/cleanup/settings",
-		"GET /api/disk", "GET /api/doctor", "GET /api/retention", "PUT /api/retention", "PUT /api/macros", "PUT /api/usage-limit-default",
+		"GET /api/disk", "GET /api/retention", "PUT /api/retention", "PUT /api/macros", "PUT /api/usage-limit-default",
 		"GET /api/agent-isolation", "PUT /api/agent-isolation", "GET /api/telemetry/settings", "PUT /api/telemetry/settings",
 		"GET /api/settings-backup", "POST /api/settings-backup/apply", "POST /api/settings-backup/preview", "POST /api/local-supervisor/restart",
 		"POST /api/invites", "POST /api/sounds", "PUT /api/switcher", "POST /api/usages/refresh", "POST /api/usages/providers",
 		"POST /api/usages/settings", "POST /api/usages/mistral/config", "POST /api/usages/ollama/config", "POST /api/usages/copilot/login/start",
 		"POST /api/usages/copilot/login/poll", "POST /api/usages/copilot/login/logout")
+	allow("the doctor and backup routes: authorized by the instance's doctor key from the server's own host, never by a session, and they describe the instance (its database, its sessions), not a project's objects",
+		"GET /api/doctor", "GET /api/doctor/sessions", "GET /api/backup/database")
 	allow("the v1 import and its status: owner-only, one instance-wide job, no project or room id",
 		"POST /api/import-v1/commit", "POST /api/import-v1/dry-run", "GET /api/import-v1/preview", "POST /api/import-v1/skip", "GET /api/import-v1/status")
 	allow("machine pairing: the redeem is authorized by a one-time code, the creation by an owner session; a machine is not a project's object",
