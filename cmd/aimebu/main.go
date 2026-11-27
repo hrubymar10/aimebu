@@ -557,6 +557,11 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if tlsConfig != nil {
+		if warning := tlsKeyWarning(os.Getenv("AIMEBU_TLS_KEY")); warning != "" {
+			fmt.Fprintln(stderr, warning)
+		}
+	}
 	publicURL, err := resolvePublicURL()
 	if err != nil {
 		fmt.Fprintln(stderr, err)

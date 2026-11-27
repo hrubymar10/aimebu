@@ -52,6 +52,17 @@ func resolveServerTLSConfig(httpPort int) (*serverTLSConfig, error) {
 	return &serverTLSConfig{certificate: certificate, port: port}, nil
 }
 
+// tlsKeyWarning is what the server says when the private key file named by AIMEBU_TLS_KEY can be read by any user of the machine
+// (the "other" read bit). Group access is allowed, so a key shared with a group (a service account's, or a certificate manager's) is
+// not warned about, and nothing is refused: the server starts as before. It returns "" when there is nothing to say.
+func tlsKeyWarning(keyPath string) string {
+	info, err := os.Stat(keyPath)
+	if err != nil || info.Mode().Perm()&0o004 == 0 {
+		return ""
+	}
+	return fmt.Sprintf("warning: AIMEBU_TLS_KEY %s is readable by other users (mode %04o); restrict it, for example with chmod 600 or 640", keyPath, info.Mode().Perm())
+}
+
 func listenTLS(bind string, config *serverTLSConfig) (net.Listener, error) {
 	listener, err := listenTCP(net.JoinHostPort(bind, strconv.Itoa(config.port)))
 	if err != nil {

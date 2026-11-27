@@ -15,7 +15,10 @@ aimebu server
 Set both certificate variables or neither. Startup fails if only one is set,
 either file is missing or unreadable, the pair cannot be loaded, the TLS port
 is invalid, or it equals the HTTP port. With neither set, the server uses HTTP
-only. Sessions set the `Secure` cookie attribute on HTTPS requests, and on
+only. If the key file is readable by any other user of the machine (the "other" read bit
+is set, as in mode `0644`), the server starts and logs a warning naming the file; it never
+refuses, and group access (`0640`) is allowed without a warning. Keep the key at `0600` (or `0640`
+for a shared service group). Sessions set the `Secure` cookie attribute on HTTPS requests, and on
 plain-HTTP requests addressed to the host of an `https` `AIMEBU_PUBLIC_URL`.
 The HTTPS listener negotiates HTTP/2. The web UI is one bundled entry script (the
 server bundles its ~240 modules when it starts; Settings, the v1 import wizard and the other large screens are

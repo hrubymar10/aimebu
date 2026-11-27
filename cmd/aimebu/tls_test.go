@@ -223,3 +223,23 @@ func TestHTTPSListenerNegotiatesHTTP2(t *testing.T) {
 		}
 	}
 }
+
+// A private key that any user can read is warned about, never refused; a key only its owner or its group can read is not.
+func TestTLSKeyWarning(t *testing.T) {
+	_, keyPath := testCertificate(t)
+	for _, tc := range []struct {
+		mode os.FileMode
+		warn bool
+	}{{0o600, false}, {0o640, false}, {0o660, false}, {0o644, true}, {0o604, true}, {0o666, true}} {
+		if err := os.Chmod(keyPath, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		warning := tlsKeyWarning(keyPath)
+		if (warning != "") != tc.warn || tc.warn && !strings.Contains(warning, keyPath) {
+			t.Fatalf("mode %04o: warning %q, want warning=%v", tc.mode, warning, tc.warn)
+		}
+	}
+	if warning := tlsKeyWarning(filepath.Join(t.TempDir(), "missing.pem")); warning != "" {
+		t.Fatalf("a missing key is the resolver's error, not a warning: %q", warning)
+	}
+}
