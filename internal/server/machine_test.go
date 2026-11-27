@@ -702,7 +702,7 @@ func (f *fixture) dialMachineWithStopReplayAck(t *testing.T, journalID string, a
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), replayWait)
 	defer cancel()
 	raw, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: f.machineID, JournalID: journalID, SupportsStopReplay: supported, Agents: agents})
 	if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
@@ -832,7 +832,8 @@ func TestFirstJournalHelloWithOpenTurnIsUncertain(t *testing.T) {
 	}
 }
 
-// replayWait bounds the hello, replay and stop of the supervisor client below.
+// replayWait bounds the hello, replay and stop of the supervisor client below, and the hello and the answer round trip of the raw websocket
+// connection the machine tests dial.
 // Each is a real websocket, journal and server round trip; under a parallel
 // -race gate on a busy host 3s was not always enough, so a slow run is not a
 // failure (the waits end as soon as the event happens, so a pass costs nothing).
@@ -922,7 +923,7 @@ func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 		t.Helper()
 		frame := protocol.Frame{V: protocol.Version, Type: protocol.Answer, AgentID: agent.ID, Generation: 0, TurnID: turn.ID, AnswerRev: 0, Digest: digest, Candidate: string(candidate)}
 		raw, _ := json.Marshal(frame)
-		ioCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		ioCtx, cancel := context.WithTimeout(ctx, replayWait)
 		defer cancel()
 		if err := conn.Write(ioCtx, websocket.MessageText, raw); err != nil {
 			t.Fatal(err)
