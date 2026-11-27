@@ -631,8 +631,8 @@ func TestCrossProjectRoutesRefuseTheOtherProjectsObjects(t *testing.T) {
 	if err := w.f.db.CheckMachineProject(t.Context(), w.p2["project"], w.f.machineID); !errors.Is(err, store.ErrMachineScope) {
 		t.Errorf("recovery admission: %v", err)
 	}
-	if _, err := w.f.db.ProjectMachineFolder(t.Context(), w.p2["project"], w.f.machineID); !errors.Is(err, store.ErrMachineScope) {
-		t.Errorf("folder mapping: %v", err)
+	if _, err := w.f.db.ProjectMachineFolder(t.Context(), w.p2["project"], w.f.machineID); err != nil {
+		t.Errorf("folder lookup for cleanup: %v", err)
 	}
 }
 

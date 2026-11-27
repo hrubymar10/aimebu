@@ -337,11 +337,13 @@ func TestStoredDisabledHostSkipsLocalSupervisorOnStart(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "")
-	before := localSupervisorStarts.Load()
-	start()
-	if got := localSupervisorStarts.Load() - before; got != 0 {
-		t.Fatalf("disabled host started %d supervisors", got)
+	for _, override := range []string{"", "1"} {
+		t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", override)
+		before := localSupervisorStarts.Load()
+		start()
+		if got := localSupervisorStarts.Load() - before; got != 0 {
+			t.Fatalf("disabled host with override %q started %d supervisors", override, got)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); !os.IsNotExist(err) {
 		t.Fatalf("disabled host created journal: %v", err)

@@ -37,9 +37,6 @@ func (s *Store) ProjectMachineFolder(ctx context.Context, projectID, machineID s
 	if err := s.checkTxReentry(ctx); err != nil {
 		return "", err
 	}
-	if err := s.CheckMachineProject(ctx, projectID, machineID); err != nil {
-		return "", err
-	}
 	var folder string
 	err := s.db.QueryRowContext(ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE COALESCE(f.folder,'') END
 		FROM machine m CROSS JOIN project p LEFT JOIN project_machine_folder f ON f.machine_id=m.id AND f.project_id=p.id

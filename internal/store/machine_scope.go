@@ -20,7 +20,7 @@ func (e *MachineScopeError) Is(target error) bool { return target == ErrMachineS
 type MachineScopeActiveError struct{ Agents []string }
 
 func (e *MachineScopeActiveError) Error() string {
-	return "stop or move these active agents first: " + strings.Join(e.Agents, ", ")
+	return "stop or move these agents, and cancel pending switches, first: " + strings.Join(e.Agents, ", ")
 }
 func (e *MachineScopeActiveError) Is(target error) bool { return target == ErrMachineScopeActive }
 
@@ -83,8 +83,13 @@ func (s *Store) SetMachineScope(ctx context.Context, machineID, mode string, all
 				return ErrInvalidTransition
 			}
 		}
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.slug,p.name,p.id FROM agent a JOIN project p ON p.id=a.project_id
-			WHERE a.machine_id=? AND (a.desired!='stopped' OR a.observed!='stopped') ORDER BY p.name,a.slug`, machineID)
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,name,id FROM (
+			SELECT a.slug,p.name,p.id FROM agent a JOIN project p ON p.id=a.project_id
+			WHERE a.machine_id=? AND (a.desired!='stopped' OR a.observed!='stopped')
+			UNION
+			SELECT a.slug,p.name,p.id FROM agent_switch sw JOIN agent a ON a.id=sw.agent_id
+			JOIN project p ON p.id=a.project_id
+			WHERE COALESCE(sw.machine_id,a.machine_id)=? AND sw.state IN ('draining','starting')) ORDER BY name,slug`, machineID, machineID)
 		if err != nil {
 			return err
 		}

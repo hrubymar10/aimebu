@@ -889,6 +889,8 @@ func fail(w http.ResponseWriter, err error) {
 		apiError(w, 409, "team_flow_rule", "this team flow does not allow that role in this room")
 	} else if errors.Is(err, store.ErrScopeMismatch) {
 		apiError(w, 409, "scope_mismatch", "the requested resources belong to different projects or machines")
+	} else if errors.Is(err, store.ErrMachineScope) {
+		apiError(w, 409, "machine_scope", err.Error())
 	} else {
 		log.Printf("http 500: %s", safeErrorChain(err))
 		if reporter, ok := w.(interface{ CaptureHTTPError(error) }); ok {

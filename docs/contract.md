@@ -677,7 +677,8 @@ Machines and workspace
   them with `PUT /api/machines/{id}/scope`, sending those three fields and
   receiving the updated machine. An excluded or disabled machine returns
   409 `machine_scope`, naming it and the project. Narrowing or disabling
-  while an affected agent has `desired!='stopped' OR observed!='stopped'`
+  while an affected agent has `desired!='stopped' OR observed!='stopped'`, or
+  an agent switch is draining or starting toward that machine,
   returns 409 `machine_scope_active`, listing each agent slug and project and
   saying to stop or move them first. Invalid project IDs, scope mode, or
   disabling a remote machine return 400 `invalid_request`.

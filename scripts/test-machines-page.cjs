@@ -280,7 +280,7 @@ async function main() {
     // The owner can list projects and disable the host; an active-agent refusal names the blocker.
     {
       const scoped = { ...host, scope_mode: 'all', allowed_project_ids: [], disabled: false };
-      const page = await mount({ auto: { [MACHINES]: { machines: [scoped] }, 'GET /api/projects': [{ id: 'p1', name: 'Alpha' }, { id: 'p2', name: 'Beta' }] } });
+      const page = await mount({ auto: { [MACHINES]: { machines: [scoped] }, 'GET /api/users': { projects: [{ id: 'p1', name: 'Alpha' }, { id: 'p2', name: 'Beta' }] } } });
       await cards(page);
       await page.$eval('.machine-scope-edit', el => el.click());
       await page.waitForSelector('.machine-scope-editor');

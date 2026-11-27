@@ -809,7 +809,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		_ = os.Remove(setupPath)
 	}
 	localEnabled := ctx.Err() == nil && localSupervisor
-	if localEnabled && os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "1" {
+	if localEnabled {
 		if host, err := db.HostMachine(ctx); err == nil && host.Disabled {
 			localEnabled = false
 		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -817,7 +817,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			return 1
 		}
 	}
-	if localEnabled {
+	if localSupervisor {
 		// The supervisor reads these itself; a value it would reject fails the server's start, where the person sees it.
 		if _, err := supervisor.TurnLimitsFromEnv(os.Getenv); err != nil {
 			failStartup(stderr, err)
@@ -955,14 +955,12 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		}
 		service.SetLocalSupervisorID(credential.MachineID)
 		localManager.machineID = credential.MachineID
-		if os.Getenv("AIMEBU_EMBEDDED_SUPERVISOR") != "1" {
-			host, err := db.HostMachine(ctx)
-			if err != nil {
-				return err
-			}
-			if host.Disabled {
-				return nil
-			}
+		host, err := db.HostMachine(ctx)
+		if err != nil {
+			return err
+		}
+		if host.Disabled {
+			return nil
 		}
 		localSupervisorStarts.Add(1)
 		if err := startDetachedSupervisor(config); err != nil {

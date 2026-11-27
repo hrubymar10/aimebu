@@ -54,8 +54,8 @@ export class MachinesStore {
     this.scopeDisabled.value = !!machine.disabled;
     this.error.value = '';
     try {
-      const projects = await request('/api/projects');
-      if (this.alive && this.scopeMachine.value === machine.id) this.scopeProjects.value = projects.filter(project => !project.system);
+      const users = await request('/api/users');
+      if (this.alive && this.scopeMachine.value === machine.id) this.scopeProjects.value = users.projects || [];
     } catch (failure) { if (this.alive) this.error.value = failure.message; }
   }
 

@@ -220,6 +220,9 @@ func (s *Server) preflightTeamSetup(r *http.Request, projectID string, input *st
 			return err
 		}
 		target.MachineID = machine.ID
+		if err := s.Store.CheckMachineProject(r.Context(), projectID, machine.ID); err != nil {
+			return err
+		}
 		launcherID := ""
 		var launcher *store.Launcher
 		if conn.supportsLaunchers && target.Tool != "fake" {

@@ -45,6 +45,27 @@ func TestMachineScopeDefaultsAndActiveAgentGuard(t *testing.T) {
 	}
 }
 
+func TestMachineScopeRefusesToExcludeDrainingSwitchTarget(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	var target Machine
+	if err := s.Tx(ctx, func(tx *Tx) (err error) {
+		target, err = tx.CreateMachine(Machine{Name: "switch-target", KeyHash: "switch-key", Approved: true})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO agent_switch(agent_id,room_id,tool,variant,model,provider,machine_id,checkout_path,state,requested_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`, f.agent.ID, f.room.ID, "codex", "native", "test", "test", target.ID, "/remote/test", "draining", timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMachineScope(ctx, target.ID, "listed", nil, false); err == nil || !strings.Contains(err.Error(), f.agent.Slug) {
+		t.Fatalf("excluding the pending switch target: %v", err)
+	}
+}
+
 func TestMachineScopeMigrationKeepsExistingMachinesUnrestricted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

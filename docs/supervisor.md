@@ -203,8 +203,9 @@ the host machine to **Disabled** in Settings → Machines to run no local
 supervisor. The server stops a running local supervisor when that setting is
 saved and starts one when it is enabled again; it also observes the stored
 setting on startup. Disabling is refused while any host agent is still
-desired active or observed live. `AIMEBU_EMBEDDED_SUPERVISOR=0` still overrides
-the setting for remote-only setups or tests; `=1` forces a local supervisor.
+desired active or observed live. `AIMEBU_EMBEDDED_SUPERVISOR=0` also disables
+the local supervisor for remote-only setups or tests; setting it to `1` does
+not override a disabled host machine.
 On shutdown, the server
 stops dispatch, closes its HTTP listener and its store; the local supervisor
 and its turns keep running and reconnect to the next server.

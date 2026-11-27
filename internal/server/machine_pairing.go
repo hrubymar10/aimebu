@@ -271,8 +271,8 @@ func (s *Server) machineScope(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if before.IsHost && before.Disabled != req.Disabled {
-		if req.Disabled && s.LocalSupervisorDisable != nil {
+	if before.IsHost {
+		if !before.Disabled && req.Disabled && s.LocalSupervisorDisable != nil {
 			s.LocalSupervisorDisable()
 		}
 		if !req.Disabled && s.LocalSupervisorEnable != nil {
