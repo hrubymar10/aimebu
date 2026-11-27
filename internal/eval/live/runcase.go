@@ -1,6 +1,7 @@
 package live
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -169,6 +170,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	}
 	r := eval.Score(answer, scenario, tools)
 	a.Candidate, a.Valid, a.Strict, a.Correct, a.Class = truncate(answer, 4000), r.Valid, r.Strict, r.Correct, r.Class
+	a.Via = answerVia(answer, o.MCP.Submitted(key))
 	switch {
 	case r.Err != "":
 		a.Err = r.Err
@@ -194,6 +196,17 @@ func harnessFailure(exit adapter.ExitInfo, err error) string {
 		out += ", no output on stdout or stderr"
 	}
 	return out
+}
+
+// answerVia says how the answer the adapter reported arrived: through the tool when it is, byte for byte once compacted, what the stand-in
+// toolbox accepted from submit_answer, otherwise as the final text. The adapter takes the tool's input as the answer when it is valid (for
+// OpenCode internal/adapter/opencode/opencode.go:691-694, for Pi internal/adapter/pi/pi.go:555-562), so a tool answer reaches the same scorer as a text one.
+func answerVia(answer string, submitted []byte) string {
+	var compact bytes.Buffer
+	if len(submitted) > 0 && json.Compact(&compact, []byte(answer)) == nil && bytes.Equal(compact.Bytes(), submitted) {
+		return eval.ViaTool
+	}
+	return eval.ViaText
 }
 
 func truncate(s string, n int) string {

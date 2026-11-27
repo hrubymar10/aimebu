@@ -44,11 +44,19 @@ type request struct {
 	Params json.RawMessage `json:"params"`
 }
 
-type tool struct {
+// Definition is one tool as tools/list reports it: the name, the description the model reads and the input schema.
+type Definition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 }
+
+type tool = Definition
+
+// Definitions is the list tools/list answers with for a connection, the same value the server's own endpoint uses (Server.tools). The catalog does
+// not depend on the agent's role: what a role may do is decided when a tool is called. answerTool says whether the connection asked for
+// submit_answer (see Server.AnswerTool). The eval's stand-in toolbox serves this list, so what a model reads there cannot drift from production.
+func Definitions(answerTool bool) []Definition { return Server{AnswerTool: answerTool}.tools() }
 
 var empty = map[string]any{"type": "object", "properties": map[string]any{}}
 

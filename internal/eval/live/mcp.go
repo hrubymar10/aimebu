@@ -3,7 +3,9 @@
 package live
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 )
 
@@ -25,6 +28,7 @@ type MCPServer struct {
 	tools    map[string][]string              // bearer key -> tool names offered
 	calls    map[string][]string              // bearer key -> tool names called, in order
 	history  map[string][]eval.HistoryMessage // bearer key -> the messages room_history and message_get know
+	answers  map[string][]byte                // bearer key -> the last answer submit_answer accepted, compacted
 }
 
 // StartMCP listens on an ephemeral port on every interface, since a container reaches the host through its gateway address, not loopback.
@@ -33,7 +37,7 @@ func StartMCP() (*MCPServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, history: map[string][]eval.HistoryMessage{}}
+	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, history: map[string][]eval.HistoryMessage{}, answers: map[string][]byte{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/agent/mcp", m.handle)
 	m.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -62,20 +66,19 @@ func (m *MCPServer) SetHistory(key string, messages []eval.HistoryMessage) {
 	m.mu.Unlock()
 }
 
+// Submitted is the last answer the turn that held key gave through submit_answer and the toolbox accepted (the same check production applies), compacted;
+// nil when it gave none.
+func (m *MCPServer) Submitted(key string) []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]byte(nil), m.answers[key]...)
+}
+
 // Calls lists the tools the turn that held key called.
 func (m *MCPServer) Calls(key string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]string(nil), m.calls[key]...)
-}
-
-var toolDescriptions = map[string]string{
-	"react":          "Add a reaction (an emoji) to a message instead of sending a message.",
-	"run_command":    "Start a long command outside the turn; it wakes you with its exit code when it ends.",
-	"dm_agent":       "Send a direct message to another agent.",
-	"message_get":    "Read one message of your project by its number.",
-	"room_history":   "Read the recent messages of a room.",
-	"attachment_get": "Read an attachment of a note by its id.",
 }
 
 var toolReplies = map[string]string{
@@ -96,6 +99,11 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
 	var req struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -104,10 +112,13 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 			Arguments map[string]json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
 		return
 	}
+	// The connection asks for submit_answer with the same query production reads (internal/server/agent_mcp.go): the adapter adds it only for a
+	// turn that OffersAnswerTool (internal/adapter/opencode/opencode.go, pi/pi.go), so the stand-in offers the tool exactly where production does.
+	answerTool := r.URL.Query().Get(agenttools.AnswerToolQuery) == "1"
 	w.Header().Set("Content-Type", "application/json")
 	id := string(req.ID)
 	if id == "" {
@@ -117,10 +128,12 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{}},"serverInfo":{"name":"aimebu-eval","version":"1"}}}`, id)
 	case "tools/list":
-		list := []map[string]any{} // an empty toolbox is `"tools":[]`, as the real toolbox answers, never null
-		for _, name := range offered {
-			list = append(list, map[string]any{"name": name, "description": toolDescriptions[name],
-				"inputSchema": map[string]any{"type": "object", "additionalProperties": true}})
+		// Production's own list, descriptions and input schemas, narrowed to the scenario's tools; submit_answer is in it when the connection asked.
+		list := []agenttools.Definition{} // an empty toolbox is `"tools":[]`, as the real toolbox answers, never null
+		for _, def := range agenttools.Definitions(answerTool) {
+			if def.Name == "submit_answer" || contains(offered, def.Name) {
+				list = append(list, def)
+			}
 		}
 		out, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": map[string]any{"tools": list}})
 		_, _ = w.Write(out)
@@ -129,6 +142,25 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		m.calls[key] = append(m.calls[key], name)
 		m.mu.Unlock()
+		if name == "submit_answer" {
+			// Production's own handler answers: the same validator, "unknown tool" when the connection did not ask for the tool.
+			response, _ := agenttools.Server{AnswerTool: answerTool}.Process(r.Context(), raw)
+			var result struct {
+				Result struct {
+					IsError bool `json:"isError"`
+				} `json:"result"`
+			}
+			if json.Unmarshal(response, &result) == nil && !result.Result.IsError {
+				var compact bytes.Buffer
+				if json.Compact(&compact, rawArguments(raw)) == nil {
+					m.mu.Lock()
+					m.answers[key] = compact.Bytes()
+					m.mu.Unlock()
+				}
+			}
+			_, _ = w.Write(response)
+			return
+		}
 		reply, ok := toolReplies[name]
 		if !ok {
 			reply = "Done."
@@ -187,4 +219,15 @@ func messageGetReply(messages []eval.HistoryMessage, args map[string]json.RawMes
 		}
 	}
 	return notAvailable
+}
+
+// rawArguments is the arguments object of a tools/call request.
+func rawArguments(raw []byte) []byte {
+	var req struct {
+		Params struct {
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"params"`
+	}
+	_ = json.Unmarshal(raw, &req)
+	return req.Params.Arguments
 }

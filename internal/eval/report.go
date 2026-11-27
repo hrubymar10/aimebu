@@ -26,7 +26,16 @@ type Attempt struct {
 	// Candidate is the raw answer the harness reported and Tools the tools the model called, kept so a run can be read afterwards.
 	Candidate string   `json:"candidate,omitempty"`
 	Tools     []string `json:"tools,omitempty"`
+	// Via says how the answer arrived: ViaTool (the model called submit_answer and the stand-in toolbox accepted it, and it is the answer the
+	// adapter reported) or ViaText (the final text). Empty when the attempt had no answer, or the results are older than the field.
+	Via string `json:"via,omitempty"`
 }
+
+// How an answer arrived.
+const (
+	ViaTool = "tool"
+	ViaText = "text"
+)
 
 // Case is one repetition of one scenario on one model. Attempts[0] is the first try. A harness failure (the CLI crashed, timed out or was
 // limited) has Class harness on its attempt and is left out of the rates.
@@ -91,6 +100,8 @@ type ModelSummary struct {
 	AllBreakdown   TokenBreakdown
 	CostFirst      float64
 	CostAll        float64
+	// ViaTool and ViaText count the first attempts by how their answer arrived (Attempt.Via); an attempt with no answer is in neither.
+	ViaTool, ViaText int
 }
 
 // TokenBreakdown keeps the input categories behind a report's total token column.
@@ -150,6 +161,12 @@ func Summarize(cases []Case) []ModelSummary {
 				s.Harness++
 				continue
 			}
+			switch f.Via {
+			case ViaTool:
+				s.ViaTool++
+			case ViaText:
+				s.ViaText++
+			}
 			times = append(times, f.Millis)
 			s.Strict.N++
 			s.Accepted.N++
@@ -202,6 +219,10 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	b.WriteString("\n## First-attempt errors by class\n\n| model | format | field | behaviour |\n|---|---|---|---|\n")
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "| %s | %d | %d | %d |\n", s.Model, s.Errors[ClassFormat], s.Errors[ClassField], s.Errors[ClassBehaviour])
+	}
+	b.WriteString("\n## How the first answer was submitted\n\nThrough the submit_answer tool or as the final text. A harness that is not offered the tool can only answer in text.\n\n| model | submit_answer tool | final text |\n|---|---|---|\n")
+	for _, s := range summaries {
+		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.ViaTool, s.ViaText)
 	}
 	b.WriteString("\n## Time and tokens\n\n| model | median first-attempt time | tokens (first attempts) | tokens (all attempts) | cost USD (first) | cost USD (all) |\n|---|---|---|---|---|---|\n")
 	for _, s := range summaries {

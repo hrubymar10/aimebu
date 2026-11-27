@@ -84,3 +84,19 @@ func TestMedianOfAnEvenCountIsTheMeanOfTheTwoMiddleValues(t *testing.T) {
 		t.Fatalf("the report shows the median:\n%s", text)
 	}
 }
+
+func TestReportShowsHowTheAnswerArrived(t *testing.T) {
+	cases := []Case{
+		{Model: "m1", Scenario: "a", Attempts: []Attempt{{Valid: true, Correct: true, Via: ViaTool}}},
+		{Model: "m1", Scenario: "a", Rep: 1, Attempts: []Attempt{{Valid: true, Correct: true, Via: ViaTool}}},
+		{Model: "m1", Scenario: "a", Rep: 2, Attempts: []Attempt{{Valid: true, Correct: true, Via: ViaText}}},
+		{Model: "m2", Scenario: "a", Attempts: []Attempt{{Valid: true, Correct: true, Via: ViaText}}},
+		{Model: "m2", Scenario: "a", Rep: 1, Attempts: []Attempt{{Class: ClassHarness, Err: "exit 1"}}},
+	}
+	out := Render("t", cases, nil)
+	for _, want := range []string{"## How the first answer was submitted", "| m1 | 2 | 1 |", "| m2 | 0 | 1 |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}

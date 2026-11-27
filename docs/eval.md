@@ -120,10 +120,18 @@ Docker adapter of the tool (`adapter.DockerPreflight` first). Only Docker launch
 is asked for its version.
 
 **The toolbox.** A turn reaches an aimebu toolbox at `/api/agent/mcp`. The runner starts a stand-in on `0.0.0.0` and an ephemeral port (never a fixed
-one, never the real server): it offers the scenario's `allowed_tools`, answers each call with a canned text, and records the calls each turn made
+one, never the real server): it lists the scenario's `allowed_tools` with production's own definitions (the description and input schema of each, taken from `agenttools.Definitions`, the list the server's endpoint serves, so the two cannot drift; `TestStandInCatalogIsProductions` compares them for every scenario), answers each call with a canned text, and records the calls each turn made
 (the `tool_called` checks read them). `room_history` and `message_get` are the exception to "canned": they answer from the scenario's messages,
 which are its input notes (each note is a message of its room) plus its `history`, so a model that looks for the brief, the thread or the
-note it was woken with finds it, and a number the scenario does not have is "Message not available", as in the real toolbox. Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
+note it was woken with finds it, and a number the scenario does not have is "Message not available", as in the real toolbox. **`submit_answer`.** The stand-in offers it exactly where production does: when the connection's endpoint carries `answer_tool=1`
+(`internal/server/agent_mcp.go`), which an adapter adds only for a turn that `adapter.OffersAnswerTool` (OpenCode and Pi at a supported harness version, in the
+normal mode; `internal/adapter/answer_tool_version.go`). The version is the launcher row's `version` in the config file, so a row whose version is below the
+minimum measures the text-only path, as the same agent would run it. A call is handled by production's own code (`agenttools.Server`, the same
+`answer.Parse` check): an answer it refuses comes back as an error the model can correct, and one it accepts is kept. The answer the adapter reports
+for the turn (it takes the tool's input when it is valid) is scored as always, and each attempt in `results.json` has `via`: `tool` when it is the
+answer the toolbox accepted, `text` when it is the final text. The report counts the two per model.
+
+Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
 adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the
 scenario's list, as the supervisor sets it. A container reaches the stand-in at `host.docker.internal`; set `visible_host` in the config when its
 gateway is another address. The stand-in listens on every interface (`0.0.0.0`), because the Docker bridge gateway address is not the same on every
