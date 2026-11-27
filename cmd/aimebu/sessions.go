@@ -7,16 +7,23 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/configroot"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
+	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
 
 type sessionRow struct {
@@ -24,6 +31,8 @@ type sessionRow struct {
 	Generation                                                                         int
 	Remote, Containerized                                                              bool
 }
+
+var sessionsOpenStoreReadOnly = store.OpenReadOnly
 
 func sessionsCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
@@ -79,12 +88,7 @@ func sessionDB(path string) (*sql.DB, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, true))
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	return db, nil
+	return supervisor.OpenJournalReadOnly(path)
 }
 
 func localSessionRows(ctx context.Context, path string) ([]sessionRow, error) {
@@ -131,40 +135,79 @@ func localSessionRows(ctx context.Context, path string) ([]sessionRow, error) {
 }
 
 func serverSessionRows(ctx context.Context, path string) ([]sessionRow, error) {
-	db, err := sessionDB(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	rows, err := queryRetry(ctx, db, `SELECT a.id,a.desired,a.observed,a.tool,a.variant,COALESCE(a.launcher_id,''),a.generation,c.canonical_path,machine.is_host=0,COALESCE(l.containerized,0),
-		COALESCE((SELECT m.room_id FROM room_member m WHERE m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL ORDER BY m.joined_at,m.room_id LIMIT 1),''),
-		COALESCE((SELECT t.id FROM turn t WHERE t.agent_id=a.id ORDER BY COALESCE(t.started_at,'' ) DESC,t.id DESC LIMIT 1),''),
-		COALESCE((SELECT t.started_at FROM turn t WHERE t.agent_id=a.id ORDER BY COALESCE(t.started_at,'' ) DESC,t.id DESC LIMIT 1),''),
-		COALESCE(s.native_session_id,'')
-		FROM agent a JOIN checkout c ON c.id=a.checkout_id JOIN machine ON machine.id=a.machine_id
-		LEFT JOIN machine_launcher l ON l.id=a.launcher_id AND l.machine_id=a.machine_id
-		LEFT JOIN session s ON s.agent_id=a.id AND s.generation=a.generation AND s.ended_at IS NULL AND s.native_session_started_at IS NOT NULL
-		ORDER BY a.id`)
+	lock, err := lockServerDirectory(filepath.Dir(path))
+	var source []protocol.DoctorSession
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []sessionRow{}
-	for rows.Next() {
-		var row sessionRow
-		var desired, observed, handle string
-		if err := rows.Scan(&row.ID, &desired, &observed, &row.Tool, &row.Variant, &row.Launcher, &row.Generation, &row.Checkout, &row.Remote, &row.Containerized, &row.Room, &row.LastTurn, &row.When, &handle); err != nil {
+		source, err = fetchDoctorSessions(ctx, filepath.Dir(filepath.Dir(path)))
+		if err != nil {
+			return nil, fmt.Errorf("server running or lock held; server sessions unavailable: %w", err)
+		}
+	} else {
+		defer unlockServerDirectory(lock)
+		db, openErr := sessionsOpenStoreReadOnly(path)
+		if openErr != nil {
+			return nil, openErr
+		}
+		defer db.Close()
+		source, err = store.ReadDoctorSessions(ctx, db)
+		if err != nil {
 			return nil, err
 		}
-		row.Source = "server"
-		row.State = observed
-		if desired != "active" {
-			row.State += "/" + desired
+	}
+	out := make([]sessionRow, 0, len(source))
+	root := filepath.Dir(filepath.Dir(path))
+	for _, item := range source {
+		row := sessionRow{ID: item.ID, Source: "server", State: item.Observed, Tool: item.Tool, Variant: item.Variant,
+			Launcher: item.Launcher, Room: item.Room, LastTurn: item.LastTurn, When: item.When, Checkout: item.Checkout,
+			Generation: item.Generation, Remote: item.Remote, Containerized: item.Containerized}
+		if item.Desired != "active" {
+			row.State += "/" + item.Desired
 		}
-		row.Resume = resumeHint(row, handle, filepath.Dir(filepath.Dir(path)))
+		row.Resume = resumeHint(row, item.NativeSessionID, root)
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+func fetchDoctorSessions(ctx context.Context, root string) ([]protocol.DoctorSession, error) {
+	config, err := resolveServerConfig()
+	if err != nil {
+		return nil, err
+	}
+	if config.root != root {
+		return nil, fmt.Errorf("doctor root does not match session root")
+	}
+	if health := checkServerHealth(ctx, config.bind, config.port); health.Status != statusOK {
+		return nil, fmt.Errorf("doctor route unavailable: %s", health.Description)
+	}
+	key, finding, ok := readDoctorKey(root)
+	if !ok {
+		return nil, fmt.Errorf("doctor key: %s", finding.Description)
+	}
+	address := net.JoinHostPort(config.bind, strconv.Itoa(config.port))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/api/doctor/sessions", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := doctorHTTPClient(5 * time.Second).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("doctor sessions route: HTTP %d", resp.StatusCode)
+	}
+	var answer struct {
+		Sessions []protocol.DoctorSession `json:"sessions"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&answer); err != nil {
+		return nil, err
+	}
+	return answer.Sessions, nil
 }
 
 func resumeHint(row sessionRow, handle, root string) string {

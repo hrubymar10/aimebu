@@ -5,6 +5,39 @@ package protocol
 // status frames, so they live in the server's memory.
 type DoctorLive struct {
 	Machines []DoctorMachine `json:"machines"`
+	Database *DoctorDatabase `json:"database,omitempty"`
+}
+
+type DoctorDatabase struct {
+	IntegrityCheck  string        `json:"integrity_check"`
+	SchemaVersion   int           `json:"schema_version"`
+	HasV1SchemaMeta bool          `json:"has_v1_schema_meta"`
+	Checks          []DoctorCheck `json:"checks"`
+}
+
+type DoctorCheck struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Description string `json:"description"`
+	Hint        string `json:"hint,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+}
+
+type DoctorSession struct {
+	ID              string `json:"id"`
+	Desired         string `json:"desired"`
+	Observed        string `json:"observed"`
+	Tool            string `json:"tool"`
+	Variant         string `json:"variant"`
+	Launcher        string `json:"launcher"`
+	Generation      int    `json:"generation"`
+	Checkout        string `json:"checkout"`
+	Remote          bool   `json:"remote"`
+	Containerized   bool   `json:"containerized"`
+	Room            string `json:"room"`
+	LastTurn        string `json:"last_turn"`
+	When            string `json:"when"`
+	NativeSessionID string `json:"native_session_id"`
 }
 
 type DoctorMachine struct {

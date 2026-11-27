@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 var doctorNow = time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
@@ -75,7 +77,7 @@ func (f *doctorFixture) agent(id, machine, desired, observed string, desiredRev 
 func (f *doctorFixture) run(serverUp bool) map[string][]doctorCheck {
 	f.t.Helper()
 	got := map[string][]doctorCheck{}
-	for _, check := range doctorServerChecks(f.root, doctorNow, serverUp, true) {
+	for _, check := range doctorServerChecks(f.root, doctorNow, serverUp, f.db) {
 		got[check.Name] = append(got[check.Name], check)
 	}
 	return got
@@ -104,7 +106,7 @@ func TestDoctorServerChecksFreshInstallNeverWarnsOrFails(t *testing.T) {
 	}
 	// Even with no database at all (server never started) the offline checks
 	// stay at ok/warn.
-	for _, check := range doctorServerChecks(t.TempDir(), doctorNow, false, false) {
+	for _, check := range doctorServerChecks(t.TempDir(), doctorNow, false, nil) {
 		if check.Status == statusFail {
 			t.Errorf("no database: %s failed: %s", check.Name, check.Description)
 		}
@@ -487,7 +489,16 @@ func TestDoctorStrictTurnsWarningsIntoFailures(t *testing.T) {
 	f := newDoctorFixture(t)
 	f.machine("m-stale", true, false, time.Now().Add(-3*time.Hour))
 	f.db.Close()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	if err := os.WriteFile(filepath.Join(f.root, "server", "doctor.key"), []byte("test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/doctor" {
+			_ = json.NewEncoder(w).Encode(protocol.DoctorLive{Database: &protocol.DoctorDatabase{IntegrityCheck: "ok", SchemaVersion: store.LatestSchemaVersion(), Checks: []protocol.DoctorCheck{{Name: "machines", Status: statusWarn, Description: "one machine is stale", Hint: "Start the supervisor"}}}})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
 	defer server.Close()
 	t.Setenv("AIMEBU_CONFIG_DIR", f.root)
 	t.Setenv("AIMEBU_BIND", "127.0.0.1")

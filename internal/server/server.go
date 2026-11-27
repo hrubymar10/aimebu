@@ -146,44 +146,45 @@ type Server struct {
 	diskCache         *diskReport
 	TLSPort           int
 	// Setup is the first-run owner setup; nil, or closed, once an owner exists.
-	Setup                *auth.OwnerSetup
-	maintenance          atomic.Bool
-	maintenanceMu        sync.RWMutex
-	importMu             sync.Mutex
-	importReceipt        string
-	importJob            importV1JobState
-	PollInterval         time.Duration
-	WriteTimeout         time.Duration
-	QueueSize            int
-	MachinePingInterval  time.Duration
-	SessionCheckInterval time.Duration
-	HeartbeatInterval    time.Duration // how often the browser event stream sends a heartbeat frame (default 20s); the page reconnects when they stop
-	EventBatchQuery      func(context.Context, string, int64, int64, int) ([]store.Event, error)
-	SessionCheckQuery    func(context.Context, string) error
-	threadCountsQuery    func(context.Context, string, []store.Message) (map[string]int, error)
-	Allow                []netip.Prefix
-	TrustedProxies       []netip.Prefix // AIMEBU_TRUSTED_PROXIES; see clientIP
-	AllowedHosts         []string       // AIMEBU_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
-	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
-	machineMu            sync.Mutex
-	kaScopeMu            sync.Mutex                     // guards kaScope
-	kaScope              map[string]keepAliveScopeLease // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
-	warmSeenMu           sync.Mutex                     // guards warmSeen
-	warmSeen             map[string]warmSeenEntry       // each machine's last count of warm processes, kept after it disconnects (see hostMayHaveWarm)
-	warmByInstance       map[string]map[string]warmSeenEntry
-	saveWarmSeen         func(ctx context.Context, key, value string) error // tests replace the write of a machine's last warm report
-	kaSwitchMu           sync.Mutex                                         // guards kaSwitching
-	kaSwitching          map[string]int                                     // tools whose account is being switched right now: their cache pings are held back
-	machines             map[string]*machineConn
-	retiringMachines     map[string]map[string]*machineConn
-	spawnMu              sync.Mutex
-	spawnKeys            map[string]string
-	usageWatchMu         sync.Mutex
-	usageWatchers        map[chan struct{}]struct{}
-	usageAlertRevision   atomic.Uint64
-	usageAlerts          *usages.AlertTracker
-	usageAlertWake       chan struct{}
-	telemetryIDs         sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
+	Setup                  *auth.OwnerSetup
+	maintenance            atomic.Bool
+	maintenanceMu          sync.RWMutex
+	importMu               sync.Mutex
+	importReceipt          string
+	importJob              importV1JobState
+	PollInterval           time.Duration
+	WriteTimeout           time.Duration
+	QueueSize              int
+	MachinePingInterval    time.Duration
+	SessionCheckInterval   time.Duration
+	HeartbeatInterval      time.Duration // how often the browser event stream sends a heartbeat frame (default 20s); the page reconnects when they stop
+	EventBatchQuery        func(context.Context, string, int64, int64, int) ([]store.Event, error)
+	SessionCheckQuery      func(context.Context, string) error
+	threadCountsQuery      func(context.Context, string, []store.Message) (map[string]int, error)
+	Allow                  []netip.Prefix
+	TrustedProxies         []netip.Prefix // AIMEBU_TRUSTED_PROXIES; see clientIP
+	AllowedHosts           []string       // AIMEBU_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
+	doctorKey              string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
+	doctorIntegrityRunning atomic.Bool
+	machineMu              sync.Mutex
+	kaScopeMu              sync.Mutex                     // guards kaScope
+	kaScope                map[string]keepAliveScopeLease // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
+	warmSeenMu             sync.Mutex                     // guards warmSeen
+	warmSeen               map[string]warmSeenEntry       // each machine's last count of warm processes, kept after it disconnects (see hostMayHaveWarm)
+	warmByInstance         map[string]map[string]warmSeenEntry
+	saveWarmSeen           func(ctx context.Context, key, value string) error // tests replace the write of a machine's last warm report
+	kaSwitchMu             sync.Mutex                                         // guards kaSwitching
+	kaSwitching            map[string]int                                     // tools whose account is being switched right now: their cache pings are held back
+	machines               map[string]*machineConn
+	retiringMachines       map[string]map[string]*machineConn
+	spawnMu                sync.Mutex
+	spawnKeys              map[string]string
+	usageWatchMu           sync.Mutex
+	usageWatchers          map[chan struct{}]struct{}
+	usageAlertRevision     atomic.Uint64
+	usageAlerts            *usages.AlertTracker
+	usageAlertWake         chan struct{}
+	telemetryIDs           sync.Map // user id -> the id that person's reports carry (see telemetry_identity.go)
 	// Presence tracks when a person's browser sessions last showed real activity; nil in tests that build a Server by hand.
 	Presence *humanPresence
 }
@@ -438,6 +439,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/events/cursor", s.Auth.RequireUser(http.HandlerFunc(s.eventCursor)))
 	mux.HandleFunc("GET /api/machine", s.machineSocket)
 	mux.HandleFunc("GET /api/doctor", s.doctorLive)
+	mux.HandleFunc("GET /api/doctor/sessions", s.doctorSessions)
 	mux.HandleFunc("POST /api/local-supervisor/restart", s.restartLocalSupervisorDoctor)
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))
 	mux.Handle("GET /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolRooms)))

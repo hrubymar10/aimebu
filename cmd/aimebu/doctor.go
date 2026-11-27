@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	_ "modernc.org/sqlite"
 
+	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/switcher"
@@ -23,17 +23,16 @@ import (
 
 const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--live | --machine]"
 
+var doctorOpenStore = store.Open
+
 // doctorCommand implements `aimebu doctor [--json] [--strict] [--machine]`:
-// read-only health checks for a server installation, or with --machine for a
+// health checks for a server installation, or with --machine for a
 // host that runs only the supervisor. Each check reports ok, warn, or
 // fail with a one-line explanation and, when something is wrong, a hint on
 // fixing it. The exit code is 1 when any check fails; warnings alone exit 0,
 // unless --strict turns them into failures for scripts.
 //
-// Doctor must be safe to run while the server is running, so it never writes:
-// the database is opened with its own read-only DSN (not the store's write
-// DSN, which enables WAL), the TLS files are only parsed, and the server is
-// probed with a single unauthenticated GET.
+// The CLI never opens the database while the server owns its startup lock.
 func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	jsonOutput, strict, machineMode, liveMode := false, false, false, false
 	for _, arg := range args {
@@ -76,8 +75,55 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 		return finishDoctor(result, strict, jsonOutput, stdout, stderr)
 	}
-	dbCheck := checkSQLiteDB(filepath.Join(config.root, "server", "aimebu.sqlite"))
 	serverCheck := checkServerHealth(ctx, config.bind, config.port)
+	path := filepath.Join(config.root, "server", "aimebu.sqlite")
+	var dbCheck doctorCheck
+	var db *sql.DB
+	var closeOffline func()
+	var live protocol.DoctorLive
+	var liveFailure *doctorCheck
+	var liveFetched bool
+	var keyCheck doctorCheck
+	if serverCheck.Status == statusOK {
+		key, finding, ok := readDoctorKey(config.root)
+		keyCheck = finding
+		if ok {
+			live, liveFailure = fetchDoctorLive(ctx, config, key)
+			liveFetched = liveFailure == nil
+		}
+		if liveFailure == nil && live.Database != nil {
+			dbCheck = checkServerDatabase(*live.Database)
+		} else {
+			dbCheck = doctorCheck{Name: "sqlite database", Status: statusWarn, Description: "server running; database check unavailable from server"}
+		}
+	} else {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			dbCheck = checkSQLiteDB(path, nil)
+		} else {
+			lock, err := lockServerDirectory(filepath.Dir(path))
+			if err != nil {
+				dbCheck = doctorCheck{Name: "sqlite database", Status: statusWarn, Description: "server running or lock held; database check skipped"}
+			} else {
+				defer unlockServerDirectory(lock)
+				if _, err := os.Stat(path); err == nil {
+					s, openErr := doctorOpenStore(ctx, path, store.Options{})
+					if openErr == nil {
+						db = s.DoctorReadDB()
+						closeOffline = func() { _ = s.Close() }
+					} else {
+						dbCheck = doctorCheck{Name: "sqlite database", Status: statusFail, Description: "open " + path + ": " + openErr.Error()}
+					}
+				}
+				if dbCheck.Name == "" {
+					dbCheck = checkSQLiteDB(path, db)
+				}
+			}
+		}
+	}
+
+	if closeOffline != nil {
+		defer closeOffline()
+	}
 	result := doctorResult{Version: resolveVersion(), GeneratedAt: now.UTC().Format(time.RFC3339), Checks: scopeAll([]doctorCheck{
 		configCheck,
 		dbCheck,
@@ -96,14 +142,27 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	// its integrity check; a server answering at all is what lets them judge
 	// machine liveness.
 	if configCheck.Status != statusFail {
-		databaseUsable := dbCheck.Status == statusOK || (dbCheck.Status == statusWarn && strings.Contains(dbCheck.Description, "integrity ok"))
-		result.Checks = append(result.Checks, doctorServerChecks(config.root, now, serverCheck.Status != statusFail, databaseUsable)...)
+		queryDB := db
+		if !strings.Contains(dbCheck.Description, "integrity ok") {
+			queryDB = nil
+		}
+		result.Checks = append(result.Checks, doctorServerChecks(config.root, now, serverCheck.Status != statusFail, queryDB)...)
+		if live.Database != nil {
+			for _, check := range live.Database.Checks {
+				result.Checks = append(result.Checks, doctorCheck(check))
+			}
+		}
 	}
 	result.Checks = scopeAll(result.Checks, scopeServer)
 	// The key goes only to a server that answered the way an aimebu server does (the 401 that makes the server check ok), never to
 	// whatever else happens to listen on the port.
 	if liveMode && serverCheck.Status == statusOK {
-		result.Checks = append(result.Checks, doctorLiveChecks(ctx, config)...)
+		result.Checks = append(result.Checks, scopeAll([]doctorCheck{keyCheck}, scopeLive)...)
+		if liveFailure != nil {
+			result.Checks = append(result.Checks, *liveFailure)
+		} else if liveFetched {
+			result.Checks = append(result.Checks, scopeAll(liveMachineChecks(live), scopeLive)...)
+		}
 	}
 	return finishDoctor(result, strict, jsonOutput, stdout, stderr)
 }
@@ -134,13 +193,7 @@ const (
 // doctorCheck is one finding. Hint says how to fix a warn or fail; Scope says
 // where the fact was read: "server" (this host's config root and database),
 // "live" (the running server) or "machine" (a supervisor host).
-type doctorCheck struct {
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Description string `json:"description"`
-	Hint        string `json:"hint,omitempty"`
-	Scope       string `json:"scope,omitempty"`
-}
+type doctorCheck protocol.DoctorCheck
 
 type doctorResult struct {
 	Version     string        `json:"version,omitempty"`
@@ -166,29 +219,21 @@ func checkConfigDir(root string) doctorCheck {
 	return doctorCheck{name, statusOK, fmt.Sprintf("%s (mode %o)", root, info.Mode().Perm()), "", ""}
 }
 
-// readonlyDSN builds doctor's own read-only SQLite DSN:
-// file:<path>?mode=ro&_pragma=busy_timeout(5000), without the store's WAL
-// journal mode. The path is percent-escaped through net/url so paths with
-// spaces or other URI-special characters survive the round trip.
-func readonlyDSN(path string) string { return sqliteutil.DSN(path, true) }
-
-// checkSQLiteDB opens the database read-only, runs PRAGMA integrity_check,
+// checkSQLiteDB reads an already-open store connection, runs PRAGMA integrity_check,
 // and compares the stored schema version against the newest migration this
 // binary applies. A missing database warns instead of failing: on a machine
 // where the server has never started, doctor should still report the rest of
 // the installation.
-func checkSQLiteDB(path string) doctorCheck {
+func checkSQLiteDB(path string, db *sql.DB) doctorCheck {
 	const name = "sqlite database"
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return doctorCheck{name, statusWarn, fmt.Sprintf("%s: not found (server not started yet?)", path), "", ""}
 	} else if err != nil {
 		return doctorCheck{name, statusFail, fmt.Sprintf("%s: %v", path, err), "", ""}
 	}
-	db, err := sql.Open("sqlite", readonlyDSN(path))
-	if err != nil {
-		return doctorCheck{name, statusFail, fmt.Sprintf("open %s: %v", path, err), "", ""}
+	if db == nil {
+		return doctorCheck{name, statusWarn, "server running or lock held; database check skipped", "", ""}
 	}
-	defer db.Close()
 
 	var integrity string
 	if err := sqliteutil.Retry(func() error { return db.QueryRow("PRAGMA integrity_check").Scan(&integrity) }); err != nil {
@@ -213,7 +258,7 @@ func checkSQLiteDB(path string) doctorCheck {
 	if current > 0 {
 		var mixed int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_meta'`).Scan(&mixed); err == nil && mixed > 0 {
-			return doctorCheck{name, statusFail, "integrity ok, but this v2 database also holds v1's tables (schema_meta): a v1 server was started on this folder after v2 moved v1's files into " + v1BackupName + ". Stop it, then restore the backup into a new folder (docs/migrating-from-v1.md, Roll back)", "", ""}
+			return doctorCheck{name, statusFail, mixedV1DatabaseDescription(), "", ""}
 		}
 	}
 	latest := store.LatestSchemaVersion()
@@ -227,6 +272,34 @@ func checkSQLiteDB(path string) doctorCheck {
 	default:
 		return doctorCheck{name, statusFail, fmt.Sprintf("integrity ok; schema v%d is newer than this binary supports (v%d)", current, latest), "", ""}
 	}
+}
+
+func checkServerDatabase(data protocol.DoctorDatabase) doctorCheck {
+	const name = "sqlite database"
+	if data.IntegrityCheck == "timeout" {
+		return doctorCheck{Name: name, Status: statusWarn, Description: "integrity_check: timeout"}
+	}
+	if data.IntegrityCheck != "ok" {
+		return doctorCheck{Name: name, Status: statusFail, Description: "integrity_check: " + data.IntegrityCheck}
+	}
+	if data.HasV1SchemaMeta {
+		return doctorCheck{Name: name, Status: statusFail, Description: mixedV1DatabaseDescription()}
+	}
+	latest := store.LatestSchemaVersion()
+	switch {
+	case data.SchemaVersion == 0:
+		return doctorCheck{Name: name, Status: statusWarn, Description: "integrity ok; database is empty (server not started yet?)"}
+	case data.SchemaVersion == latest:
+		return doctorCheck{Name: name, Status: statusOK, Description: fmt.Sprintf("integrity ok; schema v%d matches this binary", data.SchemaVersion)}
+	case data.SchemaVersion < latest:
+		return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("integrity ok; schema v%d, this binary supports v%d (forward-migrates on next start)", data.SchemaVersion, latest)}
+	default:
+		return doctorCheck{Name: name, Status: statusFail, Description: fmt.Sprintf("integrity ok; schema v%d is newer than this binary supports (v%d)", data.SchemaVersion, latest)}
+	}
+}
+
+func mixedV1DatabaseDescription() string {
+	return "integrity ok, but this v2 database also holds v1's tables (schema_meta): a v1 server was started on this folder after v2 moved v1's files into " + v1BackupName + ". Stop it, then restore the backup into a new folder (docs/migrating-from-v1.md, Roll back)"
 }
 
 // doctorHTTPClient is the client doctor uses to talk to the server it was pointed at (the health probe and --live). It never goes through

@@ -82,7 +82,7 @@ func fetchDoctorLive(ctx context.Context, config serverConfig, key string) (prot
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: %v", requestURL, err)}
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	resp, err := doctorHTTPClient(5 * time.Second).Do(req)
+	resp, err := doctorHTTPClient(35 * time.Second).Do(req)
 	if err != nil {
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: %v", requestURL, err), Hint: "Live checks need the server to answer on its HTTP port."}
 	}
@@ -95,6 +95,8 @@ func fetchDoctorLive(ctx context.Context, config serverConfig, key string) (prot
 	case http.StatusNotFound:
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("the server at %s has no /api/doctor", requestURL),
 			Hint: "The server on this port is an older build. Restart it from this build."}
+	case http.StatusTooManyRequests:
+		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: "server running or lock held; database check skipped (another integrity check is running)"}
 	default:
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: HTTP %d", requestURL, resp.StatusCode)}
 	}

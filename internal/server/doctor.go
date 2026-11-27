@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -11,9 +13,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/doctorcheck"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
+
+var doctorIntegrityTimeout = 30 * time.Second
+var doctorIntegrityQuery = func(ctx context.Context, conn *sql.Conn) (string, error) {
+	var result string
+	err := conn.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result)
+	return result, err
+}
 
 // DoctorKeyFile is the file under server/ that holds the key `aimebu doctor --live` authenticates with. The server writes it at start with
 // mode 0600 and removes it at shutdown; reading it needs the same file permissions that guard the database, so owning the config
@@ -121,12 +133,18 @@ func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 403, "forbidden", "a same-host request with the doctor key is required")
 		return
 	}
+	if !s.doctorIntegrityRunning.CompareAndSwap(false, true) {
+		apiError(w, http.StatusTooManyRequests, "busy", "a database integrity check is already running")
+		return
+	}
+	defer s.doctorIntegrityRunning.Store(false)
+	database := s.doctorDatabase(r.Context())
 	machines, err := s.Store.Machines(r.Context())
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	answer := protocol.DoctorLive{Machines: []protocol.DoctorMachine{}}
+	answer := protocol.DoctorLive{Machines: []protocol.DoctorMachine{}, Database: &database}
 	for _, machine := range machines {
 		if machine.RevokedAt.Valid {
 			continue
@@ -172,4 +190,47 @@ func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
 		answer.Machines = append(answer.Machines, item)
 	}
 	writeJSON(w, 200, answer)
+}
+
+func (s *Server) doctorDatabase(ctx context.Context) protocol.DoctorDatabase {
+	readDB := s.Store.DoctorReadDB()
+	answer := protocol.DoctorDatabase{Checks: []protocol.DoctorCheck{}}
+	checkCtx, cancel := context.WithTimeout(ctx, doctorIntegrityTimeout)
+	defer cancel()
+	conn, err := readDB.Conn(checkCtx)
+	if err == nil {
+		answer.IntegrityCheck, err = doctorIntegrityQuery(checkCtx, conn)
+		_ = conn.Close()
+	}
+	if checkCtx.Err() == context.DeadlineExceeded {
+		answer.IntegrityCheck = "timeout"
+	} else if err != nil {
+		answer.IntegrityCheck = "error: " + err.Error()
+	}
+	if err := readDB.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&answer.SchemaVersion); err != nil && err != sql.ErrNoRows {
+		answer.Checks = append(answer.Checks, protocol.DoctorCheck{Name: "schema version", Status: "warn", Description: err.Error()})
+	}
+	var mixed int
+	if err := readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_meta'`).Scan(&mixed); err == nil {
+		answer.HasV1SchemaMeta = mixed > 0
+	}
+	if answer.IntegrityCheck == "ok" {
+		answer.Checks = append(answer.Checks, doctorcheck.Checks(readDB, time.Now(), true)...)
+	}
+	return answer
+}
+
+func (s *Server) doctorSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.doctorAuthorized(r) {
+		apiError(w, 403, "forbidden", "a same-host request with the doctor key is required")
+		return
+	}
+	sessions, err := store.ReadDoctorSessions(r.Context(), s.Store.DoctorReadDB())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, struct {
+		Sessions []protocol.DoctorSession `json:"sessions"`
+	}{Sessions: sessions})
 }

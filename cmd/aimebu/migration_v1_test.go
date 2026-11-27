@@ -75,6 +75,39 @@ func TestBackupV1LayoutResumesAndPreservesIndependentState(t *testing.T) {
 	}
 }
 
+func TestV1ProbeChildDoesNotOpenHeldStore(t *testing.T) {
+	root := os.Getenv("AIMEBU_TEST_V1_PROBE_ROOT")
+	if root == "" {
+		return
+	}
+	v1DatabaseOpener = func(string) (*sql.DB, error) {
+		t.Fatal("v1 probe opened the server database despite another process holding the startup lock")
+		return nil, nil
+	}
+	v1, err := isV1Root(root)
+	if v1 || err != nil {
+		t.Fatalf("held v2 store: v1=%t err=%v", v1, err)
+	}
+}
+
+func TestV1ProbeSkipsStoreHeldByAnotherProcess(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	createFixtureDatabase(t, path)
+	lock, err := lockServerDirectory(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockServerDirectory(lock)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestV1ProbeChildDoesNotOpenHeldStore$")
+	cmd.Env = append(os.Environ(), "AIMEBU_TEST_V1_PROBE_ROOT="+root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("probe child: %v: %s", err, out)
+	}
+}
+
 func TestBackupV1LayoutRejectsAmbiguousPartial(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -758,7 +791,12 @@ func TestReadOnlyOpenersWaitOutABriefLock(t *testing.T) {
 	t.Run("doctor", func(t *testing.T) {
 		path := makeDB(`CREATE TABLE schema_version(version INTEGER)`, `INSERT INTO schema_version VALUES (1)`)
 		holdExclusive(t, path, 400*time.Millisecond)
-		if check := checkSQLiteDB(path); check.Status == statusFail {
+		db, err := sql.Open("sqlite", sqliteutil.DSN(path, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if check := checkSQLiteDB(path, db); check.Status == statusFail {
 			t.Fatalf("doctor failed on a briefly locked database: %s", check.Description)
 		}
 	})

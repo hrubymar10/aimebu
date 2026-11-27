@@ -20,11 +20,23 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	_ "modernc.org/sqlite"
 )
 
 var ErrJournalConflict = errors.New("journal conflict")
 var ErrJournalInUse = errors.New("supervisor journal already in use")
+
+// OpenJournalReadOnly supports the local sessions listing. The journal owner
+// remains responsible for writes and migrations.
+func OpenJournalReadOnly(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", sqliteutil.DSN(path, true))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
 
 // JournalOwner probes the journal's process lock without opening the database.
 // A free lock means no supervisor owns it; pid is advisory while it is held.

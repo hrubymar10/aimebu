@@ -138,7 +138,7 @@ func TestDoctorLiveCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	createFixtureDatabase(t, filepath.Join(root, "server", "aimebu.sqlite"))
-	answer := protocol.DoctorLive{Machines: []protocol.DoctorMachine{{ID: "m1", Name: "host", Approved: true, Connected: true,
+	answer := protocol.DoctorLive{Database: &protocol.DoctorDatabase{IntegrityCheck: "ok", SchemaVersion: 1}, Machines: []protocol.DoctorMachine{{ID: "m1", Name: "host", Approved: true, Connected: true,
 		Supports: []protocol.DoctorSupport{{Flag: "supports_worktree", Supported: false, Degrades: "no worktrees"}}}}}
 	var sawKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -210,10 +210,10 @@ func TestDoctorLiveCommand(t *testing.T) {
 	if code, _, _ := run("--live", "--strict"); code != 1 {
 		t.Fatalf("--strict must fail on the warning: %d", code)
 	}
-	// Without --live the key is never read.
+	// The default mode asks the owner for database health too.
 	sawKey = ""
-	if _, _, _ = run("--json"); sawKey != "" {
-		t.Fatal("doctor without --live asked /api/doctor")
+	if _, _, _ = run("--json"); sawKey != "Bearer "+strings.Repeat("cd", 32) {
+		t.Fatal("doctor without --live did not ask /api/doctor")
 	}
 	// --live and --machine do not combine.
 	if code, _, out := run("--live", "--machine"); code != 2 || !strings.Contains(out, "usage") {

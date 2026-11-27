@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +11,96 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
+
+func TestDoctorDatabaseIntegrityTimeout(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	if _, err := f.srv.EnableDoctorKey(root); err != nil {
+		t.Fatal(err)
+	}
+	previous := doctorIntegrityTimeout
+	doctorIntegrityTimeout = 0
+	t.Cleanup(func() { doctorIntegrityTimeout = previous })
+	key := readDoctorKeyFile(t, root)
+	status, answer := doctorRequest(t, f, func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+key) })
+	if status != 200 || answer.Database == nil || answer.Database.IntegrityCheck != "timeout" {
+		t.Fatalf("status=%d database=%+v", status, answer.Database)
+	}
+}
+
+func TestDoctorDatabaseConcurrentRequestIsBusy(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	if _, err := f.srv.EnableDoctorKey(root); err != nil {
+		t.Fatal(err)
+	}
+	key := readDoctorKeyFile(t, root)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	previous := doctorIntegrityQuery
+	doctorIntegrityQuery = func(ctx context.Context, conn *sql.Conn) (string, error) {
+		close(entered)
+		select {
+		case <-release:
+			return previous(ctx, conn)
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	t.Cleanup(func() { doctorIntegrityQuery = previous })
+	first := make(chan int, 1)
+	go func() {
+		status, _ := doctorRequest(t, f, func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+key) })
+		first <- status
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first request did not enter integrity check")
+	}
+	status, _ := doctorRequest(t, f, func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+key) })
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("parallel request status=%d, want 429", status)
+	}
+	close(release)
+	if status := <-first; status != 200 {
+		t.Fatalf("first request status=%d", status)
+	}
+}
+
+func TestDoctorSessionsUsesDoctorGuard(t *testing.T) {
+	f := newFixture(t)
+	root := t.TempDir()
+	if _, err := f.srv.EnableDoctorKey(root); err != nil {
+		t.Fatal(err)
+	}
+	request := func(key string) int {
+		req, err := http.NewRequest(http.MethodGet, f.http.URL+"/api/doctor/sessions", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if status := request(""); status != 403 {
+		t.Fatalf("no key status=%d", status)
+	}
+	if status := request(readDoctorKeyFile(t, root)); status != 200 {
+		t.Fatalf("keyed status=%d", status)
+	}
+}
 
 func doctorRequest(t *testing.T, f *fixture, mutate func(*http.Request)) (int, protocol.DoctorLive) {
 	t.Helper()

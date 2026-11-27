@@ -26,6 +26,12 @@ import (
 
 const v1BackupName = ".old-v1-bkp"
 
+var v1DatabaseOpener = openV1Database
+
+func openV1Database(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", sqliteutil.DSN(path, true))
+}
+
 // Development builds can point at a v1 root while still listening on their
 // separate v2 port. Check the v1 listener too before moving its database.
 // AIMEBU_DEV_SKIP_V1_PROBE=1 skips only this listener probe, so a dev instance
@@ -361,6 +367,13 @@ func backupV1Layout(root string) error {
 	if databasePath == "" {
 		return errors.New("v1 database missing from migration source")
 	}
+	if databasePath == filepath.Join(root, "server", "aimebu.sqlite") {
+		serverLock, err := lockServerDirectory(filepath.Join(root, "server"))
+		if err != nil {
+			return fmt.Errorf("server running or lock held; cannot move v1 database: %w", err)
+		}
+		defer unlockServerDirectory(serverLock)
+	}
 	// Deliberately no busy timeout (and busy_timeout is set to 0 below): a live v1 server must make this fail at once with
 	// "stop the v1 aimebu server", not wait for it.
 	db, err := sql.Open("sqlite", databasePath)
@@ -479,6 +492,7 @@ func syncDirectory(path string) error {
 
 func isV1Root(root string) (bool, error) {
 	path := filepath.Join(root, "server", "aimebu.sqlite")
+	serverPath := path
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		path = filepath.Join(root, "aimebu.sqlite")
 	} else if err != nil {
@@ -489,7 +503,19 @@ func isV1Root(root string) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
-	db, err := sql.Open("sqlite", sqliteutil.DSN(path, true))
+	if path == serverPath {
+		lock, err := lockServerDirectory(filepath.Dir(path))
+		if err != nil {
+			if errors.Is(err, syscall.EWOULDBLOCK) {
+				// A v2 server may own this path. Without its lock we cannot
+				// inspect the file, and it is not a movable v1 root.
+				return false, nil
+			}
+			return false, fmt.Errorf("server running or lock held; cannot inspect database: %w", err)
+		}
+		defer unlockServerDirectory(lock)
+	}
+	db, err := v1DatabaseOpener(path)
 	if err != nil {
 		return false, err
 	}

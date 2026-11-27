@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
@@ -133,7 +134,16 @@ func TestCheckSQLiteDB(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			check := checkSQLiteDB(tt.path)
+			var db *sql.DB
+			if _, err := os.Stat(tt.path); err == nil {
+				var openErr error
+				db, openErr = sql.Open("sqlite", sqliteutil.DSN(tt.path, true))
+				if openErr != nil {
+					t.Fatal(openErr)
+				}
+				defer db.Close()
+			}
+			check := checkSQLiteDB(tt.path, db)
 			if check.Status != tt.want {
 				t.Fatalf("status = %q (%s), want %q", check.Status, check.Description, tt.want)
 			}
@@ -412,6 +422,108 @@ func TestDoctorCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDoctorRunningServerUsesRouteWithoutOpeningDatabase(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	createFixtureDatabase(t, path)
+	owner, err := store.Open(context.Background(), path, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	lock, err := lockServerDirectory(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockServerDirectory(lock)
+	service := server.New(owner)
+	if _, err := service.EnableDoctorKey(root); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(service.Handler())
+	defer httpServer.Close()
+	previous := doctorOpenStore
+	doctorOpenStore = func(context.Context, string, store.Options) (*store.Store, error) {
+		t.Fatal("doctor opened a database owned by the running server")
+		return nil, nil
+	}
+	defer func() { doctorOpenStore = previous }()
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(testServerPort(t, httpServer.URL)))
+	t.Setenv("AIMEBU_ALLOW", "")
+	t.Setenv("AIMEBU_TLS_CERT", "")
+	t.Setenv("AIMEBU_TLS_KEY", "")
+	var out bytes.Buffer
+	doctorCommand(context.Background(), []string{"--json"}, &out, io.Discard)
+	var result doctorResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range result.Checks {
+		if check.Name == "sqlite database" {
+			if check.Status != statusOK {
+				t.Fatalf("database finding = %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("database finding missing")
+}
+
+func TestDoctorStoppedServerChecksOnlyUnderStartupLock(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "server", "aimebu.sqlite")
+	createFixtureDatabase(t, path)
+	previous := doctorOpenStore
+	doctorOpenStore = func(ctx context.Context, gotPath string, opts store.Options) (*store.Store, error) {
+		if second, err := lockServerDirectory(filepath.Dir(gotPath)); err == nil {
+			unlockServerDirectory(second)
+			t.Fatal("doctor opened the database without the server startup lock")
+		}
+		return previous(ctx, gotPath, opts)
+	}
+	defer func() { doctorOpenStore = previous }()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	t.Setenv("AIMEBU_CONFIG_DIR", root)
+	t.Setenv("AIMEBU_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(port))
+	t.Setenv("AIMEBU_ALLOW", "")
+	t.Setenv("AIMEBU_TLS_CERT", "")
+	t.Setenv("AIMEBU_TLS_KEY", "")
+	readCheck := func() doctorCheck {
+		var out bytes.Buffer
+		doctorCommand(context.Background(), []string{"--json"}, &out, io.Discard)
+		var result doctorResult
+		if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range result.Checks {
+			if check.Name == "sqlite database" {
+				return check
+			}
+		}
+		t.Fatal("database finding missing")
+		return doctorCheck{}
+	}
+	if check := readCheck(); check.Status != statusOK {
+		t.Fatalf("stopped: %+v", check)
+	}
+	lock, err := lockServerDirectory(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockServerDirectory(lock)
+	if check := readCheck(); check.Status != statusWarn || !strings.Contains(check.Description, "server running or lock held") {
+		t.Fatalf("locked: %+v", check)
 	}
 }
 

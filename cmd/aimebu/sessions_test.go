@@ -6,13 +6,67 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hrubymar10/aimebu/v2/internal/server"
 	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
+
+func TestSessionsRouteMatchesStoppedStoreOutput(t *testing.T) {
+	f := newDoctorFixture(t)
+	f.machine("host", true, false, time.Now())
+	f.exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('co','prj','host',?)`, f.root)
+	f.agent("agent", "host", "active", "idle", 0)
+	t.Setenv("AIMEBU_CONFIG_DIR", f.root)
+	t.Setenv("AIMEBU_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU_ALLOW", "")
+	t.Setenv("AIMEBU_TLS_CERT", "")
+	t.Setenv("AIMEBU_TLS_KEY", "")
+	read := func() string {
+		var out, errors bytes.Buffer
+		if code := sessionsCommand(context.Background(), nil, &out, &errors); code != 0 || errors.Len() != 0 {
+			t.Fatalf("sessions exit=%d stderr=%s", code, errors.String())
+		}
+		return out.String()
+	}
+	offline := read()
+	if !strings.Contains(offline, "agent") || !strings.Contains(offline, "server") {
+		t.Fatalf("offline rows: %s", offline)
+	}
+	owner, err := store.Open(context.Background(), filepath.Join(f.root, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	lock, err := lockServerDirectory(filepath.Join(f.root, "server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockServerDirectory(lock)
+	service := server.New(owner)
+	if _, err := service.EnableDoctorKey(f.root); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(service.Handler())
+	defer httpServer.Close()
+	t.Setenv("AIMEBU_PORT", strconv.Itoa(testServerPort(t, httpServer.URL)))
+	previous := sessionsOpenStoreReadOnly
+	sessionsOpenStoreReadOnly = func(string) (*sql.DB, error) {
+		t.Fatal("sessions opened the server file while its lock was held")
+		return nil, nil
+	}
+	defer func() { sessionsOpenStoreReadOnly = previous }()
+	if online := read(); online != offline {
+		t.Fatalf("route output differs from stopped store\noffline:\n%s\nonline:\n%s", offline, online)
+	}
+}
 
 func TestSessionsMergesLocalAndServerViews(t *testing.T) {
 	root := t.TempDir()

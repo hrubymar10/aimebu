@@ -75,6 +75,21 @@ type Store struct {
 	writeCommits atomic.Int64
 }
 
+// DoctorReadDB is the store-owned read pool used by the authenticated doctor
+// route. Callers must not close it.
+func (s *Store) DoctorReadDB() *sql.DB { return s.readDB }
+
+// OpenReadOnly opens an existing store file without migrations. Callers must
+// first prove the server writer lock is free when they run in another process.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	db, err := sql.Open(SQLDriverName, readOnlyDSN(path))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
 // WriteCommits says how many write transactions this store has committed since
 // it opened. Tests snapshot it around an idle stretch and expect no movement.
 func (s *Store) WriteCommits() int64 {
