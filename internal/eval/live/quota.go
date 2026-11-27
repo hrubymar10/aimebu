@@ -23,6 +23,9 @@ type QuotaSource struct {
 	URL       string // the server's base URL
 	CookieEnv string
 	Client    *http.Client
+	// ReadFn, when set, is the reading itself: the URL, the cookie and the client are not used. `aimebu self-test` sets it to read the
+	// usages document of the doctor route of the local server (docs/eval.md).
+	ReadFn func(ctx context.Context) (Reading, error)
 }
 
 // Reading is one read of /api/usages: the usage and, per provider, the profile that is active ("provider" -> profile name). A provider with no
@@ -40,6 +43,9 @@ func (q QuotaSource) Fetch(ctx context.Context) (Usage, error) {
 
 // Read reads the current usage and which profile of each provider is active.
 func (q QuotaSource) Read(ctx context.Context) (Reading, error) {
+	if q.ReadFn != nil {
+		return q.ReadFn(ctx)
+	}
 	client := q.Client
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}

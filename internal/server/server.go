@@ -446,6 +446,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machine", s.machineSocket)
 	mux.HandleFunc("GET /api/doctor", s.doctorLive)
 	mux.HandleFunc("GET /api/doctor/sessions", s.doctorSessions)
+	mux.HandleFunc("GET /api/doctor/self-test", s.doctorSelfTest)
 	mux.HandleFunc("GET /api/backup/database", s.backupDatabase)
 	mux.HandleFunc("POST /api/local-supervisor/restart", s.restartLocalSupervisorDoctor)
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))

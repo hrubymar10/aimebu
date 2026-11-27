@@ -124,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	warnLegacyEnvironment(stderr)
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|sessions|usages|fe|version|help>")
+		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|self-test|sessions|usages|fe|version|help>")
 		return 2
 	}
 	if args[0] != "help" && args[0] != "-h" && args[0] != "--help" && args[0] != "version" {
@@ -153,6 +153,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return switcherCommand(args[1:], os.Stdin, stdout, stderr)
 	case "doctor":
 		return doctorCommand(ctx, args[1:], stdout, stderr)
+	case "self-test":
+		return selfTestCommand(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "sessions":
 		return sessionsCommand(ctx, args[1:], stdout, stderr)
 	case "usages":
@@ -281,6 +283,8 @@ Server:
 
 Utilities:
   doctor [flags]                      Run read-only health checks (--json --strict --live --machine)
+  self-test [--full] [--yes] [--targets a,b] [--max-usd N] [--stop-above PCT]
+                                      Run the live answer eval on the server's Docker launchers and models (spends quota; asks first)
   sessions                            List agent sessions known to the journal and server
   usages [provider] [--json|--plain]  Print the usage snapshots the server last cached
   switcher <command>                  Manage Claude Code / Codex credential profiles (works with the server stopped)

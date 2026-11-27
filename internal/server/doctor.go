@@ -12,9 +12,11 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/buildversion"
 	"github.com/hrubymar10/aimebu/v2/internal/doctorcheck"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
@@ -236,4 +238,78 @@ func (s *Server) doctorSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, struct {
 		Sessions []protocol.DoctorSession `json:"sessions"`
 	}{Sessions: sessions})
+}
+
+// selfTestNameUnsafe is what a target name may not hold: it names a scratch directory.
+var selfTestNameUnsafe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+// doctorSelfTest answers GET /api/doctor/self-test (same-host doctor key): the launchers and models `aimebu self-test` can run on, and the
+// usage snapshot its quota guard reads. Only the local supervisor's machine is listed, because the run starts the launchers on this host.
+// It alone returns a launcher's args and env_refs (variable names, never values) and the custom providers (names, base URLs, key_env names, never a key).
+func (s *Server) doctorSelfTest(w http.ResponseWriter, r *http.Request) {
+	if !s.doctorAuthorized(r) {
+		apiError(w, 403, "forbidden", "a same-host request with the doctor key is required")
+		return
+	}
+	// A server with no usage snapshot (a fresh install) answers null: the quota guard is then the CLI's to skip, not this route's to fail.
+	rawUsages := json.RawMessage("null")
+	if s.Usages != nil {
+		usage := s.Usages.Snapshot()
+		if s.Switcher != nil {
+			if err := s.Switcher.OverlayUsages(&usage); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+		var err error
+		if rawUsages, err = json.Marshal(usage.ForAdmin()); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	answer := protocol.DoctorSelfTest{Launchers: []protocol.LauncherRow{}, Targets: []protocol.DoctorSelfTestTarget{}, Usages: rawUsages}
+	machineID := s.localSupervisorID()
+	conn, err := s.machineForID(machineID)
+	if machineID == "" || err != nil {
+		writeJSON(w, 200, answer)
+		return
+	}
+	select {
+	case <-conn.done:
+		writeJSON(w, 200, answer)
+		return
+	default:
+	}
+	conn.harnessMu.Lock()
+	observed := append([]protocol.LauncherRow(nil), conn.launchers...)
+	conn.harnessMu.Unlock()
+	used := map[string]bool{}
+	for _, row := range observed {
+		if !row.Enabled || !row.Containerized || !row.Available {
+			continue
+		}
+		models, err := s.Store.HarnessModels(r.Context(), row.ID)
+		if err != nil {
+			fail(w, fmt.Errorf("models of %s: %w", row.ID, err))
+			return
+		}
+		if len(models) == 0 {
+			continue
+		}
+		custom, err := s.Store.HarnessCustomProviders(r.Context(), row.ID)
+		if err != nil {
+			fail(w, fmt.Errorf("providers of %s: %w", row.ID, err))
+			return
+		}
+		answer.Launchers = append(answer.Launchers, row)
+		for _, model := range models {
+			name := strings.Trim(selfTestNameUnsafe.ReplaceAllString(row.Tool+"-"+row.Name+"-"+model.Slug, "-"), "-")
+			for n := 2; used[name]; n++ {
+				name = fmt.Sprintf("%s-%d", name, n)
+			}
+			used[name] = true
+			answer.Targets = append(answer.Targets, protocol.DoctorSelfTestTarget{Name: name, Tool: row.Tool, LauncherID: row.ID, Model: model.Slug, Providers: custom})
+		}
+	}
+	writeJSON(w, 200, answer)
 }

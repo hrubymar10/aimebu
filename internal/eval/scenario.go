@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"embed"
 	"fmt"
 	"io/fs"
 	"os"
@@ -132,6 +133,18 @@ func LoadFS(fsys fs.FS) ([]Scenario, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+//go:embed testdata/live/*.json
+var embeddedLive embed.FS
+
+// LoadEmbedded is the live scenarios the binary carries (internal/eval/testdata/live), so `aimebu self-test` needs no checkout of the repository.
+func LoadEmbedded() ([]Scenario, error) {
+	sub, err := fs.Sub(embeddedLive, "testdata/live")
+	if err != nil {
+		return nil, err
+	}
+	return LoadFS(sub)
 }
 
 // Validate says what is wrong with a scenario, or nothing.

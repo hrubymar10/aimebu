@@ -226,6 +226,7 @@ environment or launcher arguments.
   key file belongs to another start of the server (it is replaced at every
   start) or the request did not reach it from this host directly; 404 means an
   older build without `/api/doctor`.
+  `aimebu self-test` ([eval](eval.md#aimebu-self-test)) uses the same key and guard through `GET /api/doctor/self-test`.
 - **machine \<name\>** — a connected machine whose supervisor lacks a
   capability flag warns, naming each flag and what degrades without it (for
   example `supports_session_attribution`: an imported v1 sender's session is not

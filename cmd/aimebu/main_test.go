@@ -97,7 +97,7 @@ func TestCommandRouting(t *testing.T) {
 		wantStderr string
 	}{
 		{"version", []string{"version"}, 0, resolveVersion() + "\n", ""},
-		{"missing command", nil, 2, "", "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|sessions|usages|fe|version|help>\n"},
+		{"missing command", nil, 2, "", "usage: aimebu <server|supervisor|agent-tools|switcher|prune|backup|restore|doctor|self-test|sessions|usages|fe|version|help>\n"},
 		{"sessions bad flag", []string{"sessions", "--bogus"}, 2, "", "usage: aimebu sessions\n"},
 		{"sessions empty", []string{"sessions"}, 0, "No agent sessions found.\n", ""},
 		{"doctor bad flag", []string{"doctor", "--bogus"}, 2, "", "usage: aimebu doctor [--json] [--strict] [--live | --machine]\n"},
@@ -620,7 +620,7 @@ func TestHelpListsEveryCommand(t *testing.T) {
 		if code := run([]string{arg}, &stdout, &stderr); code != 0 || stderr.Len() != 0 {
 			t.Fatalf("run(%s) = (%d, %q)", arg, code, stderr.String())
 		}
-		for _, command := range []string{"server", "supervisor", "agent-tools", "doctor", "sessions", "usages", "switcher", "prune", "version", "help", "AIMEBU_CONFIG_DIR"} {
+		for _, command := range []string{"server", "supervisor", "agent-tools", "doctor", "self-test", "sessions", "usages", "switcher", "prune", "version", "help", "AIMEBU_CONFIG_DIR"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Fatalf("help (%s) lacks %q:\n%s", arg, command, stdout.String())
 			}

@@ -1,5 +1,10 @@
 package protocol
 
+import (
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+)
+
 // DoctorLive is the answer of GET /api/doctor: what only the running server knows about the machines connected to it, which `aimebu
 // doctor --live` cannot read from the database. A machine's capability flags and its launchers' availability arrive in its hello and
 // status frames, so they live in the server's memory.
@@ -76,4 +81,24 @@ type DoctorLauncher struct {
 	Version           string   `json:"version,omitempty"`
 	Features          []string `json:"features,omitempty"`
 	FeatureProblem    string   `json:"feature_problem,omitempty"`
+}
+
+// DoctorSelfTest is the answer of GET /api/doctor/self-test: what `aimebu self-test` needs from the running server to run the live eval
+// (docs/eval.md) without a config file or a session cookie. Launchers are the rows of the machine the server runs on that the eval can use
+// (enabled, Docker, available), as that machine's supervisor last reported them; Targets are every model the owner lists for each of them;
+// Usages is the usage snapshot (the shape of GET /api/usages, without any account name) the quota guard reads; null when the server has none yet.
+type DoctorSelfTest struct {
+	Launchers []LauncherRow          `json:"launchers"`
+	Targets   []DoctorSelfTestTarget `json:"targets"`
+	Usages    json.RawMessage        `json:"usages"`
+}
+
+// DoctorSelfTestTarget is one model on one launcher. Name is a plain word that is unique in the answer. Providers are the custom providers
+// of the launcher (OpenCode); the run sends only the one whose "<id>/" prefix the model has, as a real turn does.
+type DoctorSelfTestTarget struct {
+	Name       string                   `json:"name"`
+	Tool       string                   `json:"tool"`
+	LauncherID string                   `json:"launcher_id"`
+	Model      string                   `json:"model"`
+	Providers  []adapter.CustomProvider `json:"providers,omitempty"`
 }

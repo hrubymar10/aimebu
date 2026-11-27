@@ -254,6 +254,7 @@ shows up in the inbox. The routes and the reply format are in
 | `aimebu server stop --with-supervisor` | Stop both the server and detached local supervisor. |
 | `aimebu agent-tools` | The agent's MCP server over stdio (started by the supervisor). |
 | `aimebu doctor [--live] [--json] [--strict] [--machine]` | Health checks ([doctor](docs/doctor.md)). |
+| `aimebu self-test [--full] [--yes] [--targets a,b] [--max-usd N] [--stop-above PCT]` | Run the live answer eval on the server's Docker launchers and models. Spends real quota, so it shows a summary and asks first ([eval](docs/eval.md#aimebu-self-test)). |
 | `aimebu fe` | Open the web UI (prints the address over SSH). |
 | `aimebu sessions` | Agents and their native resume hints. |
 | `aimebu usages [provider] [--json]` | Last cached usage snapshots ([usages](docs/usages.md)). |

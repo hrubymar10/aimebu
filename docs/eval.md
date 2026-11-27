@@ -206,6 +206,39 @@ make eval                                          # the smoke on the first targ
 make eval EVAL_ARGS="--config tmp/eval/config.json --full --reps 3"
 ```
 
+## `aimebu self-test`
+
+`aimebu self-test` runs the live layer from the installed binary, with no repository checkout, no `tmp/eval/config.json` and no session cookie. It
+needs the server running on this machine: it reads the doctor key from the data root (`server/doctor.key`, as `aimebu doctor --live` does) and asks
+`GET /api/doctor/self-test` (`docs/contract.md`, same-host guard) for the **enabled, available Docker launchers of the local supervisor, each model the
+owner lists for them** (the targets, named `<tool>-<launcher>-<model>`), and the usage snapshot the quota guard reads. With the server stopped it prints
+that it needs a running server and exits 1. The 22 scenarios are embedded in the binary (`eval.LoadEmbedded`).
+
+```sh
+aimebu self-test            # smoke: s01 and s15, every target, 1 repetition
+aimebu self-test --full     # every scenario, every target, 3 repetitions
+```
+
+It spends subscription quota, so before it starts it prints the targets, the scenarios, the repetitions, the number of cases and turns (at most two per
+case), the cost cap and the hottest weekly window, then asks `Run it? [y/N]`. `--yes` skips the question. Without a terminal and without `--yes` it
+refuses (exit 1) and runs nothing. A server that has no usage snapshot yet (a fresh install) sends `usages: null`: the quota guard is skipped with one
+warning line, and `--max-usd` is then the only limit.
+
+| flag | meaning |
+|---|---|
+| `--full` | all scenarios, 3 repetitions |
+| `--yes` | do not ask |
+| `--targets a,b` | only these target names (an unknown name is an error that lists the names) |
+| `--max-usd N` | stop when the cost the harnesses report passes N (default 30; 0 is no cap) |
+| `--stop-above PCT` | stop when a weekly window of an active profile of a target's provider passes PCT (default 90) |
+| `--scratch DIR` | the folder for the run's checkouts; default: `aimebu-self-test` in the first visible root every chosen launcher mounts |
+
+The terminal gets one block per target: PASS or FAIL (PASS when every case is correct after its repair, no harness failure), the correct rate on the
+first try and after repairs, and the three most common errors. The full report, `report.md` and `results.json`, is in
+`<data root>/self-test/<UTC time>/` (the directory mode 0700, the files 0600), and the command ends with its path. The exit code is 0 when every target
+passed and 1 when one failed, the run stopped early, or the command could not start. The scratch checkouts are removed at the end; Claude's session
+folders in its home are not (see the note on transcripts above).
+
 ## What the free layers cannot reach
 
 The repair loop itself, the correction turn and the held-reply note ("Your previous reply was held: ..."), lives in `internal/store`

@@ -75,8 +75,8 @@ func init() {
 		"POST /api/invites", "POST /api/sounds", "PUT /api/switcher", "POST /api/usages/refresh", "POST /api/usages/providers",
 		"POST /api/usages/settings", "POST /api/usages/mistral/config", "POST /api/usages/ollama/config", "POST /api/usages/copilot/login/start",
 		"POST /api/usages/copilot/login/poll", "POST /api/usages/copilot/login/logout")
-	allow("the doctor and backup routes: authorized by the instance's doctor key from the server's own host, never by a session, and they describe the instance (its database, its sessions), not a project's objects",
-		"GET /api/doctor", "GET /api/doctor/sessions", "GET /api/backup/database")
+	allow("the doctor and backup routes: authorized by the instance's doctor key from the server's own host, never by a session, and they describe the instance (its database, its sessions, its launchers and models), not a project's objects",
+		"GET /api/doctor", "GET /api/doctor/sessions", "GET /api/doctor/self-test", "GET /api/backup/database")
 	allow("the v1 import and its status: owner-only, one instance-wide job, no project or room id",
 		"POST /api/import-v1/commit", "POST /api/import-v1/dry-run", "GET /api/import-v1/preview", "POST /api/import-v1/skip", "GET /api/import-v1/status")
 	allow("machine pairing: the redeem is authorized by a one-time code, the creation by an owner session; a machine is not a project's object",
