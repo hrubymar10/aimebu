@@ -104,6 +104,7 @@ type warmEntry struct {
 	loginNow            func() (stamp, account string, ok bool)
 	loginMoved          bool // a turn ended with another account's login on disk (guarded by the slot's lock)
 	started             time.Time
+	journalStarted      string
 	stderr              *swapWriter
 	containerized       bool // runs through a Docker launcher: its memory is the container's, not the supervisor's
 	endProbeCommand     string
@@ -308,7 +309,7 @@ func (c *Client) tryEndWarm(entry *warmEntry, reason string, grace time.Duration
 func (c *Client) recordWarmEnd(entry *warmEntry, reason string) {
 	pid := entry.session.Pid()
 	if c.Journal != nil && pid > 0 {
-		_ = c.Journal.ForgetWarmProcess(context.Background(), pid)
+		_ = c.Journal.ForgetWarmProcess(context.Background(), pid, entry.journalStarted)
 	}
 	if entry.gone.CompareAndSwap(false, true) {
 		c.warmLive.Add(-1)
@@ -1120,6 +1121,7 @@ func (c *Client) startTurn(ctx context.Context, spec adapter.TurnSpec, sink io.W
 		enabled := spec.LauncherReportsSessionEnd
 		process := WarmProcess{PID: session.Pid(), AgentID: spec.Agent.ID, Started: identity,
 			LauncherID: spec.Agent.LauncherID, SessionEndReport: &enabled}
+		entry.journalStarted = identity
 		if spec.LauncherReportsSessionEnd {
 			if proof, ok := session.(interface{ ContainerToken() string }); ok {
 				process.ExecToken = proof.ContainerToken()
@@ -1730,6 +1732,11 @@ func groupRSS(pgid int) int64 {
 	return total
 }
 
+type warmProcessKey struct {
+	pid     int
+	started string
+}
+
 // SweepWarmOrphans settles warm processes left by an earlier supervisor. A
 // session-end-enabled container row stays journaled until its exact exec has
 // ended or Docker proves the container gone.
@@ -1755,15 +1762,16 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 	}
 	c.warmOrphansMu.Lock()
 	if c.warmOrphans == nil {
-		c.warmOrphans = make(map[int]bool, len(processes))
+		c.warmOrphans = make(map[warmProcessKey]bool, len(processes))
 		for _, process := range processes {
-			c.warmOrphans[process.PID] = true
+			c.warmOrphans[warmProcessKey{process.PID, process.Started}] = true
 		}
 	}
 	c.warmOrphansMu.Unlock()
 	for _, process := range processes {
 		c.warmOrphansMu.Lock()
-		orphan := c.warmOrphans[process.PID]
+		key := warmProcessKey{process.PID, process.Started}
+		orphan := c.warmOrphans[key]
 		c.warmOrphansMu.Unlock()
 		if !orphan {
 			continue
@@ -1774,13 +1782,13 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 		if process.SessionEndReport != nil && *process.SessionEndReport {
 			if !c.orphanWarmGone(ctx, process) {
 				now := time.Now()
-				since, err := c.Journal.MarkWarmOrphan(ctx, process.PID, now)
+				since, err := c.Journal.MarkWarmOrphan(ctx, process.PID, now, process.Started)
 				if err != nil {
 					c.report("recording a warm orphan's age failed", err)
 					continue
 				}
 				if age := now.Sub(since); age >= time.Hour {
-					if first, err := c.Journal.WarnWarmOrphan(ctx, process.PID); err != nil {
+					if first, err := c.Journal.WarnWarmOrphan(ctx, process.PID, process.Started); err != nil {
 						c.report("recording a warm orphan warning failed", err)
 					} else if first {
 						message := fmt.Sprintf("agent %s: warm orphan awaiting proof for %s", process.AgentID, age.Truncate(time.Second))
@@ -1794,9 +1802,17 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 				continue
 			}
 		}
-		if err := c.Journal.ForgetWarmProcess(ctx, process.PID); err == nil {
+		if err := c.Journal.ForgetWarmProcess(ctx, process.PID, process.Started); err == nil {
+			if process.SessionEndReport != nil && *process.SessionEndReport && process.ExecToken == "" && !process.ContainerSeen {
+				message := fmt.Sprintf("agent %s: warm orphan has no exec token or container sight; released after host group kill", process.AgentID)
+				if c.warmOrphanLog != nil {
+					c.warmOrphanLog(message)
+				} else {
+					log.Print(message)
+				}
+			}
 			c.warmOrphansMu.Lock()
-			delete(c.warmOrphans, process.PID)
+			delete(c.warmOrphans, key)
 			c.warmOrphansMu.Unlock()
 		}
 	}
@@ -1804,7 +1820,7 @@ func (c *Client) SweepWarmOrphans(ctx context.Context) {
 
 func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
 	if !adapter.ValidDockerExecID(process.ExecToken) {
-		return false
+		return process.ExecToken == "" && !process.ContainerSeen
 	}
 	container, _, _ := strings.Cut(process.ExecToken, ":")
 	if !adapter.ValidDockerContainerID(container) {
@@ -1819,7 +1835,7 @@ func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
 			cancel()
 			if err != nil {
 				state, stateErr := c.containerState(container)
-				return stateErr == nil && state == ""
+				return stateErr == nil && state == "" && c.orphanContainerAbsentProved(process)
 			}
 			if answer == "ended" {
 				return true
@@ -1827,7 +1843,15 @@ func (c *Client) orphanWarmGone(ctx context.Context, process WarmProcess) bool {
 		}
 	}
 	state, err := c.containerState(container)
-	return err == nil && (state == "" || state == "removing" || state == "exited" || state == "dead")
+	return err == nil && ((state == "" && c.orphanContainerAbsentProved(process)) || state == "removing" || state == "exited" || state == "dead")
+}
+
+func (c *Client) orphanContainerAbsentProved(process WarmProcess) bool {
+	if !process.ContainerSeen || process.DockerDaemonID == "" {
+		return false
+	}
+	id, err := c.dockerDaemonID()
+	return err == nil && id == process.DockerDaemonID
 }
 
 // applyWarmIdle takes the instance's warm window from a delivery (nil: the owner has not saved one, and the supervisor's own stays: AIMEBU_WARM_IDLE,

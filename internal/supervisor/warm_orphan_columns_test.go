@@ -31,7 +31,7 @@ func TestWarmOrphanJournalColumns(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"exec_token", "launcher_id", "session_end_report", "orphan_since", "orphan_warned"} {
+	for _, name := range []string{"exec_token", "launcher_id", "session_end_report", "orphan_since", "orphan_warned", "container_seen", "docker_daemon_id"} {
 		if !found[name] {
 			t.Errorf("missing warm journal column %s", name)
 		}

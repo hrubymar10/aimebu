@@ -1141,11 +1141,17 @@ processes are never on one session.
   the process is known to be gone; a process that cannot be noted is not kept warm. A supervisor
   that starts kills a dead predecessor's matching host process group (a pid with another start
   time is never touched). For a warm launch using `session_end_report`, the journal also keeps
-  its exec token and launcher ID, with no environment values or agent key. Once the server sends
-  the launcher definition, the supervisor probes that exact token. Only `ended` or a container
-  state proving it stopped or is absent releases the row; another answer or a probe error leaves it for the
-  next sweep unless Docker also proves that the container is absent. Rows from older journals, whose new columns are null, retain the earlier host
-  process cleanup behavior. The harness-docker session watchdog also ends a session whose host
+  its exec token and launcher ID, with no environment values or agent key. Rows are keyed by
+  both pid and process start time, so a new process that reuses a pid cannot replace an orphan's
+  proof record. Once the server sends the launcher definition, the supervisor probes that exact
+  token. `ended` releases the row; a stopped container also proves the session ended. An absent
+  container proves the end only if this journal recorded that container as seen and the current
+  Docker daemon ID matches the one recorded at that sight. An unseen container on another daemon
+  gives no end proof, including at startup before launcher definitions arrive. A session-end row
+  with no exec token and no prior container sight is released after host process-group cleanup,
+  with one log entry explaining that no probe can identify its session. Rows from older journals,
+  whose session-end columns are null, retain the earlier host process cleanup behavior. The
+  harness-docker session watchdog also ends a session whose host
   wrapper vanished; the harness container may still be shared with other agents.
   If `aimebu supervisor status` shows `warm orphan awaiting proof, age …`, restore the
   launcher or Docker connection and let the next sweep verify the session; do not delete the journal.

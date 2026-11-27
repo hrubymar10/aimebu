@@ -42,6 +42,22 @@ func (c *Client) containerState(id string) (string, error) {
 	return dockerContainerState(id)
 }
 
+// dockerDaemonID identifies the daemon queried by this supervisor's Docker CLI.
+func (c *Client) dockerDaemonID() (string, error) {
+	if c.DockerDaemonID != nil {
+		return c.DockerDaemonID()
+	}
+	out, err := dockerOutputWithin(warmContainerQueryLimit, "info", "--format", "{{.ID}}")
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		return "", errors.New("Docker did not report a daemon ID")
+	}
+	return id, nil
+}
+
 // dockerContainerState lists the container by its ID, stopped ones too. `docker ps` answers with nothing and no error for an ID it does not
 // know, and with an error when the daemon cannot be reached, which is the difference that matters here.
 func dockerContainerState(id string) (string, error) {
@@ -95,7 +111,7 @@ func (c *Client) sightContainer(pool *warmPool, entry *warmEntry) {
 			if id, neverStarted := session.Container(); id != "" {
 				if proof, ok := entry.session.(interface{ ContainerToken() string }); ok && c.Journal != nil {
 					if token := proof.ContainerToken(); token != "" {
-						if err := c.Journal.RecordWarmExecToken(context.Background(), entry.session.Pid(), token); err != nil {
+						if err := c.Journal.RecordWarmExecToken(context.Background(), entry.session.Pid(), token, entry.journalStarted); err != nil {
 							c.report("recording a warm exec token failed", err)
 						}
 					}
@@ -103,6 +119,15 @@ func (c *Client) sightContainer(pool *warmPool, entry *warmEntry) {
 				state, err := c.containerState(id)
 				if err == nil && state != "" {
 					entry.containerSeen.Store(true)
+					if c.Journal != nil {
+						if daemonID, daemonErr := c.dockerDaemonID(); daemonErr == nil {
+							if writeErr := c.Journal.RecordWarmContainerSight(context.Background(), entry.session.Pid(), entry.journalStarted, daemonID); writeErr != nil {
+								c.report("recording a warm container sight failed", writeErr)
+							}
+						} else {
+							c.report("identifying the warm container daemon failed", daemonErr)
+						}
+					}
 					return
 				}
 				if tries++; tries >= warmContainerSightTries {
