@@ -5591,9 +5591,9 @@ async function main() {
     await domClick(first, '#settings-close');
     // t0-web-small: relative timestamps, notification gate, panel persistence, reactions, drag class.
     await first.waitForSelector('.chat-msg time[data-relative]');
-    const stamp = await first.$eval('.chat-msg time[data-relative]', el => ({ text: el.textContent, title: el.title, iso: el.dateTime }));
+    const stamp = await first.$eval('.chat-msg time[data-relative]', el => ({ text: el.textContent, tip: el.dataset.timeTip || '', iso: el.dateTime }));
     assert.match(stamp.text, /^(just now|\d+[smhd] ago|\d{1,2}[./]\d{1,2}[./]\d{2,4})$/, `message time is not relative: ${stamp.text}`);
-    assert.ok(stamp.title.length > 8 && stamp.iso, 'message time lacks a full-date tooltip');
+    assert.ok(stamp.tip.length > 8 && stamp.iso, 'message time lacks a full-date tooltip (data-time-tip, shown by time-tip.js)');
     assert.equal(await first.evaluate(async () => {
       const { relativeTime } = await import('/js/time.js');
       const ago = ms => relativeTime(new Date(Date.now() - ms).toISOString());
