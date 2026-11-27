@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -427,11 +426,9 @@ func TestWarmContainerEndIsConfirmedByTheWrapperNotByTime(t *testing.T) {
 }
 
 func TestWarmContainerCleanupExitZeroAfterTerm(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		t.Skip("the stand-in launcher's EOF/TERM sequence does not run under macOS /bin/sh; tracked for alpha.15")
-	}
 	root := t.TempDir()
 	path := filepath.Join(root, "claude")
+	trapped := filepath.Join(root, "trapped")
 	childPath := filepath.Join(root, "child")
 	ready := filepath.Join(root, "ready")
 	childHit := filepath.Join(root, "child-hit")
@@ -447,6 +444,7 @@ printf 'finished\n' > "$3"
 	}
 	script := fmt.Sprintf(`#!/bin/sh
 trap ':' TERM
+: > %q
 cat >/dev/null
 %q %q %q %q &
 child=$!
@@ -455,7 +453,7 @@ while [ ! -f %q ]; do
     sleep 1
 done
 exit 0
-`, childPath, childHit, ready, finished, finished)
+`, trapped, childPath, childHit, ready, finished, finished)
 	if err := testenv.WriteExecutable(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +464,9 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The child begins only after EOF; wait until cleanup has started before TERM.
+	// Close sends TERM when its grace runs out, whether or not the shell has started: a slow start (macOS /bin/sh) let the signal arrive before the
+	// trap and killed the launcher. Wait until the trap is in place, then close; the child begins only after EOF.
+	waitReady(t, trapped)
 	result := make(chan error, 1)
 	go func() { result <- session.Close(100 * time.Millisecond) }()
 	waitFileContents(t, ready, "ready\n")
