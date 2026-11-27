@@ -2816,7 +2816,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#inbox-count')?.textContent === '2');
     const recoveryCard = '[data-inbox-id="inb_smoke_recovery"]';
     const deliveryCard = '[data-inbox-id="inb_smoke_delivery"]';
-    assert.deepEqual(await first.$$eval(`${recoveryCard} .inbox-decisions button`, els => els.map(el => [el.textContent, el.disabled])), [['Continue', false], ['Abandon', false]]);
+    assert.deepEqual(await first.$$eval(`${recoveryCard} .inbox-decisions button`, els => els.map(el => [el.textContent, el.disabled])), [['Continue', false], ['Abandon', false], ['Abandon and stop', false]]);
     assert.equal(await first.$eval(`${deliveryCard} .inbox-evidence`, el => el.textContent.includes('reply was held')), true);
     assert.equal(await first.$$eval(`${deliveryCard} .inbox-decisions button`, els => els.length), 0);
     const heldPage = await a.newPage();
