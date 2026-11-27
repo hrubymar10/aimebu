@@ -762,9 +762,5 @@ func TestTestServerExitsWhenItsTestProcessIsGone(t *testing.T) {
 		t.Fatalf("the server left while its test process was still there: %v", err)
 	case <-time.After(1500 * time.Millisecond):
 	}
-	select {
-	case <-exited:
-	case <-time.After(15 * time.Second):
-		t.Fatal("the server did not leave after its test process was gone")
-	}
+	receive(t, "the server leaving after its test process was gone", exited, serverStopLimit)
 }

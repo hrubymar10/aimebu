@@ -348,11 +348,7 @@ func TestAServeErrorDoesNotLetAPendingSupervisorStart(t *testing.T) {
 	})
 	// Serve fails while the context is live; the supervisor's start is still held back.
 	captured.Close()
-	select {
-	case <-done:
-	case <-time.After(20 * time.Second):
-		t.Fatal("the server did not stop after its listener failed")
-	}
+	receive(t, "the server stopping after its listener failed", done, serverStopLimit)
 	close(release)
 	select {
 	case <-finished:

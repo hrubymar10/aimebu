@@ -49,6 +49,14 @@ import (
 // toolchain embeds in the binary.
 var version = "aimebu v2"
 
+// The longest the server waits for its HTTP listeners to finish their requests, and then for its websockets to close, when it is told to
+// stop. A server that was asked to stop can take both in turn, so a test waiting for it to stop must wait longer than their sum
+// (serverStopLimit in testwait_test.go is derived from them).
+const (
+	httpShutdownLimit   = 10 * time.Second
+	socketShutdownLimit = 10 * time.Second
+)
+
 // reserveV1History runs at the first start, before the owner exists and before any setup event is
 // written: it raises the sequence counter to the highest v1 message number so that history keeps
 // its numbers. A backup that cannot be read must not stop the server from starting: the wizard
@@ -1002,7 +1010,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		remaining--
 	}
 	stopDispatch()
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), httpShutdownLimit)
 	var httpsShutdownDone chan struct{}
 	if httpsServer != nil {
 		httpsShutdownDone = make(chan struct{})
@@ -1027,7 +1035,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	stopping = true
 	localMu.Unlock()
 	// The local supervisor is a process of its own: it keeps its turns running and reconnects to the next server.
-	socketShutdownCtx, cancelSocketShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	socketShutdownCtx, cancelSocketShutdown := context.WithTimeout(context.Background(), socketShutdownLimit)
 	if err := service.ShutdownSockets(socketShutdownCtx); err != nil {
 		fmt.Fprintln(stderr, "websocket shutdown:", err)
 	}

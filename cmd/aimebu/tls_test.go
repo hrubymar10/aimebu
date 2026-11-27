@@ -175,13 +175,8 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 				}
 			}
 			cancel()
-			select {
-			case code := <-done:
-				if code != 0 {
-					t.Fatalf("server exit=%d stderr=%s", code, stderr.String())
-				}
-			case <-time.After(15 * time.Second):
-				t.Fatal("server did not stop")
+			if code := receive(t, "the server stopping", done, serverStopLimit); code != 0 {
+				t.Fatalf("server exit=%d stderr=%s", code, stderr.String())
 			}
 		})
 	}

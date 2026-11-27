@@ -35,8 +35,9 @@ func receive[T any](t testing.TB, what string, ch <-chan T, limit time.Duration)
 }
 
 // Generous: these bounds are for a hang, not for a slow machine. The slowest start of a server takes about 40 s under the race detector
-// with the whole suite running, and shutting one down takes seconds.
+// with the whole suite running. A server told to stop may take its whole shutdown budget (httpShutdownLimit, then socketShutdownLimit,
+// in main.go), so the stop limit is that budget plus a margin for a loaded machine: it must never be shorter than what the server may take.
 const (
 	serverStartLimit = 4 * time.Minute
-	serverStopLimit  = 2 * time.Minute
+	serverStopLimit  = httpShutdownLimit + socketShutdownLimit + 100*time.Second
 )

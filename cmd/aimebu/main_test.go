@@ -266,13 +266,8 @@ func TestServerCommandServesHTTP(t *testing.T) {
 		t.Fatalf("local supervisor journal: %v", err)
 	}
 	cancel()
-	select {
-	case code := <-done:
-		if code != 0 {
-			t.Fatalf("serve code=%d stderr=%q", code, stderr.String())
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("server did not shut down")
+	if code := receive(t, "the server shutting down", done, serverStopLimit); code != 0 {
+		t.Fatalf("serve code=%d stderr=%q", code, stderr.String())
 	}
 }
 
