@@ -30,6 +30,11 @@ import (
 
 func TestCheckConfigDir(t *testing.T) {
 	base := t.TempDir()
+	// t.TempDir creates the directory with the process's umask applied, so under a umask that leaves it group- or world-writable the
+	// existing-directory case would be warned about: the mode the case asserts is set here, not assumed.
+	if err := os.Chmod(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	worldWritable := filepath.Join(base, "world-writable")
 	if err := os.MkdirAll(worldWritable, 0o700); err != nil {
 		t.Skipf("cannot create world-writable directory: %v", err)
