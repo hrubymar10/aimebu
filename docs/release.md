@@ -46,6 +46,20 @@ the previous and candidate binaries:
 The tracked script holds a turn and a command across replacement, then checks
 their results, the instance journals, and `doctor`.
 
+Before creating the tag, run the upgrade test against the previous tag and the
+candidate checkout:
+
+```sh
+scripts/test-lock.sh sh scripts/test-upgrade.sh v2.0.0-alpha.14 HEAD
+```
+
+It builds both refs in disposable worktrees and checks seeded projects, rooms,
+messages, agents and an attachment across the upgrade, including a turn and
+command held while the supervisor drains. For a backup archive, run
+`scripts/test-lock.sh sh scripts/test-upgrade.sh --from-backup /path/to/backup.tar.gz HEAD`;
+the restore and server start use a disposable data root. Both routes require
+Go and Python 3.
+
 The formula runs `opt_bin/"aimebu"` in the foreground under `brew services`.
 It keeps a HEAD build from source as a second route; only that route requires
 Go. Its sole service environment override is Homebrew's

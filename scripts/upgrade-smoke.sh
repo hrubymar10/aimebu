@@ -129,6 +129,30 @@ def req(method, path, data=None, key=None):
         print('HTTP_ERROR', stamp(), method, path, e.code, e.read().decode()[:700], flush=True)
         raise
 
+def upload(room, contents):
+    boundary='aimebu-upgrade-boundary'
+    body=(('--'+boundary+'\r\nContent-Disposition: form-data; name="file"; filename="upgrade.txt"\r\n'
+           'Content-Type: text/plain\r\n\r\n').encode()+contents+b'\r\n--'+boundary.encode()+b'--\r\n')
+    request=urllib.request.Request(base+'/api/rooms/'+room+'/attachments',data=body,
+        headers={'Content-Type':'multipart/form-data; boundary='+boundary,'X-CSRF-Token':csrf},method='POST')
+    with opener.open(request,timeout=15) as response:
+        assert response.status==201
+        return json.load(response)
+
+def download(attachment):
+    with opener.open(base+'/api/attachments/'+attachment,timeout=15) as response:
+        assert response.status==200
+        return response.read()
+
+def seeded_state(project, room, attachment):
+    def subset(rows, fields):
+        return [tuple(row.get(field) for field in fields) for row in rows]
+    return {'projects':subset(req('GET','/api/projects'),('id','name','folder')),
+            'rooms':subset(req('GET','/api/projects/'+project+'/rooms'),('id','project_id','kind','title')),
+            'agents':subset(req('GET','/api/rooms/'+room+'/agents'),('id','slug','role_key','tool','model')),
+            'messages':subset(messages(room),('id','body','author_kind','attachments')),
+            'attachment':download(attachment)}
+
 def until(label, predicate, seconds=60):
     deadline = time.monotonic()+seconds
     while time.monotonic()<deadline:
@@ -165,20 +189,40 @@ try:
     req('PUT','/api/machines/'+machine+'/launchers/'+claude['id']+'/models',{'models':[{'slug':'haiku','label':'Haiku','default':True}]})
     until('scratch launcher available',lambda: any(row['config']['id']==claude['id'] and row['available'] for row in req('GET','/api/machines/'+machine+'/launchers')['launchers']))
     old=req('POST','/api/rooms/'+room+'/agents',{'name':'oldwork','role_key':'worker','tool':'claude','variant':'native','launcher_id':claude['id'],'model':'haiku'},'old-agent')
+    contents=b'upgrade attachment content\n'
+    attachment=upload(room,contents)
+    req('POST','/api/rooms/'+room+'/messages',{'body':'seeded message','attachments':[attachment['id']]})
+    assert download(attachment['id'])==contents
     msg=req('POST','/api/rooms/'+room+'/messages',{'body':'@oldwork old-release-probe'})
     until('old job started',lambda: (T/'job.id').exists())
     jobid=(T/'job.id').read_text()
     print('OLD_TURN', (T/'old.turn').read_text(), 'JOB',jobid,flush=True)
     oldpid=int(re.search(r'pid (\d+)',cli('old','supervisor','status')).group(1))
     assert alive(oldpid)
+    before=seeded_state(project['id'],room,attachment['id'])
+    assert any(m[1]=='seeded message' for m in before['messages'])
+    print('PASS seeded projects rooms messages agents attachments and in-flight turn',flush=True)
     cli('old','server','stop')
     assert alive(oldpid)
     cli('new','server','start')
     print('BUILD',req('GET','/api/buildinfo'),flush=True)
+    after=seeded_state(project['id'],room,attachment['id'])
+    for name in ('projects','rooms','agents'):
+        assert after[name]==before[name],name+' changed across migration'
+        print('PASS migrated '+name+' count and content',flush=True)
+    original=before['messages']
+    original_ids={m[0] for m in original}
+    survivors=[m for m in after['messages'] if m[0] in original_ids]
+    expected_count=len(original)+(os.environ.get('AIMEBU_UPGRADE_CORRUPT_EXPECTED_MESSAGES')=='1')
+    assert len(survivors)==expected_count and all(m in survivors for m in original), 'messages changed across migration'
+    assert after['attachment']==before['attachment']==contents
+    print('PASS migrated messages count and content',flush=True)
+    print('PASS migrated attachment bytes',flush=True)
     until('new machine connected',lambda: any(m.get('connected') and m.get('supervisor_version')==new_version for m in req('GET','/api/machines')['machines']))
     print('OLD_ALIVE_DURING_NEW',oldpid,alive(oldpid),flush=True)
     assert alive(oldpid)
     print('JOURNALS_DURING_OVERLAP',[str(x) for x in (C/'supervisor').glob('**/*.sqlite')],flush=True)
+    until('scratch launcher available after swap',lambda: any(row['config']['id']==claude['id'] and row['available'] for row in req('GET','/api/machines/'+machine+'/launchers')['launchers']))
     new=req('POST','/api/rooms/'+room+'/agents',{'name':'newwork','role_key':'reviewer','tool':'claude','variant':'native','launcher_id':claude['id'],'model':'haiku'},'new-agent')
     req('POST','/api/rooms/'+room+'/messages',{'body':'@newwork new-release-probe'})
     until('new answer',lambda: answered(room,'new-answered'))
@@ -205,6 +249,9 @@ try:
     print('DOCTOR_EXIT',doctor.returncode,flush=True)
     print('DOCTOR_SCHEMA',[x for x in json.loads(doctor.stdout)['checks'] if x['name']=='sqlite database'],flush=True)
     assert doctor.returncode==0
+    if os.environ.get('AIMEBU_UPGRADE_BACKUP_OUT'):
+        cli('new','backup','--out',os.environ['AIMEBU_UPGRADE_BACKUP_OUT'])
+        print('PASS seeded backup archive',flush=True)
     print('LOG_EXCERPTS',flush=True)
     for name in ('server/aimebu.log','supervisor/aimebu.log'):
         p=C/name
@@ -215,11 +262,17 @@ try:
             if any(x in line.lower() for x in ('supervisor','migration 14','turn answered','turn_lost','unexpected machine frame','agent_keys','command')):
                 print(line[:700],flush=True)
 finally:
+    (T/'turn.release').touch()
+    (T/'job.release').touch()
     for which in ('new','old'):
         p=subprocess.run([str(OLD if which == 'old' else NEW),'server','stop','--with-supervisor'],env=env,capture_output=True,text=True,timeout=30)
         print('CLEANUP_CLI',which,p.returncode,repr(p.stdout.strip()),repr(p.stderr.strip()),flush=True)
-    p=subprocess.run(['ps','-axo','pid,command'],capture_output=True,text=True)
-    remaining=[line for line in p.stdout.splitlines() if len(line.split(maxsplit=1))==2 and line.split(maxsplit=1)[1].startswith((str(OLD),str(NEW),str(stub)))]
+    remaining=[]
+    for _ in range(50):
+        p=subprocess.run(['ps','-axo','pid,command'],capture_output=True,text=True)
+        remaining=[line for line in p.stdout.splitlines() if len(line.split(maxsplit=1))==2 and line.split(maxsplit=1)[1].startswith((str(OLD),str(NEW),str(stub)))]
+        if not remaining: break
+        time.sleep(.2)
     print('CLEANUP_PROCESS_LINES',remaining,flush=True)
     assert not remaining
     shutil.rmtree(T)
