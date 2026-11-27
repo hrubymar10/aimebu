@@ -166,6 +166,9 @@ type Server struct {
 	AllowedHosts           []string       // AIMEBU_ALLOWED_HOSTS: host names, besides localhost, IPs and the public URL's, the routes that need no login answer to
 	doctorKey              string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	doctorIntegrityRunning atomic.Bool
+	backupActive           atomic.Bool
+	backupSnapshot         func(context.Context, string) error       // tests can pause snapshot creation
+	backupStream           func(io.Writer, io.Reader) (int64, error) // tests can interrupt a response stream
 	machineMu              sync.Mutex
 	kaScopeMu              sync.Mutex                     // guards kaScope
 	kaScope                map[string]keepAliveScopeLease // agents with a cache keep-alive ping running: their toolbox is refused (see keep_alive_scope.go)
@@ -440,6 +443,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machine", s.machineSocket)
 	mux.HandleFunc("GET /api/doctor", s.doctorLive)
 	mux.HandleFunc("GET /api/doctor/sessions", s.doctorSessions)
+	mux.HandleFunc("GET /api/backup/database", s.backupDatabase)
 	mux.HandleFunc("POST /api/local-supervisor/restart", s.restartLocalSupervisorDoctor)
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))
 	mux.Handle("GET /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolRooms)))

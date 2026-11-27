@@ -1766,6 +1766,17 @@ connection with a 30-second limit; when the limit is reached it reads
 for server-managed agents, ordered by ID. The server reads these rows from its
 already-open store; the CLI never opens the database while the server holds
 its startup lock. No keys or environment variables are returned.
+`GET /api/backup/database` accepts an empty request from the server host with
+`Authorization: Bearer <server/doctor.key>`. It rejects forwarded requests and
+requests without the current doctor key with HTTP 403. On success it returns
+HTTP 200, `Content-Type: application/octet-stream`, `Content-Length`, and one
+standalone SQLite snapshot as the response body; snapshot failures return HTTP
+500. The server creates the snapshot through its existing store connection and
+removes its temporary file after streaming. Only one snapshot request may run
+at a time; a concurrent request returns HTTP 429 `backup_busy`. While the server
+holds its startup writer lock, the backup CLI never opens the live database; it
+requests this snapshot from the server instead. With the server stopped, the
+CLI takes that same lock before opening the database to snapshot it.
 
 ## 4. Wire protocol (versioned, `v:2`)
 

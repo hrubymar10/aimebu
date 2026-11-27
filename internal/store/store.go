@@ -208,6 +208,15 @@ func (s *Store) Close() error {
 	return writeErr
 }
 
+// Snapshot writes a transactionally consistent copy from this server's own
+// connection. Callers must supply a new path outside the live database.
+func (s *Store) Snapshot(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(path, `'`, `''`)+`'`)
+	return err
+}
+
+func (s *Store) DatabasePath() string { return s.dbPath }
+
 func readOnlyDSN(path string) string {
 	query := url.Values{}
 	query.Add("mode", "ro")
