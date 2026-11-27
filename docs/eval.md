@@ -102,6 +102,11 @@ of the eval that spends anything, and it spends **subscription quota**, not API 
 their Docker launchers, so the logins stay where they live. Nothing here reads or writes `~/.claude`, `~/.codex`, `~/.pi` or `~/.aimebu*`; the
 launchers do what they do for an agent.
 
+**Scenarios on some harnesses only.** A scenario with `only_kinds` runs on those harnesses' targets and shows `-` for the others in the report. `s22`
+(the unchanged-context marker) is `["claude"]` on purpose: the server sends `{"unchanged":true,...}` instead of the role body and the knowledge
+block only to a session whose harness reports compaction, which is Claude alone (`toolReportsCompaction`, `internal/store/context_delivery.go`);
+Codex, Pi, OpenCode and Vibe always get the full text, so the marker never reaches them and there is nothing to measure.
+
 **A harness that fails.** A turn that ends with no answer is a `harness` case whose error carries the exit code and, when they are not empty, the
 adapter's `error_summary`, its `error_event` (OpenCode and Claude report a failure as an event on stdout and leave stderr empty) and the
 stderr tail; a failure that said nothing anywhere says "no output on stdout or stderr".
