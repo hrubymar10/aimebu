@@ -80,10 +80,11 @@ func TestV1ProbeChildDoesNotOpenHeldStore(t *testing.T) {
 	if root == "" {
 		return
 	}
-	v1DatabaseOpener = func(string) (*sql.DB, error) {
+	refuse := func(string) (*sql.DB, error) {
 		t.Fatal("v1 probe opened the server database despite another process holding the startup lock")
 		return nil, nil
 	}
+	v1DatabaseOpener, v1LockedDatabaseOpener = refuse, refuse
 	v1, err := isV1Root(root)
 	if v1 || err != nil {
 		t.Fatalf("held v2 store: v1=%t err=%v", v1, err)

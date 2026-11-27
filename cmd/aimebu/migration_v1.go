@@ -26,11 +26,19 @@ import (
 
 const v1BackupName = ".old-v1-bkp"
 
-var v1DatabaseOpener = openV1Database
+// v1DatabaseOpener opens a database the probe has no lock on (a pure v1 root, where no v2 server has ever run); v1LockedDatabaseOpener
+// opens one the probe holds server/.writer.lock for. Under that lock nothing writes the file, and the probe reads only a schema
+// table, so it opens immutable when no log is pending and leaves no -shm or -wal file behind.
+var (
+	v1DatabaseOpener       = openV1Database
+	v1LockedDatabaseOpener = openV1DatabaseLocked
+)
 
 func openV1Database(path string) (*sql.DB, error) {
-	// The probe reads only the schema table, so it opens immutable when no log is pending: a probe of a stopped root must not leave
-	// -shm and -wal files behind.
+	return sql.Open("sqlite", sqliteutil.DSN(path, true))
+}
+
+func openV1DatabaseLocked(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", sqliteutil.ImmutableWhenNoWAL(sqliteutil.DSN(path, true), path))
 }
 
@@ -513,6 +521,10 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
+	opener := v1DatabaseOpener
+	if lockHeld {
+		opener = v1LockedDatabaseOpener
+	}
 	if path == serverPath && !lockHeld {
 		lock, err := lockServerDirectoryIfPresent(filepath.Dir(path))
 		if err != nil {
@@ -524,8 +536,11 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 			return false, fmt.Errorf("server running or lock held; cannot inspect database: %w", err)
 		}
 		defer unlockServerDirectory(lock)
+		if lock != nil {
+			opener = v1LockedDatabaseOpener
+		}
 	}
-	db, err := v1DatabaseOpener(path)
+	db, err := opener(path)
 	if err != nil {
 		return false, err
 	}
