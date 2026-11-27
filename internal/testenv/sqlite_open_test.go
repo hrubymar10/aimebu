@@ -15,9 +15,10 @@ import (
 // These owners open their own SQLite files. A CLI process must not open the
 // server database while its writer is running, even with mode=ro.
 var sqliteOpenAllowlist = map[string]string{
-	"cmd/aimebu/doctor_db.go:quickCheckBackup":  "checks an immutable migration backup, never the live store",
-	"cmd/aimebu/migration_v1.go:backupV1Layout": "moves a legacy v1 source; a root server path first takes the v2 startup lock",
-	"cmd/aimebu/migration_v1.go:openV1Database": "identifies a legacy v1 source; v2 server paths are inspected under the startup lock",
+	"cmd/aimebu/doctor_db.go:quickCheckBackup":        "checks an immutable migration backup, never the live store",
+	"cmd/aimebu/migration_v1.go:backupV1Layout":       "moves a legacy v1 source; a root server path first takes the v2 startup lock",
+	"cmd/aimebu/migration_v1.go:openV1Database":       "identifies a legacy v1 source; v2 server paths are inspected under the startup lock",
+	"cmd/aimebu/migration_v1.go:openV1DatabaseLocked": "the same probe of a legacy v1 source, for a caller that already holds the server startup lock; it reads one schema table, immutable when no log is pending",
 }
 
 func TestNoSecondProcessOpensAimebuDatabase(t *testing.T) {
