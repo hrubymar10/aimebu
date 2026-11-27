@@ -14,9 +14,9 @@ To publish, make an annotated `vMAJOR.MINOR.PATCH` tag, optionally with an
 `-alpha.N`, `-beta.N`, or `-rc.N` suffix, and push it. The tag workflow builds
 four CGo-free archives (macOS and Linux, arm64 and amd64) with the same
 `-X main.version=aimebu <tag>` override used by `bin/aimebu`. It creates a
-GitHub release if none exists, marks alpha and beta tags as prereleases, and
+GitHub release if none exists, marks alpha, beta and rc tags as prereleases (so an rc never becomes the Latest release), and
 uploads the archives and `checksums.txt`. For an existing release it replaces
-the assets. The second job downloads those assets, renders the tap formula,
+the assets. Tap updates are serialized across releases (a `homebrew-tap` concurrency group that queues rather than cancels). The second job downloads those assets, renders the tap formula,
 and commits it to `hrubymar10/homebrew-tap`. It needs a repository secret
 `HOMEBREW_TAP_TOKEN` with write access to that tap. When the secret is absent,
 the job logs that it skipped the tap update and succeeds; the release assets
