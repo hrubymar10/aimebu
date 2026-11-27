@@ -259,7 +259,7 @@ shows up in the inbox. The routes and the reply format are in
 | `aimebu usages [provider] [--json]` | Last cached usage snapshots ([usages](docs/usages.md)). |
 | `aimebu switcher <command>` | Switch which account Claude Code or Codex uses ([switcher](docs/switcher.md)). |
 | `aimebu prune [-a] [-y]` | Clear agent runtime state, or everything with `-a`, server stopped ([prune](docs/prune.md)). |
-| `aimebu backup [--out <file>] [--keep <N>]` / `restore <file> [--yes]` | Save or restore the data root ([guide](docs/backup.md)). |
+| `aimebu backup [--out <file>] [--keep <N>] [--include-v1-backup]` / `restore <file> [--yes]` | Save or restore the data root ([guide](docs/backup.md)). |
 | `aimebu update [--check]` | Update the clone the wrapper runs from. |
 | `aimebu version`, `aimebu help` | Version and the full command and variable list. |
 

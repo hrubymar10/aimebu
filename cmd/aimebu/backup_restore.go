@@ -48,6 +48,7 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 	flags.SetOutput(stderr)
 	out := flags.String("out", "", "archive path")
 	keep := flags.Int("keep", 0, "after a successful backup, delete all but the N newest aimebu-*.tar.gz files in the default backups folder (<data root>/backups); not applied when --out is outside that folder; default: delete nothing")
+	includeV1 := flags.Bool("include-v1-backup", false, "also archive "+v1BackupName+", the rollback copy of the v1 data; excluded by default")
 	keepSet := false
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -58,7 +59,7 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 	})
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: aimebu backup [--out <file>] [--keep <N>]")
+		fmt.Fprintln(stderr, "usage: aimebu backup [--out <file>] [--keep <N>] [--include-v1-backup]")
 		return 2
 	}
 	if keepSet && *keep < 1 {
@@ -87,7 +88,7 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		}
 		*out = filepath.Join(root, "backups", "aimebu-"+v+"-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".tar.gz")
 	}
-	if err := makeBackup(ctx, config, root, *out, stdout); err != nil {
+	if err := makeBackupOptions(ctx, config, root, *out, stdout, nil, backupOptions{includeV1Backup: *includeV1}); err != nil {
 		fmt.Fprintln(stderr, "backup:", err)
 		return 1
 	}
@@ -187,11 +188,27 @@ func sameDir(a, b string) bool {
 	return errA == nil && errB == nil && ra == rb
 }
 
+// backupOptions are the choices of one backup. The zero value is the default: the v1 rollback copy is not archived.
+type backupOptions struct {
+	includeV1Backup bool
+}
+
 func makeBackup(ctx context.Context, config serverConfig, root, output string, stdout io.Writer) (err error) {
 	return makeBackupWithSnapshotHook(ctx, config, root, output, stdout, nil)
 }
 
 func makeBackupWithSnapshotHook(ctx context.Context, config serverConfig, root, output string, stdout io.Writer, afterSnapshot func()) (err error) {
+	return makeBackupOptions(ctx, config, root, output, stdout, afterSnapshot, backupOptions{})
+}
+
+func makeBackupOptions(ctx context.Context, config serverConfig, root, output string, stdout io.Writer, afterSnapshot func(), opts backupOptions) (err error) {
+	if info, statErr := os.Lstat(filepath.Join(root, v1BackupName)); statErr == nil && info.IsDir() {
+		if opts.includeV1Backup {
+			fmt.Fprintf(stdout, "%s (the v1 rollback copy) is included in this backup; run without --include-v1-backup to exclude it.\n", v1BackupName)
+		} else {
+			fmt.Fprintf(stdout, "%s (the v1 rollback copy) is excluded from this backup; add --include-v1-backup to include it.\n", v1BackupName)
+		}
+	}
 	if err = os.MkdirAll(filepath.Dir(output), 0700); err != nil {
 		return err
 	}
@@ -360,6 +377,9 @@ func makeBackupWithSnapshotHook(ctx context.Context, config serverConfig, root, 
 				return filepath.SkipDir
 			}
 			if name == "server/attachments" {
+				return filepath.SkipDir
+			}
+			if name == v1BackupName && !opts.includeV1Backup {
 				return filepath.SkipDir
 			}
 			return nil

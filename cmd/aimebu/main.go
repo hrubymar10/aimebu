@@ -284,7 +284,7 @@ Utilities:
   usages [provider] [--json|--plain]  Print the usage snapshots the server last cached
   switcher <command>                  Manage Claude Code / Codex credential profiles (works with the server stopped)
   prune [-a] [-y]                     Clear runtime agent state, or everything with -a (stop the server first)
-  backup [--out <file>] [--keep <N>]  Save a verified data-root archive (contains secrets)
+  backup [--out f] [--keep N] [--include-v1-backup]  Save a verified data-root archive (contains secrets)
   restore <file> [--yes]               Replace a stopped data root and keep the original
   fe                                  Open the web UI in the browser (prints the address where there is no browser)
 

@@ -27,6 +27,14 @@ access to this installation. Harness homes such as `~/.claude` and `~/.codex`
 are outside the data root and are not included. Neither are backups, logs,
 temporary files, or runtime lock and PID files.
 
+The v1 rollback copy `.old-v1-bkp/` that the v1 cutover leaves in the data
+root is **excluded by default**: it is a full second copy of the v1 data and
+made every backup much larger. `aimebu backup --include-v1-backup` archives it.
+While that folder exists, every backup run prints one line saying whether it
+was excluded or included and how to change that. Restore works with archives
+that contain it and with archives that do not; it restores the folder only when
+the archive has it.
+
 Backups of databases created before attachment retention include every
 attachment row, because those databases have no removal marker.
 
