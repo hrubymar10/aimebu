@@ -155,7 +155,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		used.raw = *usage
 	}
 	if err != nil || !hasAnswer {
-		a.Class, a.Err = eval.ClassHarness, fmt.Sprintf("no final answer: exit %d, terminal=%t, err=%v, stderr=%s", exit.ExitCode, exit.TerminalEvent, err, truncate(exit.StderrTail, 300))
+		a.Class, a.Err = eval.ClassHarness, harnessFailure(exit, err)
 		return a, newSession, used
 	}
 	r := eval.Score(answer, scenario, tools)
@@ -167,6 +167,24 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		a.Err = strings.Join(r.Failed, "; ")
 	}
 	return a, newSession, used
+}
+
+// harnessFailure says why a turn ended with no answer. A harness may report its failure on stdout (OpenCode's "error" event, Claude's error
+// result) and leave stderr empty, so the adapter's error event and summary are part of the message with the stderr tail; a failure that said
+// nothing anywhere says so.
+func harnessFailure(exit adapter.ExitInfo, err error) string {
+	out := fmt.Sprintf("no final answer: exit %d, terminal=%t, err=%v", exit.ExitCode, exit.TerminalEvent, err)
+	said := false
+	for _, part := range []struct{ name, text string }{{"error_summary", exit.ErrorSummary}, {"error_event", exit.ErrorEvent}, {"stderr", exit.StderrTail}} {
+		if text := strings.TrimSpace(part.text); text != "" {
+			out += ", " + part.name + "=" + truncate(text, 300)
+			said = true
+		}
+	}
+	if !said {
+		out += ", no output on stdout or stderr"
+	}
+	return out
 }
 
 func truncate(s string, n int) string {

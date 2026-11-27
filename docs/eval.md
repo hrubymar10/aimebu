@@ -97,6 +97,10 @@ of the eval that spends anything, and it spends **subscription quota**, not API 
 their Docker launchers, so the logins stay where they live. Nothing here reads or writes `~/.claude`, `~/.codex`, `~/.pi` or `~/.aimebu*`; the
 launchers do what they do for an agent.
 
+**A harness that fails.** A turn that ends with no answer is a `harness` case whose error carries the exit code and, when they are not empty, the
+adapter's `error_summary`, its `error_event` (OpenCode and Claude report a failure as an event on stdout and leave stderr empty) and the
+stderr tail; a failure that said nothing anywhere says "no output on stdout or stderr".
+
 **Switches.** It refuses to run unless `AIMEBU_EVAL=1` is exported. Without `--full` it is a **smoke**: scenarios `s01` and `s15`, the first target,
 one repetition. Run the smoke first. Run `--full` only with the quota switcher on and outside peak hours.
 
