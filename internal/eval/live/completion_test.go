@@ -68,7 +68,7 @@ func TestATurnThatStartedACommandIsGradedOnTheTurnTheCompletionNoteWakes(t *test
 		}
 	}
 	report := eval.Render("t", cases, o.Scenarios)
-	if !strings.Contains(report, "## Cases that needed the second turn") || !strings.Contains(report, "| claude-x | 1 | 1 |") {
+	if !strings.Contains(report, "## Cases that needed the second turn") || !strings.Contains(report, "| claude-x | 0 | 1 | 1 | 1 |") {
 		t.Fatalf("the report counts the cases that needed the second turn:\n%s", report)
 	}
 }
@@ -127,5 +127,52 @@ func TestCommandDoneNeedsRunCommand(t *testing.T) {
 		if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "run_command") {
 			t.Fatalf("a scenario with no run_command cannot define how a command ends: %v", err)
 		}
+	}
+}
+
+// The second turn is for a command that is still running when the turn ends, and an answer that is not one (empty, or for a scenario that expects a
+// handoff, a message that only says it will report). A wrong answer is not given a second chance because it happened to start a command.
+func TestSecondTurnOnlyForAStillRunningCommandAndNoRealAnswer(t *testing.T) {
+	wrong := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"Nope.","reply_to":"9999"}]}`
+	willReport := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"I started the build and will report when it ends.","reply_to":"msg_01EVALMSG7203","handoff":false}]}`
+	handoffFailed := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"@` + eval.DispatcherID + ` it failed.","reply_to":"msg_01EVALMSG7203","handoff":true,"outcome":"failed"}]}`
+	run := func(t *testing.T, scenario string, first string, observeFinish bool) (turns int, specs int) {
+		t.Helper()
+		st := &stub{}
+		st.reply = func(spec adapter.TurnSpec, n int) []adapter.Event {
+			if n == 1 {
+				callTool(t, spec, "run_command", `{"cmd":"go build ./...","request_key":"k"}`)
+				if observeFinish {
+					callTool(t, spec, "command_log", `{"id":"c_1"}`)
+				}
+			}
+			return []adapter.Event{answerEvent(first)}
+		}
+		o := newOptions(t, st, scenario)
+		o.Scenarios[0].Expect.CommandDone = &eval.CommandDone{ExitCode: 0, Tail: "ok"}
+		out, err := o.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out[0].Attempts[0].Turns, len(st.specs)
+	}
+	for _, tc := range []struct {
+		name, scenario, first string
+		observeFinish         bool
+		second                bool
+	}{
+		{"an empty answer, command running", "s01-plain-reply", `{"messages":[]}`, false, true},
+		{"a will-report message in a handoff scenario, command running", "s03-handoff-done", willReport, false, true},
+		{"a wrong answer after the command finished", "s01-plain-reply", wrong, true, false},
+		{"an empty answer after the command finished", "s01-plain-reply", `{"messages":[]}`, true, false},
+		{"a wrong reply in a scenario with no handoff, command running", "s01-plain-reply", wrong, false, false},
+		{"a wrong handoff, command running", "s03-handoff-done", handoffFailed, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			turns, specs := run(t, tc.scenario, tc.first, tc.observeFinish)
+			if tc.second && (turns != 2 || specs != 2) || !tc.second && (turns != 0 || specs != 1) {
+				t.Fatalf("second turn wanted %v: Turns=%d, turns started=%d", tc.second, turns, specs)
+			}
+		})
 	}
 }

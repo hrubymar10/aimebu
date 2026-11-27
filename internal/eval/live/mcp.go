@@ -28,6 +28,8 @@ type MCPServer struct {
 	tools    map[string][]string              // bearer key -> tool names offered
 	calls    map[string][]string              // bearer key -> tool names called, in order
 	commands map[string][]string              // bearer key -> the cmd of each run_command call, in order
+	done     map[string]*eval.CommandDone     // bearer key -> how the scenario's commands end
+	finished map[string]bool                  // bearer key -> the turn looked at its command after starting it (command_log, list_commands) and was told it had ended
 	history  map[string][]eval.HistoryMessage // bearer key -> the messages room_history and message_get know
 	answers  map[string][]byte                // bearer key -> the last answer submit_answer accepted, compacted
 }
@@ -38,7 +40,7 @@ func StartMCP() (*MCPServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, commands: map[string][]string{}, history: map[string][]eval.HistoryMessage{}, answers: map[string][]byte{}}
+	m := &MCPServer{listener: listener, tools: map[string][]string{}, calls: map[string][]string{}, commands: map[string][]string{}, done: map[string]*eval.CommandDone{}, finished: map[string]bool{}, history: map[string][]eval.HistoryMessage{}, answers: map[string][]byte{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/agent/mcp", m.handle)
 	m.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -73,6 +75,22 @@ func (m *MCPServer) Submitted(key string) []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]byte(nil), m.answers[key]...)
+}
+
+// SetCommandDone gives the turn that holds key the end its commands have (Expect.CommandDone), which command_log and list_commands report once
+// the turn has started a command and looks at it.
+func (m *MCPServer) SetCommandDone(key string, done *eval.CommandDone) {
+	m.mu.Lock()
+	m.done[key] = done
+	m.mu.Unlock()
+}
+
+// CommandFinished says the turn that held key was told, by command_log or list_commands, that a command it started had ended. A command the turn
+// never looked at is still running when the turn ends, which is what the prompt asks of it.
+func (m *MCPServer) CommandFinished(key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.finished[key]
 }
 
 // Commands lists the commands the turn that held key started with run_command, in order.
@@ -182,6 +200,16 @@ func (m *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 		messages := m.history[key]
 		m.mu.Unlock()
 		switch name {
+		case "command_log", "list_commands":
+			m.mu.Lock()
+			done, started := m.done[key], len(m.commands[key]) > 0
+			if started && done != nil {
+				m.finished[key] = true
+			}
+			m.mu.Unlock()
+			if started && done != nil {
+				reply = fmt.Sprintf("c_1: finished with exit code %d.\n%s", done.ExitCode, done.Tail)
+			}
 		case "room_history":
 			reply = roomHistoryReply(messages, req.Params.Arguments)
 		case "message_get":

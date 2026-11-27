@@ -148,12 +148,14 @@ person's own agents are unchanged: the field is never journaled and only the eva
 the isolated user config and checks that it does not reach the harness (and that it does without the field, so the test can fail).
 
 **A command the model starts.** The prompt tells a model to end its turn after `run_command`, and the real server wakes it with a completion note. A scenario
-that offers `run_command` says how its commands end in `expect.command_done` (`exit_code`, `tail`). When a turn calls `run_command` and its answer is valid but does
-not pass the checks (typically `messages:[]`, or a message that says it will report), the runner sends the note (`Your command `...` finished with exit code N;
-output tail: '...'`, why `your command finished`) as a second turn of the same session and grades **that** answer. The attempt holds the second turn's answer and
-checks, and the time, tokens and cost of both turns; `turns` is 2 in `results.json`, and the report has a table of how many cases needed the second turn. A turn
-that answers correctly after starting a command, or that starts none, has no second turn, and a scenario with no `command_done` (s14, s15: their point is not to
-run the command) never gets one.
+that offers `run_command` says how its commands end in `expect.command_done` (`exit_code`, `tail`). The runner sends the note (`Your command `...` finished with
+exit code N; output tail: '...'`, why `your command finished`) as a second turn of the same session, and grades **that** answer, only when the turn was waiting for
+the command: it called `run_command`, the command was still running when the turn ended (the turn did not look at it with `command_log` or `list_commands`, which in
+the stand-in report the end the scenario defines), its answer has no handoff, and it is no answer to the addressed party: empty, or, in a scenario whose point is a
+handoff (it checks `handoff_outcome`), only a message that says it will report. A wrong answer that happens to follow a command is graded as it is, so the
+second turn cannot inflate a rate. The attempt holds the second turn's answer and checks, and the time, tokens and cost of both turns; `turns` is 2 in
+`results.json`. The report counts, per model, the cases correct on the first turn, those correct only after the command finished, and those that needed the second
+turn. A scenario with no `command_done` (s14, s15: their point is not to run the command) never gets one.
 
 Each turn has a key of its own: `aak_` and 128 random bits, never derived from the turn id. Every normal turn has a toolbox, since the Docker
 adapters refuse one without agent tools access, so a scenario with no tools gets one that offers none, and the turn's `allowed_tools` is the

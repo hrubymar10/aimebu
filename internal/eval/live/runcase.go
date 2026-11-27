@@ -51,7 +51,7 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 		}
 		// A turn that started a command and ended without an answer that passes is waiting for it, as the prompt asks. The real server wakes it
 		// with the command's completion note; so does the run, as a second turn of the same session, and that turn's answer is the one graded.
-		if done := scenario.Expect.CommandDone; done != nil && !completed && a.Valid && !a.Correct && a.Class != eval.ClassHarness && session != "" && contains(a.Tools, "run_command") {
+		if done := scenario.Expect.CommandDone; done != nil && !completed && a.Valid && !a.Correct && a.Class != eval.ClassHarness && session != "" && contains(a.Tools, "run_command") && waitingForCommand(scenario, usage) {
 			completed = true
 			o.turnCounter++
 			second, handle2, usage2 := o.runTurn(ctx, impl, target, row, checkout, scenario, fmt.Sprintf("turn_eval_%s_%04d", o.RunID, o.turnCounter), completionNote(8800+attempt, usage.commands, *done), turnContext, session, true)
@@ -73,6 +73,25 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 		notes = heldNote(9000+attempt, heldDetail(a.Err))
 	}
 	return c
+}
+
+// waitingForCommand says a turn that started a command ended waiting for it, as the prompt asks, so the completion note is its next turn: the
+// command was still running at the end of the turn (the turn did not look at it with command_log or list_commands and was not told it had ended),
+// the answer has no handoff, and it is no answer to the addressed party: empty, or, for a scenario whose point is a handoff, only a message that
+// says it will report. A wrong answer that happens to follow a command is graded as it is, so the second turn cannot inflate a rate.
+func waitingForCommand(scenario eval.Scenario, usage turnUsage) bool {
+	switch {
+	case usage.finished || usage.handoff:
+		return false
+	case usage.messages == 0:
+		return true
+	}
+	for _, check := range scenario.Expect.Checks {
+		if check.Op == "handoff_outcome" {
+			return true
+		}
+	}
+	return false
 }
 
 // settleUsage puts a turn's time on its attempt and, for a harness that reports session running totals, takes the previous turn's total off its
@@ -129,6 +148,9 @@ func completionNote(noteNo int, commands []string, done eval.CommandDone) json.R
 type turnUsage struct {
 	millis           int64
 	commands         []string // the commands the turn started with run_command
+	finished         bool     // the turn was told that a command it started had ended (MCPServer.CommandFinished)
+	messages         int      // the messages of its answer, and whether one is a handoff
+	handoff          bool
 	costCumulative   bool
 	tokensCumulative bool
 	raw              adapter.Usage
@@ -175,6 +197,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		return fail("history: %v", err)
 	}
 	o.MCP.SetHistory(key, messages)
+	o.MCP.SetCommandDone(key, scenario.Expect.CommandDone)
 	spec.AgentTools = &adapter.AgentToolsAccess{AgentID: eval.WorkerID, ServerURL: fmt.Sprintf("http://127.0.0.1:%d", o.MCP.Port()), Key: key, Command: "/usr/bin/aimebu"}
 	spec.AllowedTools = scenario.Input.AllowedTools
 	spec.Providers = providersFor(target)
@@ -206,6 +229,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	used.millis = time.Since(begin).Milliseconds()
 	tools := o.MCP.Calls(key)
 	used.commands = o.MCP.Commands(key)
+	used.finished = o.MCP.CommandFinished(key)
 	a := eval.Attempt{Tools: tools}
 	if usage != nil {
 		a.TokIn = usageIn(*usage)
@@ -227,6 +251,10 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		return a, newSession, used
 	}
 	r := eval.Score(answer, scenario, tools)
+	used.messages = len(r.Candidate.Messages)
+	for _, m := range r.Candidate.Messages {
+		used.handoff = used.handoff || m.Handoff
+	}
 	a.Candidate, a.Valid, a.Strict, a.Correct, a.Class = truncate(answer, 4000), r.Valid, r.Strict, r.Correct, r.Class
 	a.Via = answerVia(answer, o.MCP.Submitted(key))
 	switch {

@@ -107,6 +107,9 @@ type ModelSummary struct {
 	ViaTool, ViaText int
 	// SecondTurn counts the cases whose first attempt took the completion note as a second turn (Attempt.Turns).
 	SecondTurn int
+	// CorrectFirstTurn counts the cases whose first attempt was correct on its own turn, and CorrectAfterCommand those correct only on the turn the
+	// command's completion note woke (SecondTurn is the cases that needed it, correct or not).
+	CorrectFirstTurn, CorrectAfterCommand int
 }
 
 // TokenBreakdown keeps the input categories behind a report's total token column.
@@ -161,6 +164,11 @@ func Summarize(cases []Case) []ModelSummary {
 			}
 			if f.Turns == 2 {
 				s.SecondTurn++
+			}
+			if f.Correct && f.Turns == 2 {
+				s.CorrectAfterCommand++
+			} else if f.Correct {
+				s.CorrectFirstTurn++
 			}
 			s.TokensFirst += f.TokIn + f.TokOut
 			s.FirstBreakdown.add(f)
@@ -232,7 +240,7 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.ViaTool, s.ViaText)
 	}
-	b.WriteString("\n## Cases that needed the second turn\n\nA turn that started a command with `run_command` and ended without an answer that passes is the turn that waits for it, as the prompt asks. The run then delivers the command's completion note as a second turn of the same session and grades that turn. Its time, tokens and cost are added to the case's first attempt.\n\n| model | cases | of |\n|---|---|---|\n")
+	b.WriteString("\n## Cases that needed the second turn\n\nA turn that started a command with `run_command` and ended with no answer to the addressed party (empty, or only a message that says it will report, and no handoff) while the command was still running is the turn that waits for it, as the prompt asks. The run then delivers the command's completion note as a second turn of the same session and grades that turn; its time, tokens and cost are added to the case's first attempt. A case correct on the first turn is counted apart from one correct only after the command finished.\n\n| model | correct on the first turn | correct after the command finished | needed the second turn | cases |\n|---|---|---|---|---|\n")
 	for _, s := range summaries {
 		total := 0
 		for _, c := range cases {
@@ -240,7 +248,7 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 				total++
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.SecondTurn, total)
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d |\n", s.Model, s.CorrectFirstTurn, s.CorrectAfterCommand, s.SecondTurn, total)
 	}
 	b.WriteString("\n## Time and tokens\n\n| model | median first-attempt time | tokens (first attempts) | tokens (all attempts) | cost USD (first) | cost USD (all) |\n|---|---|---|---|---|---|\n")
 	for _, s := range summaries {
