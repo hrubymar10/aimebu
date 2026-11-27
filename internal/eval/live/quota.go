@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -58,6 +59,11 @@ func (q QuotaSource) Read(ctx context.Context) (Reading, error) {
 	if resp.StatusCode != http.StatusOK {
 		return Reading{}, fmt.Errorf("GET /api/usages answered %d", resp.StatusCode)
 	}
+	return ParseUsages(resp.Body)
+}
+
+// ParseUsages reads a /api/usages document (the usages of the doctor route have the same shape) into a Reading.
+func ParseUsages(r io.Reader) (Reading, error) {
 	var body struct {
 		Providers []struct {
 			Name     string `json:"provider_name"`
@@ -71,7 +77,7 @@ func (q QuotaSource) Read(ctx context.Context) (Reading, error) {
 			} `json:"profiles"`
 		} `json:"providers"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
 		return Reading{}, err
 	}
 	out := Usage{}

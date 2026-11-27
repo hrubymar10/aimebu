@@ -14,12 +14,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter/claude"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter/codex"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter/opencode"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter/pi"
-	"github.com/hrubymar10/aimebu/v2/internal/adapter/vibe"
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 	"github.com/hrubymar10/aimebu/v2/internal/eval/live"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
@@ -80,11 +74,11 @@ func run() error {
 	if err := eval.ValidateAll(scenarios); err != nil {
 		return err
 	}
-	selected, repetitions := pick(scenarios, *full, *only), *reps
+	selected, repetitions := live.PickScenarios(scenarios, *full, *only), *reps
 	chosen := config.Targets
 	if !*full {
 		chosen, repetitions = config.Targets[:1], 1
-		selected = pick(scenarios, false, "")
+		selected = live.PickScenarios(scenarios, false, "")
 	}
 	if *targets != "" {
 		chosen = nil
@@ -118,71 +112,17 @@ func run() error {
 	options := &live.Options{RunID: runID, ScratchDir: config.ScratchDir, Targets: chosen, Launchers: config.Launchers, Scenarios: selected, Reps: repetitions,
 		MaxUSD: *maxUSD, StopAbovePct: *stopAbove, VisibleHost: config.VisibleHost, MCP: mcp, Log: os.Stdout,
 		Quota:      &live.QuotaSource{URL: config.UsagesURL, CookieEnv: config.UsagesCookieEnv},
-		NewAdapter: newAdapter, Preflight: func(tool, checkout, launcher string) error { return adapter.DockerPreflight(tool, checkout, launcher) }}
+		NewAdapter: live.NewDockerAdapter, Preflight: live.DockerPreflight}
 	fmt.Printf("run %s: %d scenario(s) x %d target(s) x %d repetition(s), cap $%.2f, results in %s\n", runID, len(selected), len(chosen), repetitions, *maxUSD, dir)
 	cases, runErr := options.Run(ctx)
 	mode := "smoke"
 	if *full {
 		mode = "full run"
 	}
-	report := eval.Render(fmt.Sprintf("Eval %s (%s)", runID, mode), cases, selected)
-	report += fmt.Sprintf("\n## Cost\n\nThe harnesses reported $%.2f (an estimate for a subscription; the cap was $%.2f).\n", options.Spent(), *maxUSD)
-	report += "\n## Quota\n\nShare used of each window the server reports, before and after the run.\n\n" + live.Table(options.QuotaBefore, options.QuotaAfter)
-	if runErr != nil {
-		report += fmt.Sprintf("\n## The run stopped early\n\n%v\n", runErr)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte(report), 0o600); err != nil {
-		return err
-	}
-	raw, err := json.MarshalIndent(cases, "", " ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "results.json"), raw, 0o600); err != nil {
+	report := options.Report(fmt.Sprintf("Eval %s (%s)", runID, mode), cases, selected, runErr)
+	if err := live.WriteResults(dir, report, cases); err != nil {
 		return err
 	}
 	fmt.Println(report)
 	return runErr
-}
-
-// pick is the scenarios of a run: the two of a smoke, the named ones, or all.
-func pick(all []eval.Scenario, full bool, names string) []eval.Scenario {
-	want := map[string]bool{}
-	switch {
-	case !full:
-		want["s01-plain-reply"], want["s15-waiting-on-command"] = true, true
-	case names != "":
-		for _, n := range strings.Split(names, ",") {
-			want[strings.TrimSpace(n)] = true
-		}
-	default:
-		return all
-	}
-	var out []eval.Scenario
-	for _, s := range all {
-		if want[s.ID] {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// newAdapter is the Docker adapter of a tool, the one the supervisor starts for an agent on a Docker launcher. It does not ask any CLI for its
-// version (adapter.NewMulti would): the launcher is the owner's and was inspected there.
-func newAdapter(tool string) (adapter.Adapter, error) {
-	switch tool {
-	case eval.KindClaude:
-		a := claude.NewDocker()
-		a.StandIn = true
-		return a, nil
-	case eval.KindCodex:
-		return codex.NewDocker(), nil
-	case eval.KindPi:
-		return pi.NewDocker(), nil
-	case eval.KindOpenCode:
-		return opencode.NewDocker(), nil
-	case eval.KindVibe:
-		return vibe.NewDocker(), nil
-	}
-	return nil, fmt.Errorf("unknown tool %q", tool)
 }

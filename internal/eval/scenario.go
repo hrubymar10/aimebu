@@ -2,8 +2,8 @@ package eval
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -110,21 +110,24 @@ type Check struct {
 }
 
 // LoadDir reads every *.json scenario of a directory, sorted by file name.
-func LoadDir(dir string) ([]Scenario, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+func LoadDir(dir string) ([]Scenario, error) { return LoadFS(os.DirFS(dir)) }
+
+// LoadFS reads every *.json scenario at the top of a file system, sorted by file name.
+func LoadFS(fsys fs.FS) ([]Scenario, error) {
+	names, err := fs.Glob(fsys, "*.json")
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
+	sort.Strings(names)
 	var out []Scenario
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
+	for _, name := range names {
+		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return nil, err
 		}
 		var s Scenario
 		if err := strictUnmarshal(data, &s); err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+			return nil, fmt.Errorf("%s: %w", name, err)
 		}
 		out = append(out, s)
 	}
