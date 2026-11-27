@@ -16,6 +16,7 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 func rpc(t *testing.T, port int, key, body string) (int, string) {
@@ -61,14 +62,14 @@ func TestMCPStandInOffersTheScenariosToolsAndRecordsCalls(t *testing.T) {
 }
 
 func TestUsageHottestAndLimit(t *testing.T) {
-	u := Usage{"claude/main/session": 99, "claude/main/weekly": 42.5, "claude/spare/seven_day_opus": 91, "codex/x/weekly": 10}
-	if name, used := u.Hottest(); name != "claude/spare/seven_day_opus" || used != 91 {
+	u := Usage{"claude-code/main/session": 99, "claude-code/main/weekly": 42.5, "claude-code/spare/seven_day_opus": 91, "codex/x/weekly": 10}
+	if name, used := u.Hottest(); name != "claude-code/spare/seven_day_opus" || used != 91 {
 		t.Fatalf("hottest %s %v: a session window never counts", name, used)
 	}
-	if got := u.OverLimit(90); !strings.Contains(got, "claude/spare/seven_day_opus") {
+	if got := u.OverLimit(90); !strings.Contains(got, "claude-code/spare/seven_day_opus") {
 		t.Fatalf("over limit: %q", got)
 	}
-	if got := (Usage{"claude/main/weekly": 89}).OverLimit(90); got != "" {
+	if got := (Usage{"claude-code/main/weekly": 89}).OverLimit(90); got != "" {
 		t.Fatalf("under limit: %q", got)
 	}
 	table := Table(Usage{"a/b/weekly": 10, "a/b/session": 5}, Usage{"a/b/weekly": 12.5})
@@ -85,12 +86,12 @@ func TestQuotaFetchReadsTheServersUsages(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		fmt.Fprint(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"session","percent_used":12},{"key":"weekly","percent_used":40.5}]}]}]}`)
+		fmt.Fprint(w, `{"providers":[{"provider_name":"claude-code","profiles":[{"profile_name":"main","windows":[{"key":"session","percent_used":12},{"key":"weekly","percent_used":40.5}]}]}]}`)
 	}))
 	defer server.Close()
 	t.Setenv("EVAL_TEST_COOKIE", "aimebu_session=abc")
 	u, err := QuotaSource{URL: server.URL + "/", CookieEnv: "EVAL_TEST_COOKIE"}.Fetch(context.Background())
-	if err != nil || u["claude/main/weekly"] != 40.5 || u["claude/main/session"] != 12 || cookie != "aimebu_session=abc" {
+	if err != nil || u["claude-code/main/weekly"] != 40.5 || u["claude-code/main/session"] != 12 || cookie != "aimebu_session=abc" {
 		t.Fatalf("usage %v err %v cookie %q", u, err, cookie)
 	}
 	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
@@ -276,7 +277,7 @@ func TestRunStopsOnBudgetAndOnQuota(t *testing.T) {
 		t.Fatalf("budget: %d cases, %v", len(cases), err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":93}]}]}]}`)
+		fmt.Fprint(w, `{"providers":[{"provider_name":"claude-code","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":93}]}]}]}`)
 	}))
 	defer server.Close()
 	o = newOptions(t, st, "s18-fyi-silence")
@@ -421,7 +422,7 @@ func quotaServer(t *testing.T, readings ...float64) *httptest.Server {
 		v := readings[min(n, len(readings)-1)]
 		n++
 		mu.Unlock()
-		fmt.Fprintf(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":%v}]}]}]}`, v)
+		fmt.Fprintf(w, `{"providers":[{"provider_name":"claude-code","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":%v}]}]}]}`, v)
 	}))
 	t.Cleanup(server.Close)
 	return server
@@ -439,7 +440,7 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "cap") {
 			t.Fatalf("stopped by the cap: %v", err)
 		}
-		if got := o.QuotaAfter["claude/main/weekly"]; got != 12 {
+		if got := o.QuotaAfter["claude-code/main/weekly"]; got != 12 {
 			t.Fatalf("after reading %v, want the final reading 12", o.QuotaAfter)
 		}
 	})
@@ -451,7 +452,7 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "95%") {
 			t.Fatalf("stopped by the guard: %v", err)
 		}
-		if got := o.QuotaAfter["claude/main/weekly"]; got != 95 {
+		if got := o.QuotaAfter["claude-code/main/weekly"]; got != 95 {
 			t.Fatalf("after reading %v, want 95", o.QuotaAfter)
 		}
 	})
@@ -466,7 +467,7 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 		if _, err := o.Run(ctx); err == nil || !strings.Contains(err.Error(), "run stopped") {
 			t.Fatalf("stopped by the cancel: %v", err)
 		}
-		if got := o.QuotaAfter["claude/main/weekly"]; got != 11 {
+		if got := o.QuotaAfter["claude-code/main/weekly"]; got != 11 {
 			t.Fatalf("a cancelled run still reads the quota with a fresh context: %v", o.QuotaAfter)
 		}
 	})
@@ -478,7 +479,7 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprint(w, `{"providers":[{"provider_name":"claude","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":10}]}]}]}`)
+			fmt.Fprint(w, `{"providers":[{"provider_name":"claude-code","profiles":[{"profile_name":"main","windows":[{"key":"weekly","percent_used":10}]}]}]}`)
 		}))
 		defer server.Close()
 		o := newOptions(t, &stub{reply: spend}, "s18-fyi-silence", "s15-waiting-on-command")
@@ -487,7 +488,7 @@ func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 		if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "cannot be read") {
 			t.Fatalf("stopped because the quota cannot be read: %v", err)
 		}
-		if got := o.QuotaAfter["claude/main/weekly"]; got != 10 {
+		if got := o.QuotaAfter["claude-code/main/weekly"]; got != 10 {
 			t.Fatalf("the last successful reading stays as the after column: %v", o.QuotaAfter)
 		}
 	})
@@ -502,7 +503,7 @@ func usagesServer(t *testing.T, body string) *httptest.Server {
 }
 
 const guardUsages = `{"providers":[
-{"provider_name":"claude","profiles":[{"profile_name":"main","active":true,"windows":[{"key":"weekly","percent_used":10}]},{"profile_name":"spare","windows":[{"key":"weekly","percent_used":100}]}]},
+{"provider_name":"claude-code","profiles":[{"profile_name":"main","active":true,"windows":[{"key":"weekly","percent_used":10}]},{"profile_name":"spare","windows":[{"key":"weekly","percent_used":100}]}]},
 {"provider_name":"codex","profiles":[{"profile_name":"main","active":true,"windows":[{"key":"weekly","percent_used":100}]}]}]}`
 
 func TestQuotaGuardChecksOnlyTheTargetsToolsAndActiveProfiles(t *testing.T) {
@@ -524,7 +525,27 @@ func TestQuotaGuardChecksOnlyTheTargetsToolsAndActiveProfiles(t *testing.T) {
 	hot := strings.Replace(guardUsages, `"percent_used":10`, `"percent_used":97`, 1)
 	o = newOptions(t, st, "s18-fyi-silence")
 	o.Quota = &QuotaSource{URL: usagesServer(t, hot).URL}
-	if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "claude/main/weekly") {
+	if _, err := o.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "claude-code/main/weekly") {
 		t.Fatalf("the active profile above the limit stops the run: %v", err)
+	}
+}
+
+// Every harness kind of the eval has an entry in the server's tool-to-provider mapping, and an entry with a provider names one /api/usages
+// can report: a new harness cannot reach the quota guard under a name the server never emits.
+func TestEveryEvalKindMapsToAUsagesProvider(t *testing.T) {
+	for _, kind := range eval.Kinds {
+		if !providers.ToolKnown(kind) {
+			t.Errorf("eval kind %q has no entry in providers.toolProviders", kind)
+			continue
+		}
+		if name, ok := providers.ProviderForTool(kind); ok && !providers.KnownProvider(name) {
+			t.Errorf("eval kind %q maps to %q, which is not a usages provider", kind, name)
+		}
+	}
+	if name, ok := providers.ProviderForTool(eval.KindClaude); !ok || name != providers.ProviderClaudeCode {
+		t.Errorf("claude maps to %q", name)
+	}
+	if name, ok := providers.ProviderForTool(eval.KindCodex); !ok || name != providers.ProviderCodex {
+		t.Errorf("codex maps to %q", name)
 	}
 }

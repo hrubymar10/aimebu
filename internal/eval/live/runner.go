@@ -15,6 +15,7 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/usages/providers"
 )
 
 // Target is one model on one launcher: a column of the report.
@@ -165,11 +166,14 @@ func (o *Options) run(ctx context.Context) ([]eval.Case, error) {
 	return cases, nil
 }
 
-// targetTools are the tools of the run's targets: the only providers whose quota windows the guard looks at.
+// targetTools are the /api/usages provider names of the run's targets (providers.ProviderForTool, the server's own mapping): the only
+// providers whose quota windows the guard looks at. A target whose tool has no provider there adds none.
 func (o *Options) targetTools() map[string]bool {
 	tools := map[string]bool{}
 	for _, t := range o.Targets {
-		tools[t.Tool] = true
+		if name, ok := providers.ProviderForTool(t.Tool); ok {
+			tools[name] = true
+		}
 	}
 	return tools
 }

@@ -37,6 +37,28 @@ var knownProviders = []string{
 	ProviderOllamaCloud,
 }
 
+// toolProviders maps a harness tool name (the eval's and the launchers' "claude", "codex", ...) to the provider name /api/usages reports its
+// quota under. A tool with an empty entry has no provider in /api/usages (its models vary by launcher), so no quota window can belong to it.
+var toolProviders = map[string]string{
+	"claude":   ProviderClaudeCode,
+	"codex":    ProviderCodex,
+	"pi":       "",
+	"opencode": "",
+	"vibe":     "",
+}
+
+// ProviderForTool is the /api/usages provider name of a harness tool, and false when the tool is unknown or has no provider there.
+func ProviderForTool(tool string) (string, bool) {
+	name := toolProviders[tool]
+	return name, name != ""
+}
+
+// ToolKnown says the mapping has an entry for tool, with or without a provider.
+func ToolKnown(tool string) bool {
+	_, ok := toolProviders[tool]
+	return ok
+}
+
 var providerLabels = map[string]string{
 	ProviderCodex:         "Codex",
 	ProviderClaudeCode:    "Claude Code",
