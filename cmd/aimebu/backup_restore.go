@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/hrubymar10/aimebu/v2/internal/sqliteutil"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
@@ -154,7 +152,7 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 			if err = fetchServerSnapshot(ctx, config, snapshot); err != nil {
 				return err
 			}
-		} else if err = snapshotStoppedDatabase(ctx, dbPath, snapshot); err != nil {
+		} else if err = snapshotStoppedDatabase(ctx, lock, dbPath, snapshot); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(statErr) {
@@ -302,14 +300,13 @@ func makeBackup(ctx context.Context, config serverConfig, root, output string, s
 	return nil
 }
 
-func snapshotStoppedDatabase(ctx context.Context, source, dest string) error {
-	db, err := sql.Open(store.SQLDriverName, sqliteutil.DSN(source, false))
-	if err != nil {
-		return err
+// snapshotStoppedDatabase snapshots the live database of a stopped server. lock is the server's startup writer lock, which the caller took
+// first; without it a server could start and open the same file while this process reads it.
+func snapshotStoppedDatabase(ctx context.Context, lock *os.File, source, dest string) error {
+	if lock == nil {
+		return errors.New("refusing to open the server database without the server lock")
 	}
-	defer db.Close()
-	_, err = db.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(dest, `'`, `''`)+`'`)
-	if err != nil {
+	if err := store.VacuumFileInto(ctx, source, dest); err != nil {
 		return err
 	}
 	return os.Chmod(dest, 0600)
@@ -345,15 +342,9 @@ func fetchServerSnapshot(ctx context.Context, config serverConfig, dest string) 
 	return errors.Join(err, file.Close())
 }
 
+// snapshotSchema reads the schema version of a private copy: the snapshot taken for an archive or the database extracted from one.
 func snapshotSchema(ctx context.Context, p string) (int, error) {
-	db, err := sql.Open(store.SQLDriverName, sqliteutil.DSN(p, true))
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
-	var version int
-	err = db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version)
-	return version, err
+	return store.FileSchemaVersion(ctx, p)
 }
 
 func restoreCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
