@@ -435,3 +435,21 @@ func listTools(t *testing.T, server Server) []byte {
 	response, _ := server.Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	return response
 }
+
+// The recovery tools are open to an active lead and to an active role that can spawn (a flow's dispatcher), as the server and the store
+// allow them (internal/server/agent_recovery.go, internal/store/recovery_decision.go): the description must not say "lead only".
+func TestRecoveryToolDescriptionsNameEveryoneWhoMayDecide(t *testing.T) {
+	seen := 0
+	for _, entry := range catalog {
+		if entry.Name != "list_recoveries" && entry.Name != "resolve_recovery" {
+			continue
+		}
+		seen++
+		if strings.Contains(entry.Description, "lead only") || !strings.Contains(entry.Description, "can spawn agents") {
+			t.Fatalf("%s: %q", entry.Name, entry.Description)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("recovery tools in the catalog: %d", seen)
+	}
+}
