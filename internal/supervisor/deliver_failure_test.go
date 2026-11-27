@@ -81,9 +81,14 @@ func newMachinePeer(t *testing.T, ack func(hello protocol.Frame) protocol.Frame)
 	return p
 }
 
+// peerFrameLimit is for a hang, not for a slow machine: a supervisor that has accepted a delivery sends its frame within about a second on an idle
+// machine, but the full race gate gave a 10 s limit out at 12.5 s (TestAnswerFrameCarriesTheTurnsAnswerTool/another_harness). A deadline only
+// detects a hang (CONTRIBUTING.md), so this one is far above anything the supervisor does before it sends the frame.
+const peerFrameLimit = 2 * time.Minute
+
 func (p *machinePeer) next(t *testing.T, want string) protocol.Frame {
 	t.Helper()
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(peerFrameLimit)
 	for {
 		select {
 		case frame := <-p.in:
