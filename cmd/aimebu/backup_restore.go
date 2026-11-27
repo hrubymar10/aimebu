@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/v2/internal/agentlog"
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 	"github.com/hrubymar10/aimebu/v2/internal/supervisor"
 )
@@ -106,6 +107,18 @@ func backupCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 var rotatedLogPattern = regexp.MustCompile(`\.log(\.[0-9]+)?$`)
 
 func isLogFileName(base string) bool { return rotatedLogPattern.MatchString(base) }
+
+// isAgentConversationLog reports whether name (slash-separated, relative to the data root) is an agent's current conversation log,
+// supervisor/agent-logs/<agent dir>/conversation.log. That one file is data, read by the agent output view, so it is archived;
+// agentlog.Store keeps it at exactly this depth (agentDir, internal/agentlog/agentlog.go:139).
+func isAgentConversationLog(name string) bool {
+	rest, ok := strings.CutPrefix(name, "supervisor/agent-logs/")
+	if !ok {
+		return false
+	}
+	dir, file, ok := strings.Cut(rest, "/")
+	return ok && dir != "" && file == agentlog.ConversationFileName
+}
 
 var backupStampPattern = regexp.MustCompile(`-(\d{8}T\d{6}(?:\.\d{9})?Z)\.tar\.gz$`)
 
@@ -389,7 +402,7 @@ func makeBackupOptions(ctx context.Context, config serverConfig, root, output st
 			}
 			return nil
 		}
-		if name == "server/aimebu.sqlite" || name == "server/aimebu.sqlite-wal" || name == "server/aimebu.sqlite-shm" || name == "server/doctor.key" || name == "server/aimebu.pid" || strings.HasSuffix(base, ".lock") || isLogFileName(base) || strings.HasSuffix(base, ".tmp") || strings.HasPrefix(base, ".backup-snapshot-") {
+		if name == "server/aimebu.sqlite" || name == "server/aimebu.sqlite-wal" || name == "server/aimebu.sqlite-shm" || name == "server/doctor.key" || name == "server/aimebu.pid" || strings.HasSuffix(base, ".lock") || (isLogFileName(base) && !isAgentConversationLog(name)) || strings.HasSuffix(base, ".tmp") || strings.HasPrefix(base, ".backup-snapshot-") {
 			return nil
 		}
 		for journal := range skipped {

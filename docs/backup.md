@@ -27,11 +27,17 @@ access to this installation. Harness homes such as `~/.claude` and `~/.codex`
 are outside the data root and are not included. Also left out, wherever they
 sit in the data root: the `backups/`, `tmp/` and `temp/` folders; log files
 named `*.log` and their rotated backups `*.log.<N>` (the server log
-`server/aimebu.log` and the agents' logs under `supervisor/agent-logs/`; the
-rotation writes only numbered files, never compressed ones); `*.tmp` files;
-runtime `*.lock` and PID files; and `server/doctor.key`. Logs are diagnostics, so
-a restore starts with fresh ones. That includes each agent's `conversation.log`,
-which the agent output view reads: that history is not restored.
+`server/aimebu.log` and the agents' `stderr.log`; the rotation writes only
+numbered files, never compressed ones); `*.tmp` files; runtime `*.lock` and PID
+files; and `server/doctor.key`. Logs are diagnostics, so a restore starts with
+fresh ones.
+
+One log is data and is archived: each agent's current conversation log,
+`supervisor/agent-logs/<agent>/conversation.log`. The agent output view reads
+it, and restore puts it back at the same path, where that view looks. Its
+rotated copies `conversation.log.<N>` are not archived, so a restore keeps the
+newest file of each conversation (up to 4 MiB), not the older history. A
+`conversation.log` anywhere else is excluded like any other log.
 
 The v1 rollback copy `.old-v1-bkp/` that the v1 cutover leaves in the data
 root is **excluded by default**: it is a full second copy of the v1 data and
