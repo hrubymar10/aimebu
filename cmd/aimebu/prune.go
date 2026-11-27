@@ -147,8 +147,9 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 		return err
 	}
 	defer unlockServerDirectory(supervisorLock)
-	// Recheck after taking the locks in case the root changed while they were acquired.
-	if err := refuseV1RootWrite(root); err != nil {
+	// Recheck after taking the locks in case the root changed while they were acquired; this process holds the server lock now, so the
+	// probe must not try to take it again.
+	if err := refuseV1RootWriteHeld(root); err != nil {
 		return err
 	}
 	if all {

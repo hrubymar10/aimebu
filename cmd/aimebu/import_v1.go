@@ -17,9 +17,23 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
-func lockServerDirectory(dir string) (*os.File, error) {
-	file, err := os.OpenFile(filepath.Join(dir, ".writer.lock"), os.O_CREATE|os.O_RDWR, 0600)
+func lockServerDirectory(dir string) (*os.File, error) { return openServerLock(dir, true) }
+
+// lockServerDirectoryIfPresent takes the writer lock like lockServerDirectory but never creates the lock file: a root that is still
+// v1's must not get one from a question. With no lock file there is no server to wait for, and it returns (nil, nil), which
+// unlockServerDirectory accepts.
+func lockServerDirectoryIfPresent(dir string) (*os.File, error) { return openServerLock(dir, false) }
+
+func openServerLock(dir string, create bool) (*os.File, error) {
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE
+	}
+	file, err := os.OpenFile(filepath.Join(dir, ".writer.lock"), flags, 0600)
 	if err != nil {
+		if !create && os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	// `aimebu server status`, stop and start look for a running server by taking this lock for an instant, so a refusal is tried a few

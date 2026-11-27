@@ -12,13 +12,19 @@ var errV1RootWrite = errors.New("v1 data or an interrupted v1 move is present")
 // refuseV1RootWrite protects a v1 installation until the server has moved its
 // data into the cutover backup. CLI operations must not create v2 state in the
 // live v1 tree, even when the caller bypasses an interactive confirmation.
-func refuseV1RootWrite(root string) error {
-	pending, err := v1MovePending(root)
+func refuseV1RootWrite(root string) error { return refuseV1RootWriteWith(root, false) }
+
+// refuseV1RootWriteHeld is refuseV1RootWrite for a caller that already holds server/.writer.lock (prune's recheck after it took the
+// locks).
+func refuseV1RootWriteHeld(root string) error { return refuseV1RootWriteWith(root, true) }
+
+func refuseV1RootWriteWith(root string, lockHeld bool) error {
+	pending, err := v1MovePendingWith(root, lockHeld)
 	if err != nil {
 		return err
 	}
 	if !pending {
-		pending, err = isV1Root(root)
+		pending, err = isV1RootWith(root, lockHeld)
 		if err != nil {
 			return err
 		}

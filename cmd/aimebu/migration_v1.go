@@ -177,7 +177,11 @@ func aimebuName(name string) bool { return name == "aimebu" || strings.HasPrefix
 // what is left to move) exists without a complete one. A finished backup, or a root that is already v2, moves nothing.
 // The interrupted case counts because it still moves v1's files, so it needs the same preflight and, if the start fails
 // afterwards, the same notice about where the files went.
-func v1MovePending(root string) (bool, error) {
+func v1MovePending(root string) (bool, error) { return v1MovePendingWith(root, false) }
+
+// v1MovePendingWith is v1MovePending for a caller that says whether it already holds server/.writer.lock (lockHeld): a second
+// flock from this process would be refused, so the probe then reads the database without taking it.
+func v1MovePendingWith(root string, lockHeld bool) (bool, error) {
 	if _, err := os.Lstat(filepath.Join(root, v1BackupName)); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
@@ -188,7 +192,7 @@ func v1MovePending(root string) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	return isV1Root(root)
+	return isV1RootWith(root, lockHeld)
 }
 
 // preflightV1Cutover refuses, before anything is moved, a first start that is certain to fail afterwards. The failures
@@ -490,7 +494,11 @@ func syncDirectory(path string) error {
 	return file.Sync()
 }
 
-func isV1Root(root string) (bool, error) {
+func isV1Root(root string) (bool, error) { return isV1RootWith(root, false) }
+
+// isV1RootWith is isV1Root for a caller that says whether it already holds server/.writer.lock (lockHeld). Without the lock the
+// probe takes it for the read, without creating the file.
+func isV1RootWith(root string, lockHeld bool) (bool, error) {
 	path := filepath.Join(root, "server", "aimebu.sqlite")
 	serverPath := path
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -503,8 +511,8 @@ func isV1Root(root string) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
-	if path == serverPath {
-		lock, err := lockServerDirectory(filepath.Dir(path))
+	if path == serverPath && !lockHeld {
+		lock, err := lockServerDirectoryIfPresent(filepath.Dir(path))
 		if err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) {
 				// A v2 server may own this path. Without its lock we cannot
