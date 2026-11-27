@@ -522,7 +522,9 @@ func isV1RootWith(root string, lockHeld bool) (bool, error) {
 		return false, err
 	}
 	opener := v1DatabaseOpener
-	if lockHeld {
+	// The server lock only excludes other v2 processes, so only the server layout may be read immutable under it; a v1 writer can still
+	// hold root/aimebu.sqlite, which always gets the plain opener.
+	if lockHeld && path == serverPath {
 		opener = v1LockedDatabaseOpener
 	}
 	if path == serverPath && !lockHeld {

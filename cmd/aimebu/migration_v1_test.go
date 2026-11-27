@@ -810,3 +810,29 @@ func TestReadOnlyOpenersWaitOutABriefLock(t *testing.T) {
 		}
 	})
 }
+
+// The server lock does not exclude a v1 writer on root/aimebu.sqlite, so even with the lock held that layout is read with the plain opener.
+func TestV1ProbeHeldLockUsesPlainOpenerForRootLayout(t *testing.T) {
+	root := t.TempDir()
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(root, "aimebu.sqlite"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE schema_meta(version INTEGER); INSERT INTO schema_meta VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var plain, locked int
+	previousPlain, previousLocked := v1DatabaseOpener, v1LockedDatabaseOpener
+	v1DatabaseOpener = func(path string) (*sql.DB, error) { plain++; return previousPlain(path) }
+	v1LockedDatabaseOpener = func(path string) (*sql.DB, error) { locked++; return previousLocked(path) }
+	defer func() { v1DatabaseOpener, v1LockedDatabaseOpener = previousPlain, previousLocked }()
+	if got, err := isV1RootWith(root, true); err != nil || !got {
+		t.Fatalf("isV1RootWith = %v, %v", got, err)
+	}
+	if plain != 1 || locked != 0 {
+		t.Fatalf("root layout with the lock held: plain=%d locked=%d, want 1 and 0", plain, locked)
+	}
+}
