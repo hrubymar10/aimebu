@@ -8,7 +8,17 @@ import (
 )
 
 func TestAttachmentPathMigrationMixedRows(t *testing.T) {
-	if migrations[len(migrations)-1].sql != "" {
+	entries := append([]migration(nil), migrations...)
+	entries = append(entries, migration{version: entries[len(entries)-1].version + 1, sql: "SELECT 1;"})
+	var migrationSQL string
+	found := false
+	for _, entry := range entries {
+		if entry.version == 146 {
+			migrationSQL, found = entry.sql, true
+			break
+		}
+	}
+	if !found || migrationSQL != "" {
 		t.Fatal("the Go-only migration must have no SQL to execute")
 	}
 	s, path := attachmentPathStore(t)
