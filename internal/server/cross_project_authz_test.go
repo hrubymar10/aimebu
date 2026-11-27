@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -160,11 +161,12 @@ func wildcardsOf(path string) []string {
 
 // crossWorld is project P2 with everything in it, project P1, and the two callers that belong to P1 only.
 type crossWorld struct {
-	t   *testing.T
-	f   *fixture
-	p1  map[string]string // P1's own objects, by kind
-	p2  map[string]string // P2's objects, by kind
-	key string            // P1 agent's key
+	t    *testing.T
+	f    *fixture
+	p1   map[string]string // P1's own objects, by kind
+	p2   map[string]string // P2's objects, by kind
+	key  string            // P1 agent's key
+	key2 string            // P2 agent's key for machine-scope checks
 	// the P1 person's session
 	cookie *http.Cookie
 	csrf   string
@@ -251,8 +253,9 @@ func newCrossWorld(t *testing.T) *crossWorld {
 	}
 	agent1, key1 := agentIn(w.p1["project"], w.p1["room"], "p1lead", "role_leader_default")
 	w.p1["agent"], w.key = agent1.ID, key1
-	agent2, _ := agentIn(w.p2["project"], w.p2["room"], "p2markworker", "role_worker_default")
+	agent2, key2 := agentIn(w.p2["project"], w.p2["room"], "p2markworker", "role_worker_default")
 	w.p2["agent"] = agent2.ID
+	w.key2 = key2
 
 	// P2's objects, each with the marker in what it holds.
 	message, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: w.p2["room"], AuthorKind: "user", AuthorID: owner.ID, Body: p2Mark + " message body"})
@@ -568,6 +571,68 @@ func TestCrossProjectRoutesRefuseTheOtherProjectsObjects(t *testing.T) {
 	t.Logf("exercised %d routes with ids (%d more with a P1 parent and a P2 child) out of %d registrations", exercised, mixedRuns, len(patterns))
 	if exercised < 150 {
 		t.Fatalf("only %d routes with ids were exercised", exercised)
+	}
+	// Seed a legacy agent on a now-restricted host. The scope setter itself
+	// refuses to create this situation; the direct seed checks every admission
+	// path against a stale agent that still needs recovery.
+	if err := w.f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`UPDATE machine SET scope_mode='listed' WHERE id=?`, w.f.machineID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO machine_project_scope(machine_id,project_id) VALUES (?,?)`, w.f.machineID, w.p1["project"]); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE role SET spawn_defaults_json='[]' WHERE role_key='worker'`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE agent SET role_id='role_leader_default' WHERE id=?`, w.p2["agent"])
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertScope := func(label string, code int, body string) {
+		t.Helper()
+		if code != 409 || !strings.Contains(body, "machine_scope") {
+			t.Errorf("%s: %d %s", label, code, body)
+		}
+	}
+	ownerCall := func(path string, body any) (int, string) {
+		t.Helper()
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodPost, w.f.http.URL+path, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", w.f.csrf)
+		req.Header.Set("Idempotency-Key", "scope-"+fmt.Sprint(time.Now().UnixNano()))
+		req.AddCookie(w.f.cookie)
+		resp, err := w.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		result, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(result)
+	}
+	code, body := ownerCall("/api/rooms/"+w.p2["room"]+"/agents", map[string]any{"role_key": "worker", "tool": "fake", "variant": "test", "model": "test", "machine_id": w.f.machineID})
+	assertScope("person spawn", code, body)
+	w.key = w.key2
+	code, body = w.call(true, "POST", "/api/agent/agents", map[string]any{"room_id": w.p2["room"], "role_key": "worker", "tool": "fake", "variant": "test", "model": "test", "machine_id": w.f.machineID})
+	assertScope("tool spawn", code, body)
+	code, body = ownerCall("/api/agents/"+w.p2["agent"]+"/switch", map[string]any{"room_id": w.p2["room"], "tool": "fake", "variant": "test", "model": "test", "machine_id": w.f.machineID, "rev": 0})
+	assertScope("switch", code, body)
+	if err := w.f.db.CheckMachineProject(t.Context(), w.p2["project"], w.f.machineID); !errors.Is(err, store.ErrMachineScope) {
+		t.Errorf("recovery admission: %v", err)
+	}
+	if _, err := w.f.db.ProjectMachineFolder(t.Context(), w.p2["project"], w.f.machineID); !errors.Is(err, store.ErrMachineScope) {
+		t.Errorf("folder mapping: %v", err)
 	}
 }
 

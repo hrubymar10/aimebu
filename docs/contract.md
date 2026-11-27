@@ -659,12 +659,28 @@ Roles, agents
   machine change; an omitted machine target retains the agent's machine
 
 Machines and workspace
-- **machine**(id, name, key_hash, approved, is_host, revoked_at?, last_seen?,
-  supervisor_version?, journal_id?, capabilities_json, harnesses_json) — the host machine is
+- **machine**(id, name, key_hash, approved, is_host, scope_mode[all|listed],
+  disabled, revoked_at?, last_seen?, supervisor_version?, journal_id?,
+  capabilities_json, harnesses_json) — the host machine is
   created approved at bootstrap; `journal_id` records the active supervisor
   journal identity. Only the active instance's capability reports are stored
   here and matched when admitting a turn. Only one machine
   is the host; remote machines start pending and require owner approval.
+  Migration 147 adds `scope_mode TEXT NOT NULL DEFAULT 'all'` and
+  `disabled INTEGER NOT NULL DEFAULT 0`. `all` admits every project;
+  `listed` admits only rows in **machine_project_scope**(machine_id,
+  project_id), including none when it has no rows. Both keys reference their
+  parent with `ON DELETE CASCADE`; deleting a project removes its row without
+  changing the machine's `scope_mode`. Only the host can be disabled, and a
+  disabled machine runs no agents. `GET /api/machines` includes `scope_mode`,
+  `allowed_project_ids`, and `disabled`. The owner or a global admin updates
+  them with `PUT /api/machines/{id}/scope`, sending those three fields and
+  receiving the updated machine. An excluded or disabled machine returns
+  409 `machine_scope`, naming it and the project. Narrowing or disabling
+  while an affected agent has `desired!='stopped' OR observed!='stopped'`
+  returns 409 `machine_scope_active`, listing each agent slug and project and
+  saying to stop or move them first. Invalid project IDs, scope mode, or
+  disabling a remote machine return 400 `invalid_request`.
 - **supervisor_instance**(machine_id, journal_id, build, environment,
   state[active|retiring|gone], first_seen_at, last_seen_at, gone_at?) — PK
   (machine_id, journal_id) (migration 140). A machine can run several

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 type User struct {
@@ -279,6 +281,9 @@ type Machine struct {
 	IsHost            bool
 	LastSeen          sql.NullString
 	SupervisorVersion sql.NullString
+	ScopeMode         string
+	AllowedProjects   []string
+	Disabled          bool
 }
 
 func (tx *Tx) CreateMachine(machine Machine) (Machine, error) {
@@ -296,6 +301,7 @@ func (tx *Tx) CreateMachine(machine Machine) (Machine, error) {
 		PayloadJSON: payloadJSON(map[string]string{"machine_id": machine.ID})}); err != nil {
 		return Machine{}, err
 	}
+	machine.ScopeMode = "all"
 	return machine, nil
 }
 
@@ -304,8 +310,13 @@ func (s *Store) MachineByID(ctx context.Context, id string) (Machine, error) {
 		return Machine{}, err
 	}
 	var machine Machine
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version FROM machine WHERE id=?`, id).
-		Scan(&machine.ID, &machine.Name, &machine.KeyHash, &machine.Approved, &machine.RevokedAt, &machine.IsHost, &machine.LastSeen, &machine.SupervisorVersion)
+	var scope string
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version,scope_mode,
+		(SELECT json_group_array(project_id) FROM machine_project_scope WHERE machine_id=machine.id),disabled FROM machine WHERE id=?`, id).
+		Scan(&machine.ID, &machine.Name, &machine.KeyHash, &machine.Approved, &machine.RevokedAt, &machine.IsHost, &machine.LastSeen, &machine.SupervisorVersion, &machine.ScopeMode, &scope, &machine.Disabled)
+	if err == nil {
+		err = json.Unmarshal([]byte(scope), &machine.AllowedProjects)
+	}
 	return machine, err
 }
 
@@ -314,8 +325,13 @@ func (s *Store) HostMachine(ctx context.Context) (Machine, error) {
 		return Machine{}, err
 	}
 	var m Machine
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version FROM machine WHERE is_host=1`).
-		Scan(&m.ID, &m.Name, &m.KeyHash, &m.Approved, &m.RevokedAt, &m.IsHost, &m.LastSeen, &m.SupervisorVersion)
+	var scope string
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version,scope_mode,
+		(SELECT json_group_array(project_id) FROM machine_project_scope WHERE machine_id=machine.id),disabled FROM machine WHERE is_host=1`).
+		Scan(&m.ID, &m.Name, &m.KeyHash, &m.Approved, &m.RevokedAt, &m.IsHost, &m.LastSeen, &m.SupervisorVersion, &m.ScopeMode, &scope, &m.Disabled)
+	if err == nil {
+		err = json.Unmarshal([]byte(scope), &m.AllowedProjects)
+	}
 	return m, err
 }
 
@@ -323,7 +339,8 @@ func (s *Store) Machines(ctx context.Context) ([]Machine, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version FROM machine ORDER BY is_host DESC,name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,key_hash,approved,revoked_at,is_host,last_seen,supervisor_version,scope_mode,
+		(SELECT json_group_array(project_id) FROM machine_project_scope WHERE machine_id=machine.id),disabled FROM machine ORDER BY is_host DESC,name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +348,11 @@ func (s *Store) Machines(ctx context.Context) ([]Machine, error) {
 	out := []Machine{}
 	for rows.Next() {
 		var m Machine
-		if err := rows.Scan(&m.ID, &m.Name, &m.KeyHash, &m.Approved, &m.RevokedAt, &m.IsHost, &m.LastSeen, &m.SupervisorVersion); err != nil {
+		var scope string
+		if err := rows.Scan(&m.ID, &m.Name, &m.KeyHash, &m.Approved, &m.RevokedAt, &m.IsHost, &m.LastSeen, &m.SupervisorVersion, &m.ScopeMode, &scope, &m.Disabled); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(scope), &m.AllowedProjects); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

@@ -190,8 +190,13 @@ first start. The local supervisor opens `supervisor/journal.sqlite` and
 connects through the same `/api/machine` WebSocket used by remote
 supervisors. The server starts it once it is listening (the web UI does not
 wait for it), and in first-run setup right after the owner is created. Set
-`AIMEBU_EMBEDDED_SUPERVISOR=0` to run no local supervisor, for remote-only
-setups or tests (the variable keeps its old name). On shutdown, the server
+the host machine to **Disabled** in Settings → Machines to run no local
+supervisor. The server stops a running local supervisor when that setting is
+saved and starts one when it is enabled again; it also observes the stored
+setting on startup. Disabling is refused while any host agent is still
+desired active or observed live. `AIMEBU_EMBEDDED_SUPERVISOR=0` still overrides
+the setting for remote-only setups or tests; `=1` forces a local supervisor.
+On shutdown, the server
 stops dispatch, closes its HTTP listener and its store; the local supervisor
 and its turns keep running and reconnect to the next server.
 One supervisor owns a journal at a time. A sibling `journal.sqlite.lock`
@@ -281,6 +286,12 @@ Each project needs a folder mapping for the remote
 machine before it can receive a spawn; that folder must exist on that host
 and use its canonical path rather than a symlink alias.
 The host machine uses the project's ordinary folder automatically.
+The owner or an admin can limit any machine to selected projects in Settings →
+Machines. **All projects** is the default. An empty selected-project list admits
+no project. A machine outside the project's scope cannot receive a spawn,
+switch, default-pool choice, folder mapping, worktree or recovery start.
+Narrowing a machine's list requires stopping or moving its active agents of
+projects that would be excluded first.
 The supervisor receives named launcher definitions from the server and reports
 whether each executable exists, its version when available, and its current
 availability. A new machine has no harnesses (nothing is seeded): the owner adds

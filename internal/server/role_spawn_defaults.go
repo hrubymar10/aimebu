@@ -119,8 +119,14 @@ func (s *Server) nextRoleSpawnDefault(ctx context.Context, projectID, roleKey, r
 		if requestedMachineID != "" && launcher.MachineID != requestedMachineID {
 			continue
 		}
+		if err := s.Store.CheckMachineProject(ctx, projectID, launcher.MachineID); err != nil {
+			if errors.Is(err, store.ErrMachineScope) {
+				continue
+			}
+			return roleSpawnSelection{}, false, err
+		}
 		variant := launcherAlias(launcher.Name)
-		if _, _, err := s.selectedMachine(ctx, launcher.MachineID, launcher.Tool, variant, choice.LauncherID); err != nil {
+		if _, _, err := s.selectedMachineForProject(ctx, projectID, launcher.MachineID, launcher.Tool, variant, choice.LauncherID); err != nil {
 			if errors.Is(err, ErrMachineUnavailable) || errors.Is(err, errLauncherUnavailable) ||
 				errors.Is(err, errDockerBindUnavailable) || errors.Is(err, sql.ErrNoRows) {
 				continue

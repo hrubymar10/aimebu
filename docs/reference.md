@@ -549,7 +549,12 @@ Its files use the v1 switcher format under the selected config root. The
 default `~/.aimebu` root uses existing profiles in place; an explicit
 `AIMEBU_CONFIG_DIR` selects another root when needed.
 Set `AIMEBU_USAGES=0` to disable credential reads and usage requests. The web UI is served as one entry script (`/bundle/app.js`) the server bundles when it starts (esbuild as a Go library, no node), with code splitting: Settings' dialog and pages, the v1 import wizard, Memory (knowledge), the project handbook, Health, Onboarding, the first-run setup, the team setup page, the emoji picker and the agent log popup are chunks (`/bundle/<name>-<hash>.js`, served packed and cached for good under their content-hashed names) the page fetches when it first needs them (`web/js/lazy.js` and `lazy-panels.js` queue the calls the app makes meanwhile and replay them; the likely ones, Settings among them, are also fetched when the browser is idle after sign-in), and code the entry shares with them is a chunk the page hints (`modulepreload`) so it starts with the entry. The sign-in page stays in the entry, so a signed-out page always draws. A chunk that cannot be fetched (the new build's server has none of the old build's chunks) makes the page ask `/api/buildinfo`: another build reloads the page when nothing typed would be lost, or keeps a "A new version is ready, reload to continue" bar; the same build shows a short error and is retried on the next use. What was queued for a chunk is dropped when the session ends. The entry stays under 0.595 MB, the whole bundle under 1.141 MB and 370 KB gzipped (`internal/server/web_bundle_test.go` holds the ceilings); `AIMEBU_WEB_BUNDLE=off` serves its ~240 separate modules instead, for debugging in a browser. The server starts or adopts its local supervisor, a process of its own,
-automatically; set `AIMEBU_EMBEDDED_SUPERVISOR=0` for a remote-only server.
+automatically unless the host machine is Disabled in Settings → Machines.
+`AIMEBU_EMBEDDED_SUPERVISOR=0` overrides the setting for a remote-only server;
+`=1` forces the local supervisor. A machine can be limited to selected
+projects there; an empty selected list admits none, while All projects is the
+default. Stop or move active agents before excluding their project or disabling
+the host.
 `AIMEBU_SUPERVISOR` no longer selects anything: a server that has it set logs
 that it is ignored.
 Set `AIMEBU_STUCK_MINUTES` to a whole number from 1 to 1440 to change the

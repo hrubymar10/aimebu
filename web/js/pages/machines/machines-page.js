@@ -16,6 +16,15 @@ function MachineCard({ store, machine }) {
       ${view.stop && html`<button type="button" class="btn-icon btn-danger machine-stop-all" title="Stop all agents on this machine" onClick=${() => store.stopAgents(machine)}><span class="icon-mask icon-mask-stop" aria-hidden="true"></span><span>Stop all agents</span></button>`}
       ${view.restart && html`<button type="button" class="btn btn-danger" onClick=${() => store.restartSupervisor(machine)}>Restart now</button>`}
     </div>
+    <p class="settings-desc">${machine.scope_mode === 'listed' ? `Allowed projects: ${machine.allowed_project_ids?.length || 0}` : 'Allowed projects: All'}</p>
+    ${!machine.revoked_at && html`<button type="button" class="btn machine-scope-edit" onClick=${() => store.openScope(machine)}>Projects & availability</button>`}
+    ${store.scopeMachine.value === machine.id && html`<div class="settings-group machine-scope-editor" role="group" aria-label=${`Projects allowed on ${machine.name}`}>
+      <label><input type="checkbox" class="machine-scope-all" checked=${store.scopeAll.value} onChange=${event => store.scopeAll.value = event.currentTarget.checked} />All projects</label>
+      <div hidden=${store.scopeAll.value}>${store.scopeProjects.value.map(project => html`<label key=${project.id}><input type="checkbox" class="machine-scope-project" value=${project.id} checked=${store.scopeSelected.value.includes(project.id)} onChange=${event => store.toggleProject(project.id, event.currentTarget.checked)} />${project.name}</label>`)}</div>
+      ${machine.is_host && html`<label><input type="checkbox" class="machine-scope-disabled" checked=${store.scopeDisabled.value} onChange=${event => store.scopeDisabled.value = event.currentTarget.checked} />Disabled</label>`}
+      <p class="settings-desc">Disabled stops the local supervisor and prevents agents from running here. Stop or move active agents before removing their project or disabling this machine.</p>
+      <button type="button" class="btn btn-primary machine-scope-save" disabled=${store.scopeBusy.value} onClick=${() => store.saveScope(machine)}>Save machine</button>
+    </div>`}
     ${instances.length > 0 && html`<ul class="machine-instances" aria-label="Supervisor instances">${instances.map(instance => {
       const row = instanceView(instance);
       return html`<li class="machine-instance" data-journal-id=${instance.journal_id}><span class="machine-instance-title">${row.title}</span><small data-time-tip=${absoluteTime(instance.connected || instance.state === 'gone' ? '' : instance.last_seen_at) || null}>${row.detail}</small>

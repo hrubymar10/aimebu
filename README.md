@@ -215,7 +215,7 @@ people reach for most:
 | `AIMEBU_PUBLIC_URL` | unset | The origin advertised behind a reverse proxy. |
 | `AIMEBU_ALLOWED_HOSTS` | unset | Extra host names that sign-in and setup answer to (needed for a LAN name). |
 | `AIMEBU_OWNER_LOGIN` / `AIMEBU_OWNER_PASSWORD` | unset | Create the owner on first start, for headless installs. Otherwise the server prints a one-time setup link. |
-| `AIMEBU_EMBEDDED_SUPERVISOR` | on | Set to `0` for a server that only coordinates remote machines. The local supervisor is a process of its own that keeps turns running while the server restarts; the old `AIMEBU_SUPERVISOR` switch is ignored. |
+| `AIMEBU_EMBEDDED_SUPERVISOR` | stored host setting | Set to `0` to override the host machine's Disabled setting and run without its local supervisor, or `1` to force it on. The local supervisor is a process of its own that keeps turns running while the server restarts; the old `AIMEBU_SUPERVISOR` switch is ignored. |
 | `AIMEBU_SENTRY_DSN` | maintainers' | `off` disables error reporting; see [telemetry](docs/telemetry.md) for what is and is never sent. |
 | `AIMEBU_USAGES` | on | Set to `0` to stop reading harness credentials and polling usage. |
 | `AIMEBU_DEBUG_PPROF` | off | Set to `1` to serve Go's pprof handlers under `/api/debug/pprof/` (owner or admin session; see [the API guide](docs/api.md)). |

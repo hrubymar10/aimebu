@@ -65,6 +65,9 @@ func WithinFolder(root, path string) bool {
 }
 
 func (tx *Tx) boundaryAllowed(projectID, agentID, machineID, path string) (bool, error) {
+	if err := tx.checkMachineProject(projectID, machineID); err != nil {
+		return false, err
+	}
 	var root string
 	var host bool
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE COALESCE(f.folder,'') END,m.is_host

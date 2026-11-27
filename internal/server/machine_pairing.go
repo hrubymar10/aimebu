@@ -17,17 +17,20 @@ import (
 )
 
 type machineRow struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	IsHost            bool   `json:"is_host"`
-	Approved          bool   `json:"approved"`
-	RevokedAt         string `json:"revoked_at,omitempty"`
-	LastSeen          string `json:"last_seen,omitempty"`
-	SupervisorVersion string `json:"supervisor_version,omitempty"`
-	Connected         bool   `json:"connected"`
-	RestartPending    bool   `json:"restart_pending,omitempty"`
-	UpgradeRequired   bool   `json:"upgrade_required,omitempty"`
-	ProjectAllowed    bool   `json:"project_allowed,omitempty"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	IsHost            bool     `json:"is_host"`
+	ScopeMode         string   `json:"scope_mode"`
+	AllowedProjects   []string `json:"allowed_project_ids"`
+	Disabled          bool     `json:"disabled"`
+	Approved          bool     `json:"approved"`
+	RevokedAt         string   `json:"revoked_at,omitempty"`
+	LastSeen          string   `json:"last_seen,omitempty"`
+	SupervisorVersion string   `json:"supervisor_version,omitempty"`
+	Connected         bool     `json:"connected"`
+	RestartPending    bool     `json:"restart_pending,omitempty"`
+	UpgradeRequired   bool     `json:"upgrade_required,omitempty"`
+	ProjectAllowed    bool     `json:"project_allowed,omitempty"`
 	// ProjectWorktree says whether a task room can have a worktree in the project folder: the check the server makes when a worktree is
 	// requested, with the reason when it cannot. Only the host machine can be asked from here, and only when a project is named; absent
 	// means not known.
@@ -68,6 +71,9 @@ var errMachineNotAdmitted = errors.New("this machine is not admitted for the pro
 // the owner admitted it for the project, and for the project's owner and the admins always (admitting it is their business, so their own
 // request does not wait for an approval nobody else could give). What reads or writes a project's folder on a machine does so only when this holds.
 func (s *Server) machineAdmitted(ctx context.Context, projectID string, machine store.Machine) (bool, error) {
+	if err := s.Store.CheckMachineProject(ctx, projectID, machine.ID); err != nil {
+		return false, err
+	}
 	if machine.IsHost {
 		return true, nil
 	}
@@ -93,6 +99,8 @@ func (s *Server) machineAdmitted(ctx context.Context, projectID string, machine 
 func (s *Server) machineAdmit(w http.ResponseWriter, r *http.Request) {
 	err := s.Store.AdmitProjectMachine(r.Context(), r.PathValue("project"), r.PathValue("machine"), userID(r))
 	switch {
+	case errors.Is(err, store.ErrMachineScope):
+		apiError(w, 409, "machine_scope", err.Error())
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "project owner required")
 	case errors.Is(err, store.ErrInvalidTransition):
@@ -135,7 +143,11 @@ func (s *Server) machineRow(m store.Machine) machineRow {
 	if m.RevokedAt.Valid {
 		connected = false
 	}
-	row := machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
+	allowed := m.AllowedProjects
+	if allowed == nil {
+		allowed = []string{}
+	}
+	row := machineRow{ID: m.ID, Name: m.Name, IsHost: m.IsHost, ScopeMode: m.ScopeMode, AllowedProjects: allowed, Disabled: m.Disabled, Approved: m.Approved, RevokedAt: m.RevokedAt.String,
 		LastSeen: m.LastSeen.String, SupervisorVersion: m.SupervisorVersion.String, Connected: connected}
 	if m.ID == s.localSupervisorID() {
 		row.RestartPending = s.localSupervisorPending.Load()
@@ -193,6 +205,14 @@ func (s *Server) machineList(w http.ResponseWriter, r *http.Request) {
 		if projectID != "" && (!m.Approved || m.RevokedAt.Valid) {
 			continue
 		}
+		if projectID != "" {
+			if err := s.Store.CheckMachineProject(r.Context(), projectID, m.ID); errors.Is(err, store.ErrMachineScope) {
+				continue
+			} else if err != nil {
+				fail(w, err)
+				return
+			}
+		}
 		row := s.machineRow(m)
 		if projectID != "" {
 			row.ProjectAllowed = m.IsHost
@@ -212,6 +232,58 @@ func (s *Server) machineList(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, row)
 	}
 	writeJSON(w, 200, map[string]any{"machines": rows})
+}
+
+func (s *Server) machineScope(w http.ResponseWriter, r *http.Request) {
+	if !s.adminMachine(w, r) {
+		return
+	}
+	var req struct {
+		ScopeMode       string   `json:"scope_mode"`
+		AllowedProjects []string `json:"allowed_project_ids"`
+		Disabled        bool     `json:"disabled"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	id := r.PathValue("id")
+	before, err := s.Store.MachineByID(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		apiError(w, 404, "not_found", "machine not found")
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if err := s.Store.SetMachineScope(r.Context(), id, req.ScopeMode, req.AllowedProjects, req.Disabled); err != nil {
+		switch {
+		case errors.Is(err, store.ErrMachineScopeActive):
+			apiError(w, 409, "machine_scope_active", err.Error())
+		case errors.Is(err, store.ErrInvalidTransition):
+			apiError(w, 400, "invalid_request", "invalid project list or disabled on a remote machine")
+		default:
+			fail(w, err)
+		}
+		return
+	}
+	if before.IsHost && before.Disabled != req.Disabled {
+		if req.Disabled && s.LocalSupervisorDisable != nil {
+			s.LocalSupervisorDisable()
+		}
+		if !req.Disabled && s.LocalSupervisorEnable != nil {
+			if err := s.LocalSupervisorEnable(); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+	}
+	after, err := s.Store.MachineByID(r.Context(), id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, s.machineRow(after))
 }
 
 func (s *Server) machinePairing(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +500,10 @@ func (s *Server) machineFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.Store.SetProjectMachineFolder(r.Context(), r.PathValue("project"), r.PathValue("machine"), userID(r), req.Folder)
+	if errors.Is(err, store.ErrMachineScope) {
+		apiError(w, 409, "machine_scope", err.Error())
+		return
+	}
 	if errors.Is(err, store.ErrForbidden) {
 		apiError(w, 403, "forbidden", "project owner or operator required")
 		return

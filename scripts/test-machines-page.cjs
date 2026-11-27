@@ -276,6 +276,23 @@ async function main() {
       assert.deepEqual(await refused.evaluate(() => [document.querySelector('#machine-pair-form').hidden, document.querySelector('#machine-pair-form button[type=submit]').disabled]), [false, false]);
       await refused.close();
     }
+    // The owner can list projects and disable the host; an active-agent refusal names the blocker.
+    {
+      const scoped = { ...host, scope_mode: 'all', allowed_project_ids: [], disabled: false };
+      const page = await mount({ auto: { [MACHINES]: { machines: [scoped] }, 'GET /api/projects': [{ id: 'p1', name: 'Alpha' }, { id: 'p2', name: 'Beta' }] } });
+      await cards(page);
+      await page.$eval('.machine-scope-edit', el => el.click());
+      await page.waitForSelector('.machine-scope-editor');
+      await page.$eval('.machine-scope-all', el => el.click());
+      await page.$eval('.machine-scope-project[value=p1]', el => el.click());
+      await page.$eval('.machine-scope-disabled', el => el.click());
+      await page.$eval('.machine-scope-save', el => el.click());
+      const pending = await waitRequest(page, 'PUT', '/api/machines/mch_host/scope');
+      assert.deepEqual(await page.evaluate(index => window.__requests[index].body, pending), { scope_mode: 'listed', allowed_project_ids: ['p1'], disabled: true });
+      await answer(page, pending, 409, { code: 'machine_scope_active', message: 'stop or move these active agents first: iris (Beta)' });
+      await page.waitForFunction(() => document.querySelector('#machines-error').textContent.includes('iris (Beta)'));
+      await page.close();
+    }
     // Two reads answered out of order: only the newer one draws.
     {
       const page = await mount({ auto: {}, open: false });

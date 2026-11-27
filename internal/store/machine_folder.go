@@ -37,6 +37,9 @@ func (s *Store) ProjectMachineFolder(ctx context.Context, projectID, machineID s
 	if err := s.checkTxReentry(ctx); err != nil {
 		return "", err
 	}
+	if err := s.CheckMachineProject(ctx, projectID, machineID); err != nil {
+		return "", err
+	}
 	var folder string
 	err := s.db.QueryRowContext(ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE COALESCE(f.folder,'') END
 		FROM machine m CROSS JOIN project p LEFT JOIN project_machine_folder f ON f.machine_id=m.id AND f.project_id=p.id
@@ -118,6 +121,9 @@ func (s *Store) FirstMachineFolder(ctx context.Context, machineID string) (strin
 func (s *Store) SetProjectMachineFolder(ctx context.Context, projectID, machineID, userID, folder string) (MachineFolder, error) {
 	var result MachineFolder
 	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.checkMachineProject(projectID, machineID); err != nil {
+			return err
+		}
 		var role string
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" && role != "operator" {
@@ -225,6 +231,9 @@ func (s *Store) UserMayUseMachine(ctx context.Context, userID, machineID string)
 // and does nothing for the host, which every project has.
 func (s *Store) AdmitProjectMachine(ctx context.Context, projectID, machineID, userID string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
+		if err := tx.checkMachineProject(projectID, machineID); err != nil {
+			return err
+		}
 		var role string
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
 		owner := err == nil && role == "owner"

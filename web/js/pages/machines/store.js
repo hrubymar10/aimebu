@@ -20,6 +20,12 @@ export class MachinesStore {
     this.pairError = signal('');
     this.pairBusy = signal(false);
     this.copied = signal(false);
+    this.scopeMachine = signal('');
+    this.scopeProjects = signal([]);
+    this.scopeAll = signal(true);
+    this.scopeSelected = signal([]);
+    this.scopeDisabled = signal(false);
+    this.scopeBusy = signal(false);
     this.alive = true;
     this.generation = 0;
     this.copiedTimer = 0;
@@ -38,6 +44,35 @@ export class MachinesStore {
       if (!this.alive || generation !== this.generation) return;
       batch(() => { this.error.value = failure.status === 403 ? 'Machines are for the owner and the admins.' : failure.message; this.addHidden.value = failure.status === 403; });
     }
+  }
+
+  async openScope(machine) {
+    if (this.scopeMachine.value === machine.id) { this.scopeMachine.value = ''; return; }
+    this.scopeMachine.value = machine.id;
+    this.scopeAll.value = machine.scope_mode !== 'listed';
+    this.scopeSelected.value = machine.allowed_project_ids || [];
+    this.scopeDisabled.value = !!machine.disabled;
+    this.error.value = '';
+    try {
+      const projects = await request('/api/projects');
+      if (this.alive && this.scopeMachine.value === machine.id) this.scopeProjects.value = projects.filter(project => !project.system);
+    } catch (failure) { if (this.alive) this.error.value = failure.message; }
+  }
+
+  toggleProject(id, checked) {
+    const selected = new Set(this.scopeSelected.value);
+    if (checked) selected.add(id); else selected.delete(id);
+    this.scopeSelected.value = [...selected];
+  }
+
+  async saveScope(machine) {
+    this.scopeBusy.value = true;
+    this.error.value = '';
+    try {
+      await request(`/api/machines/${encodeURIComponent(machine.id)}/scope`, { method: 'PUT', body: { scope_mode: this.scopeAll.value ? 'all' : 'listed', allowed_project_ids: this.scopeAll.value ? [] : this.scopeSelected.value, disabled: machine.is_host && this.scopeDisabled.value } });
+      if (this.alive) { this.scopeMachine.value = ''; await this.load(); this.note.value = 'Machine settings saved.'; }
+    } catch (failure) { if (this.alive) this.error.value = failure.message; }
+    finally { if (this.alive) this.scopeBusy.value = false; }
   }
 
   // A remote machine's supervisor instances sit next to its card; a machine that cannot answer simply shows none. A revoked machine keeps

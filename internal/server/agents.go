@@ -374,7 +374,29 @@ func (s *Server) selectedMachine(ctx context.Context, id, tool, variant string, 
 	return nil, m, ErrMachineUnavailable
 }
 
+func (s *Server) selectedMachineForProject(ctx context.Context, projectID, id, tool, variant string, launcherIDs ...string) (*machineConn, store.Machine, error) {
+	if id == "" {
+		host, err := s.Store.HostMachine(ctx)
+		if err != nil {
+			return nil, store.Machine{}, err
+		}
+		id = host.ID
+	}
+	m, err := s.Store.MachineByID(ctx, id)
+	if err != nil {
+		return nil, m, err
+	}
+	if err := s.Store.CheckMachineProject(ctx, projectID, id); err != nil {
+		return nil, m, err
+	}
+	return s.selectedMachine(ctx, id, tool, variant, launcherIDs...)
+}
+
 func machineSelectionError(w http.ResponseWriter, m store.Machine, err error) {
+	if errors.Is(err, store.ErrMachineScope) {
+		apiError(w, 409, "machine_scope", err.Error())
+		return
+	}
 	if errors.Is(err, errLauncherUnavailable) {
 		apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
 		return
@@ -982,7 +1004,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 	}
-	machine, machineInfo, err := s.selectedMachine(r.Context(), req.MachineID, req.Tool, req.Variant, req.LauncherID)
+	machine, machineInfo, err := s.selectedMachineForProject(r.Context(), room.ProjectID, req.MachineID, req.Tool, req.Variant, req.LauncherID)
 	if err != nil {
 		if errors.Is(err, ErrMachineUnavailable) && machineInfo.ID != "" && machineInfo.Approved && !machineInfo.RevokedAt.Valid {
 			apiError(w, 503, "machine_unavailable", "the selected machine is disconnected or does not list this adapter; reconnect it and retry")
@@ -1410,6 +1432,8 @@ func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn)
 
 func spawnError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrMachineScope):
+		apiError(w, 409, "machine_scope", err.Error())
 	case errors.Is(err, store.ErrReviewerAgentsDisabled):
 		apiError(w, 409, "reviewer_agents_disabled", "Reviewer agents are disabled for this project")
 	case errors.Is(err, store.ErrTeamFlowRule):
@@ -1655,7 +1679,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 	if targetID == "" {
 		targetID = current.MachineID
 	}
-	selectedConn, machineInfo, err := s.selectedMachine(r.Context(), targetID, req.Tool, req.Variant, req.LauncherID)
+	selectedConn, machineInfo, err := s.selectedMachineForProject(r.Context(), current.ProjectID, targetID, req.Tool, req.Variant, req.LauncherID)
 	if err != nil {
 		machineSelectionError(w, machineInfo, err)
 		return

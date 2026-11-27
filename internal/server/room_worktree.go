@@ -88,6 +88,9 @@ func (s *Server) machineWorktree(ctx context.Context, machine store.Machine, roo
 }
 
 func (s *Server) ensureRoomWorktree(ctx context.Context, room store.Room, machine store.Machine, baseRef string) (store.RoomWorktree, error) {
+	if err := s.Store.CheckMachineProject(ctx, room.ProjectID, machine.ID); err != nil {
+		return store.RoomWorktree{}, err
+	}
 	// A worktree is made in the project's folder on the machine: not before the owner has admitted that machine for the project.
 	if admitted, err := s.machineAdmitted(ctx, room.ProjectID, machine); err != nil {
 		return store.RoomWorktree{}, err
@@ -421,6 +424,10 @@ func worktreeError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, errMachineNotAdmitted) {
 		apiError(w, 403, "machine_not_admitted", err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrMachineScope) {
+		apiError(w, 409, "machine_scope", err.Error())
 		return
 	}
 	if errors.Is(err, store.ErrForbidden) {

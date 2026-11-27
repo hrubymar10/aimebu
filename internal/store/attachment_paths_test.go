@@ -41,7 +41,7 @@ func TestAttachmentPathMigrationMixedRows(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=146`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -108,7 +108,7 @@ func TestAttachmentPathMigrationSymlinkedRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=146`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -158,7 +158,7 @@ func TestAttachmentPathMigrationLeavesExternalAttachmentDirectory(t *testing.T) 
 	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_escape',?,'','text/plain',0,?,'owner','now')`, project.ID, stored); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=146`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -249,7 +249,7 @@ func attachmentRowsUntouchedAfterMigration(t *testing.T, root, path string) {
 	if _, err := s.db.Exec(`INSERT INTO attachment(id,project_id,sha256,mime,size,path,created_by,created_at) VALUES ('att_fs',?,'','text/plain',0,?,'owner','now')`, project.ID, stored); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=146`); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version>=146`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

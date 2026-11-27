@@ -300,6 +300,54 @@ func TestServerCanDisableLocalSupervisor(t *testing.T) {
 	}
 }
 
+func TestStoredDisabledHostSkipsLocalSupervisorOnStart(t *testing.T) {
+	t.Setenv("AIMEBU_USAGES", "0")
+	t.Setenv("AIMEBU_WEB_BUNDLE", "off")
+	root := t.TempDir()
+	useMigratedConfigDir(t, root)
+	t.Setenv("AIMEBU_OWNER_LOGIN", "owner")
+	t.Setenv("AIMEBU_OWNER_PASSWORD", "correct horse battery staple")
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "0")
+	port := holdPort(t)
+	start := func() {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan int, 1)
+		var stdout, stderr bytes.Buffer
+		ready := watchServing(t)
+		go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
+		waitServerListening(t, fmt.Sprintf("http://127.0.0.1:%d/api/me", port), ready, done, &stderr)
+		cancel()
+		if code := receive(t, "the server stopping", done, serverStopLimit); code != 0 {
+			t.Fatalf("serve code=%d stderr=%q", code, stderr.String())
+		}
+	}
+	start()
+	db, err := store.Open(context.Background(), filepath.Join(root, "server", "aimebu.sqlite"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := db.HostMachine(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetMachineScope(context.Background(), host.ID, "all", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AIMEBU_EMBEDDED_SUPERVISOR", "")
+	before := localSupervisorStarts.Load()
+	start()
+	if got := localSupervisorStarts.Load() - before; got != 0 {
+		t.Fatalf("disabled host started %d supervisors", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); !os.IsNotExist(err) {
+		t.Fatalf("disabled host created journal: %v", err)
+	}
+}
+
 func TestLocalSupervisorReconcilesCrashedTurn(t *testing.T) {
 	t.Setenv("AIMEBU_USAGES", "0")
 	t.Setenv("AIMEBU_WEB_BUNDLE", "off")

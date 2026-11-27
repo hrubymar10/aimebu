@@ -209,16 +209,17 @@ type detachedSupervisorManager struct {
 	stopWG sync.WaitGroup
 	// instances is what the manager keeps of each supervisor instance of the machine, one journal each (supervisor_instances.go); the
 	// functions after it are what its tests replace.
-	instancesMu sync.Mutex
-	instances   map[string]*instanceTrack
-	lastSpawn   time.Time
-	connections func() map[string]bool // journal ID of every connected local instance, active or retiring
-	spawn       func(journal string, drain bool) error
-	clock       func() time.Time
-	scan        func() []instanceView
-	states      func() map[string]string          // journal ID to the server's state of the instance
-	recordsOf   func() []store.SupervisorInstance // the server's record of each instance, build included, for identifying a holder without an ID in its lock
-	busy        func(string) (bool, error)        // whether the server sees work owned by the instance
+	instancesMu     sync.Mutex
+	instances       map[string]*instanceTrack
+	disabledStopped map[int]bool
+	lastSpawn       time.Time
+	connections     func() map[string]bool // journal ID of every connected local instance, active or retiring
+	spawn           func(journal string, drain bool) error
+	clock           func() time.Time
+	scan            func() []instanceView
+	states          func() map[string]string          // journal ID to the server's state of the instance
+	recordsOf       func() []store.SupervisorInstance // the server's record of each instance, build included, for identifying a holder without an ID in its lock
+	busy            func(string) (bool, error)        // whether the server sees work owned by the instance
 	// Tests replace these: who holds the journal (supervisorPID), how a process is killed, when a process started, and the handover's
 	// waits, clock and signal (server.SupervisorHandover).
 	holder   func() (int, bool, error)

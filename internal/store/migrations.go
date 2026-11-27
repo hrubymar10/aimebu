@@ -2298,7 +2298,7 @@ WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND d
 -- repair note follows this, because the machine's last probed harness version says nothing about a launcher's harness. NULL is every
 -- turn answered before this, and every answer an older supervisor sent: the note then falls back to the probed version.
 ALTER TABLE turn ADD COLUMN answer_tool INTEGER CHECK (answer_tool IS NULL OR answer_tool IN (0,1));
-`}, {146, ""}} // Attachment paths are rewritten by migrateAttachmentPaths in Go.
+`}, {146, ""}, {147, ""}} // Attachment paths and machine scope are migrated in Go.
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.
@@ -2470,6 +2470,45 @@ func ensureRoleDefaultColumns(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+func ensureMachineScopeSchema(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(machine)`)
+	if err != nil {
+		return err
+	}
+	found := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if !found["scope_mode"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE machine ADD COLUMN scope_mode TEXT NOT NULL DEFAULT 'all' CHECK (scope_mode IN ('all','listed'))`); err != nil {
+			return err
+		}
+	}
+	if !found["disabled"] {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE machine ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0,1))`); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS machine_project_scope (
+		machine_id TEXT NOT NULL REFERENCES machine(id) ON DELETE CASCADE,
+		project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+		PRIMARY KEY (machine_id, project_id)
+	)`)
+	return err
+}
+
 // migrateUpTo applies the pending migrations up to and including version limit (0 means all); tests use it to stop before a migration.
 func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (
@@ -2522,6 +2561,9 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		}
 		if err == nil && m.version == roleDefaultBaseMigrationVersion {
 			err = ensureRoleDefaultColumns(ctx, tx)
+		}
+		if err == nil && m.version == 147 {
+			err = ensureMachineScopeSchema(ctx, tx)
 		}
 		var droppedRoomLimits []string
 		if err == nil && strings.Contains(m.sql, roomLimitsMarker) {

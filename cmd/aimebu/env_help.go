@@ -38,7 +38,7 @@ var environment = []envVar{
 		"The agent's workspace, where agent-tools saves an attachment it cannot",
 		"return inline; the supervisor sets it for native Claude Code and Codex"}},
 	{[]string{"AIMEBU_OWNER_LOGIN", "AIMEBU_OWNER_PASSWORD"}, []string{"Bootstrap the owner account on first start (set both; without them the server prints a one-time setup token)"}},
-	{[]string{"AIMEBU_EMBEDDED_SUPERVISOR"}, []string{"Set to 0 to run the server without its local supervisor (remote-only)"}},
+	{[]string{"AIMEBU_EMBEDDED_SUPERVISOR"}, []string{"Override the host machine setting: 0 runs without the local supervisor, 1 forces it on"}},
 	{[]string{"AIMEBU_SUPERVISOR"}, []string{"Ignored: the local supervisor always runs as its own process (a server that has it set says so in its log)"}},
 	{[]string{"AIMEBU_ALLOW_NATIVE"}, []string{
 		"Set to 1 when migrating a database to enable host-native launchers; has no",

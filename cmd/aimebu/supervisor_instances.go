@@ -142,6 +142,29 @@ func (m *detachedSupervisorManager) startInstance(journal string, drain bool) er
 func (m *detachedSupervisorManager) pass(ctx context.Context) {
 	m.instancesMu.Lock()
 	defer m.instancesMu.Unlock()
+	if m.store != nil && m.machineID != "" {
+		host, err := m.store.MachineByID(ctx, m.machineID)
+		if err != nil {
+			fmt.Fprintln(m.stderr, "supervisor scope:", err)
+			return
+		}
+		if host.IsHost && host.Disabled {
+			if m.disabledStopped == nil {
+				m.disabledStopped = map[int]bool{}
+			}
+			for _, v := range m.heldInstances() {
+				if !m.disabledStopped[v.pid] {
+					if err := m.stopInstanceSignal(v, "host disabled", false); err != nil {
+						fmt.Fprintln(m.stderr, "supervisor disable:", err)
+					} else {
+						m.disabledStopped[v.pid] = true
+					}
+				}
+			}
+			return
+		}
+		m.disabledStopped = nil
+	}
 	now := m.now()
 	views := m.scanInstances()
 	var conns map[string]bool

@@ -127,6 +127,8 @@ type Server struct {
 	LocalSupervisorEnvironment       string
 	LocalSupervisorDiskVersion       func() (string, error)
 	LocalSupervisorRestart           func() error
+	LocalSupervisorEnable            func() error
+	LocalSupervisorDisable           func()
 	LocalSupervisorLegacyDrain       func()
 	LocalSupervisorLegacyDrainCancel func()
 	localSupervisorPending           atomic.Bool
@@ -279,6 +281,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/sounds/{sound}", s.Auth.RequireUser(http.HandlerFunc(s.deleteSound)))
 	mux.HandleFunc("GET /api/session", s.sessionProbe)
 	mux.Handle("GET /api/machines", s.Auth.RequireUser(http.HandlerFunc(s.machineList)))
+	mux.Handle("PUT /api/machines/{id}/scope", s.Auth.RequireUser(http.HandlerFunc(s.machineScope)))
 	mux.Handle("POST /api/machines/{id}/supervisor/restart", s.Auth.RequireUser(http.HandlerFunc(s.restartLocalSupervisorOwner)))
 	mux.Handle("GET /api/machines/directories", s.Auth.RequireUser(http.HandlerFunc(s.directoryList)))
 	mux.Handle("GET /api/machines/{id}/harnesses", s.Auth.RequireUser(http.HandlerFunc(s.machineHarnesses)))
