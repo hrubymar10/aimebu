@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
+	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
 
 func TestWarmOrphanSessionEndProbe(t *testing.T) {
@@ -37,7 +37,7 @@ func TestWarmOrphanSessionEndProbe(t *testing.T) {
 			defer journal.Close()
 			launcher := filepath.Join(root, "launcher")
 			body := fmt.Sprintf("#!/bin/sh\nif [ %q = error ]; then exit 1; fi\nprintf '%%s\\n' %q\n", tc.answer, tc.answer)
-			if err := os.WriteFile(launcher, []byte(body), 0700); err != nil {
+			if err := testenv.WriteExecutable(launcher, []byte(body), 0700); err != nil {
 				t.Fatal(err)
 			}
 			report := true
@@ -60,7 +60,7 @@ func TestWarmOrphanSessionEndProbe(t *testing.T) {
 				t.Fatalf("remaining rows = %d, want keep %t", len(left), tc.keep)
 			}
 			if tc.name == "probe error" {
-				if err := os.WriteFile(launcher, []byte("#!/bin/sh\nprintf 'ended\\n'\n"), 0700); err != nil {
+				if err := testenv.WriteExecutable(launcher, []byte("#!/bin/sh\nprintf 'ended\\n'\n"), 0700); err != nil {
 					t.Fatal(err)
 				}
 				client.SweepWarmOrphans(ctx)
