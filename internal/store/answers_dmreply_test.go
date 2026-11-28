@@ -99,8 +99,8 @@ func TestFinalAnswerCannotReachCrossProjectChatFromTaskTurn(t *testing.T) {
 	if err := f.s.db.QueryRow(`SELECT m.body FROM message m JOIN note n ON n.message_id=m.id WHERE m.room_id=? AND n.agent_id=? AND m.body LIKE 'Your previous reply was held:%' ORDER BY m.no DESC LIMIT 1`, f.task1.ID, f.lead1.ID).Scan(&note); err != nil {
 		t.Fatalf("failure note: %v", err)
 	}
-	if !strings.Contains(note, "dm_agent") || !strings.Contains(note, "cross-project final answer") {
-		t.Fatalf("failure note=%q, want dm_agent hint and original text", note)
+	if !strings.Contains(note, "dm_agent") || strings.Contains(note, "cross-project final answer") {
+		t.Fatalf("failure note=%q, want dm_agent hint without private text", note)
 	}
 }
 
@@ -144,7 +144,7 @@ func TestPartlyHeldReplyAfterLeavingTurnRoomRaisesFailureCard(t *testing.T) {
 }
 
 // A message to another agent that cannot be delivered raises no Inbox item: the sender gets a note, in the room it was woken in, with the
-// reason and the full text.
+// reason without copying private text into room history.
 func TestUndeliverableMessageToAgentNotesTheSenderAndRaisesNoCard(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -168,6 +168,13 @@ func TestUndeliverableMessageToAgentNotesTheSenderAndRaisesNoCard(t *testing.T) 
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := newDMReplyFixture(t)
+			observer, err := d.s.CreateAgent(ctx, Agent{Slug: "observer", ProjectID: d.f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "observer-key", CreatedBy: "usr_test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.s.AddMember(ctx, d.f.room.ID, "agent", observer.ID); err != nil {
+				t.Fatal(err)
+			}
 			target, body := tc(d, t)
 			raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":%q}]}`, target, body)
 			receipt, err := applyCandidate(t, d.s, d.f.turn, d.f.agent.ID, 0, raw)
@@ -178,13 +185,42 @@ func TestUndeliverableMessageToAgentNotesTheSenderAndRaisesNoCard(t *testing.T) 
 				t.Fatalf("an undeliverable agent-to-agent message raised %d delivery_failed items", n)
 			}
 			note := d.noteTo(t, d.f.room.ID)
-			if note == "" || !strings.Contains(note, body) || !strings.Contains(note, "dm_agent") || strings.Contains(note, "Send it to a room of your project") {
-				t.Fatalf("note=%q, want the reason, the full text and the dm_agent hint", note)
+			if note == "" || strings.Contains(note, body) || !strings.Contains(note, "dm_agent") || strings.Contains(note, "Send it to a room of your project") {
+				t.Fatalf("note=%q, want the reason and dm_agent hint without private text", note)
+			}
+			history, err := d.s.AgentRoomHistory(ctx, observer.ID, d.f.project.ID, d.f.room.ID, 0, 50)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, message := range history.Messages {
+				if strings.Contains(message.Body, body) {
+					t.Fatalf("another room member read refused text in history: %q", message.Body)
+				}
 			}
 			if items, err := d.s.InboxForUser(ctx, "usr_answers"); err != nil || len(items) != 0 {
 				t.Fatalf("inbox=%+v err=%v", items, err)
 			}
 		})
+	}
+}
+
+func TestUndeliverableAgentMessageRaisesCardWhenSenderCannotRepair(t *testing.T) {
+	t.Parallel()
+	d := newDMReplyFixture(t)
+	if _, err := d.s.db.Exec(`UPDATE agent SET desired='stopped' WHERE id=?`, d.f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"private contents"}]}`, d.other.ID)
+	receipt, err := applyCandidate(t, d.s, d.f.turn, d.f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "held" || d.cards(t) != 1 {
+		t.Fatalf("unrepairable hold: receipt=%+v cards=%d err=%v", receipt, d.cards(t), err)
+	}
+	if note := d.noteTo(t, d.f.room.ID); strings.Contains(note, "private contents") {
+		t.Fatalf("held note disclosed reply: %q", note)
+	}
+	items, err := d.s.InboxForUser(context.Background(), "usr_answers")
+	if err != nil || len(items) != 1 || !strings.Contains(items[0].CandidatePreview, "private contents") {
+		t.Fatalf("owner delivery-failure card lost refused text: %+v err=%v", items, err)
 	}
 }
 

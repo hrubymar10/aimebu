@@ -51,7 +51,7 @@ func TestMixedReplyDeliversValidMessageAndHoldsOnlyOtherProjectRoom(t *testing.T
 			if delivered != "hello person" {
 				t.Fatalf("valid message not delivered: %+v", messages)
 			}
-			if note == "" || !strings.Contains(note, "`dm_agent`") || !strings.Contains(note, "another project") || !strings.Contains(note, "hello agent over there") || !strings.Contains(note, "must not be sent again") {
+			if note == "" || !strings.Contains(note, "`dm_agent`") || !strings.Contains(note, "another project") || strings.Contains(note, "hello agent over there") || !strings.Contains(note, "must not be sent again") {
 				t.Fatalf("note=%q", note)
 			}
 			if !strings.Contains(row, "message 2 of 2") || !strings.Contains(row, "the other 1 delivered") || !strings.Contains(row, "The author was asked to resend it.") || strings.Contains(row, "Inbox") {

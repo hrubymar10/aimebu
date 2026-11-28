@@ -746,14 +746,14 @@ func (tx *Tx) partialHeldNote(turn answerTurn, receipt AnswerReceipt) (bool, err
 	return err == nil, err
 }
 
-// writeHeldMessages lists refused messages for the author's note: the reason as a sentence, a hint and the full text, so the author can send it
-// again.
+// writeHeldMessages lists refused messages without copying their text into
+// room history, which may be readable by people other than the author.
 func writeHeldMessages(b *strings.Builder, held []HeldMessage, agentOnly bool) {
 	for _, h := range held {
 		fmt.Fprintf(b, "\n- message %d: %s", h.Index+1, h.Error)
 		switch {
 		case agentOnly:
-			b.WriteString(" Send it to that agent with the `dm_agent` tool.")
+			b.WriteString(" Send it to that agent with the `dm_agent` tool. If that tool refuses the target, ask your lead or dispatcher to relay it; keep private text out of this room.")
 		case h.Error == outsideProjectDetail:
 			b.WriteString(" This room is in another project; to reach an agent there use the `dm_agent` tool, and to reach a person use your own project's rooms.")
 		case h.Reason == "room_closed":
@@ -761,18 +761,16 @@ func writeHeldMessages(b *strings.Builder, held []HeldMessage, agentOnly bool) {
 		default:
 			b.WriteString(" Send it to a room of your project that you are a member of.")
 		}
-		body := []rune(h.Body)
-		if len(body) > 4000 {
-			body = append(body[:4000:4000], []rune("…")...)
-		}
-		fmt.Fprintf(b, " Its text was:\n%s", string(body))
+		b.WriteString(" The original reply remains in your session.")
 	}
 }
 
 // routeUndeliverable decides where a held reply goes when its target was refused (room_closed, not_member). A reply whose messages all go to
 // other agents — a private chat with an agent, a mention of an agent, a reply to an agent's message, and no person addressed in any of them —
-// raises no Inbox item: its author gets a note in the room it was woken in, with the reason and the full text, and sends it again (dm_agent
-// reaches any agent). Anything else raises the delivery_failed card for people: a plain message, a mention of a person, a reply to a person,
+// raises no Inbox item: its author gets a note in the room it was woken in,
+// with the reason, and sends it again. Anything else raises the
+// delivery_failed card for people: a plain message, a mention of a person,
+// a reply to a person,
 // an ask, a mixed message that names an agent and a person, an author that no longer exists, a room the note cannot be written in, and a turn
 // that the same kind of note already woke (no loop).
 func (tx *Tx) routeUndeliverable(parent answerTurn, input AnswerInput, receipt AnswerReceipt, dropped []droppedMessage) error {
@@ -784,8 +782,14 @@ func (tx *Tx) routeUndeliverable(parent answerTurn, input AnswerInput, receipt A
 		}
 		if ok {
 			sent, err := tx.undeliverableAgentNote(parent, input, dropped)
-			if err != nil || sent {
+			if err != nil {
 				return err
+			}
+			if sent {
+				wakeable, err := tx.repairWakeable(parent.agentID)
+				if err != nil || wakeable {
+					return err
+				}
 			}
 		}
 	}
@@ -855,7 +859,7 @@ func (tx *Tx) agentOnlyReply(authorID string, messages []answer.Message) (bool, 
 }
 
 // undeliverableAgentNote tells the author, as a system note only it can see in the room its turn was woken in, why messages to other agents
-// were refused, with their full text. It reports false (and writes nothing) when the room is not open or the turn was already woken by a held-reply
+// were refused, without copying private text into room history. It reports false (and writes nothing) when the room is not open or the turn was already woken by a held-reply
 // note, so the caller raises the card instead.
 func (tx *Tx) undeliverableAgentNote(turn answerTurn, input AnswerInput, dropped []droppedMessage) (bool, error) {
 	var lifecycle string

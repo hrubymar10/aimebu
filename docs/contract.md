@@ -1242,8 +1242,12 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   `open_questions`): that raises no Inbox item and no room notice; its author
   gets one system note (`OnlyTargets` the author) in the room its turn was
   woken in, starting "Your previous reply was held: a message to another agent
-  was not delivered", with the reason and the full text of each message, to
-  send again with `dm_agent`. A reply that addresses a person (a message naming
+  was not delivered", with the reason but without the refused text; the
+  original reply remains in the author's session for resending with `dm_agent`.
+  If that tool refuses the target, the author asks its lead or dispatcher to
+  relay without posting private text in the room. If the author cannot take a
+  repair turn, a delivery-failure card is raised immediately. A reply that
+  addresses a person (a message naming
   both an agent and a person included), an author that no longer exists, a turn
   room that is not open, and a turn already woken by a held-reply note keep the
   card. Every empty answer logs the harness exit
@@ -1347,7 +1351,8 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   it." The author gets one system note (`OnlyTargets` the author, once
   per turn, like the invalid-reply note above) starting "Part of your previous
   reply was held: the other messages were delivered and must not be sent
-  again." It lists each held message with its text and a hint: for a room
+  again." It lists each held message without its text and with a hint; the
+  original reply remains in the author's session. For a room
   outside the project, "This room is in another project; to reach an agent
   there use the `dm_agent` tool, and to reach a person use your own project's
   rooms."; for a closed room, to use an open room of the project; otherwise,
