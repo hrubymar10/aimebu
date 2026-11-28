@@ -834,6 +834,15 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
+	// The full gate runs server shards concurrently. Wait for committed state
+	// changes instead of giving the supervisor a four-second wall-clock window.
+	changes := make(chan struct{}, 1)
+	signalChange := func() {
+		select {
+		case changes <- struct{}{}:
+		default:
+		}
+	}
 	closed := make(chan struct{})
 	close(closed)
 	dummy := &machineConn{id: f.machineID, done: closed, sendQueue: make(chan protocol.Frame, 1), bound: map[string]int{}, capabilities: []protocol.CapabilityReport{{Tool: "fake", Version: "test", Environment: adapter.Environment{Variant: "test"}}}}
@@ -897,12 +906,34 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("supervisor did not connect")
+	case err := <-done:
+		t.Fatalf("supervisor stopped before connecting: %v", err)
+	case <-t.Context().Done():
+		t.Fatalf("test stopped before supervisor connected: %v", t.Context().Err())
 	}
-	waitFor(t, func() bool {
+	f.db.SetDispatchWake(signalChange)
+	awaitChange := func(state string, check func() (bool, error)) {
+		t.Helper()
+		for {
+			ok, err := check()
+			if err != nil {
+				t.Fatalf("%s: %v", state, err)
+			}
+			if ok {
+				return
+			}
+			select {
+			case <-changes:
+			case err := <-done:
+				t.Fatalf("supervisor stopped before %s: %v", state, err)
+			case <-t.Context().Done():
+				t.Fatalf("test stopped before %s: %v", state, t.Context().Err())
+			}
+		}
+	}
+	awaitChange("spawn confirmation", func() (bool, error) {
 		pending, err := f.db.PendingSpawnsForMachine(context.Background(), f.machineID)
-		return err == nil && len(pending) == 0
+		return len(pending) == 0, err
 	})
 	status, card, raw := f.spawnRequest(t, "lost-send", "worker")
 	if status != 201 || card.ID == "" {
@@ -918,18 +949,24 @@ func TestSpawnRetryAfterDeliveryFailureResendsUntilConfirmed(t *testing.T) {
 		t.Fatalf("probe message %d", response.StatusCode)
 	}
 	dispatcher := NewDispatcher(f.srv)
-	waitFor(t, func() bool {
-		_, _ = dispatcher.Pass(context.Background())
+	f.db.SetDispatchWake(func() {
+		dispatcher.Wake()
+		signalChange()
+	})
+	awaitChange("echo reply", func() (bool, error) {
+		if _, err := dispatcher.Pass(context.Background()); err != nil {
+			return false, err
+		}
 		messages, err := f.db.ListMessagesAfter(context.Background(), f.room.ID, 0)
 		if err != nil {
-			return false
+			return false, err
 		}
 		for _, message := range messages {
 			if message.AuthorID == card.ID && strings.Contains(message.Body, "journal leakage probe") {
-				return true
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	})
 	cancel()
 	select {

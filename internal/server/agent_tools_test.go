@@ -241,13 +241,43 @@ func TestResumeAgentToolRefusesPersonStartedClosure(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(fmt.Sprint(failure), "room_closing_by_person") || !strings.Contains(fmt.Sprint(failure), "ask them to cancel the closure") {
+	if resp.StatusCode != http.StatusConflict || failure["error"] != "room_closing_by_person" || failure["message"] != "a person is closing this room; ask them to reopen it after it closes" {
 		t.Fatalf("resume status=%d failure=%v", resp.StatusCode, failure)
 	}
 	room, err := f.db.RoomByID(t.Context(), f.room.ID)
 	if err != nil || room.Lifecycle != "closing" {
 		t.Fatalf("person closure changed: %+v err=%v", room, err)
 	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`DELETE FROM event WHERE room_id=? AND kind='room_closing'`, f.room.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checkUnknownActor := func(t *testing.T, key string) {
+		t.Helper()
+		resp := f.toolPost(t, "/api/agent/agents/"+worker.ID+"/resume", leadKey, key, map[string]string{})
+		defer resp.Body.Close()
+		var failure map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusConflict || failure["error"] != "room_closing_actor_unknown" || failure["message"] != "room closure has no recorded actor; reopen the room after it closes" {
+			t.Fatalf("unknown actor status=%d failure=%v", resp.StatusCode, failure)
+		}
+		room, err := f.db.RoomByID(t.Context(), f.room.ID)
+		if err != nil || room.Lifecycle != "closing" {
+			t.Fatalf("unknown actor changed closure: %+v err=%v", room, err)
+		}
+	}
+	t.Run("missing closing event", func(t *testing.T) { checkUnknownActor(t, "missing-close-event") })
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.AppendEvent(store.Event{Kind: "room_closing", ProjectID: f.project.ID, RoomID: f.room.ID, PayloadJSON: "{}"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("missing actor field", func(t *testing.T) { checkUnknownActor(t, "missing-close-actor") })
 }
 
 func TestAgentReactUsesRoomMembershipAndReactionEvent(t *testing.T) {

@@ -978,9 +978,10 @@ and restores coworkers paused by that closure whom it can manage; a fully
 closed room must be reopened first. When the agent's folder needs a boundary
 approval, it returns `status: "pending_approval"` and `approval_id`; the
 `agent_resumed` event is emitted after approval activates the agent. It returns
-409 `room_closing_by_person` if a person started the closure. Coworkers the
-resuming agent cannot manage stay paused, and a system note names them. Reactions
-do not stop agents.
+409 `room_closing_by_person` if a person started the closure, or 409
+`room_closing_actor_unknown` if the closing event has no recorded actor.
+Coworkers the resuming agent cannot manage stay paused, and a system note names
+them. Reactions do not stop agents.
 `GET|POST /api/agent/rooms/{room}/schedules` (`list_schedules`,
 `create_schedule`) and `DELETE /api/agent/rooms/{room}/schedules/{id}`
 (`delete_schedule`, 200 `{deleted}`) require membership of a task or home room

@@ -15,6 +15,7 @@ import (
 
 var ErrResumeClosedRoom = errors.New("resume_room_closed")
 var ErrRoomClosingByPerson = errors.New("room_closing_by_person")
+var ErrRoomClosingActorUnknown = errors.New("room_closing_actor_unknown")
 
 // ResumeAgentAsTool keeps the worker's checkout and native session. The room
 // transition and agent reactivation commit together, so a refused resume
@@ -58,12 +59,16 @@ func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, []A
 	}
 	var restored []AgentCard
 	if lifecycle == "closing" {
-		var closingActorKind string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.actor_kind') FROM event
-			WHERE room_id=? AND kind='room_closing' ORDER BY seq DESC LIMIT 1`, roomID).Scan(&closingActorKind); err != nil {
+		var closingActorKind sql.NullString
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.actor_kind') FROM event
+			WHERE room_id=? AND kind='room_closing' ORDER BY seq DESC LIMIT 1`, roomID).Scan(&closingActorKind)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && (!closingActorKind.Valid || closingActorKind.String != "user" && closingActorKind.String != "agent") {
+			return AgentCard{}, nil, ErrRoomClosingActorUnknown
+		}
+		if err != nil {
 			return AgentCard{}, nil, err
 		}
-		if closingActorKind == "user" {
+		if closingActorKind.String == "user" {
 			return AgentCard{}, nil, ErrRoomClosingByPerson
 		}
 		if _, err := tx.Exec(`UPDATE room SET lifecycle='open',gate=CASE WHEN control_desired='active' THEN 'open' ELSE 'paused' END,
