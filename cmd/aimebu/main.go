@@ -954,7 +954,6 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			return keyErr
 		}
 		service.SetLocalSupervisorID(credential.MachineID)
-		localManager.machineID = credential.MachineID
 		host, err := db.HostMachine(ctx)
 		if err != nil {
 			return err

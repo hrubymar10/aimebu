@@ -34,7 +34,7 @@ export function cardView(machine, owner) {
     approve: !machine.approved && open,
     revoke: !machine.is_host && open,
     stop: machine.approved && open,
-    restart: machine.is_host && machine.restart_pending && !machine.upgrade_required && owner,
+    restart: machine.is_host && !machine.disabled && machine.restart_pending && !machine.upgrade_required && owner,
     locked: !owner,
   };
 }
@@ -44,14 +44,14 @@ const shortJournal = id => (id.length > 12 ? `${id.slice(0, 12)}…` : id);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // One supervisor instance of a remote machine, as its row shows it. Only an instance that is neither connected nor gone can be written off.
-export function instanceView(instance, now = Date.now()) {
+export function instanceView(instance, machine, now = Date.now()) {
   const gone = instance.state === 'gone';
   const status = gone ? 'Gone' : instance.connected ? (instance.state === 'retiring' ? 'Connected, retiring' : 'Connected') : `Not connected, last seen ${ago(instance.last_seen_at, now)}`;
   const owns = gone ? '' : instance.turns + instance.commands > 0 ? `owns ${plural(instance.turns, 'turn')} and ${plural(instance.commands, 'command')}` : 'owns no work';
   return {
     title: `Instance ${shortJournal(instance.journal_id)}`,
     detail: [instance.build && `Build ${instance.build}`, status, owns].filter(Boolean).join(' · '),
-    canWriteOff: !gone && !instance.connected,
+    canWriteOff: !machine.is_host && !gone && !instance.connected,
   };
 }
 

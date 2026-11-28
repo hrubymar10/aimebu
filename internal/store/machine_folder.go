@@ -118,15 +118,15 @@ func (s *Store) FirstMachineFolder(ctx context.Context, machineID string) (strin
 func (s *Store) SetProjectMachineFolder(ctx context.Context, projectID, machineID, userID, folder string) (MachineFolder, error) {
 	var result MachineFolder
 	err := s.Tx(ctx, func(tx *Tx) error {
-		if err := tx.checkMachineProject(projectID, machineID); err != nil {
-			return err
-		}
 		var role string
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && role != "owner" && role != "operator" {
 			return ErrForbidden
 		}
 		if err != nil {
+			return err
+		}
+		if err := tx.checkMachineProject(projectID, machineID); err != nil {
 			return err
 		}
 		var host bool
@@ -228,9 +228,6 @@ func (s *Store) UserMayUseMachine(ctx context.Context, userID, machineID string)
 // and does nothing for the host, which every project has.
 func (s *Store) AdmitProjectMachine(ctx context.Context, projectID, machineID, userID string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		if err := tx.checkMachineProject(projectID, machineID); err != nil {
-			return err
-		}
 		var role string
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT role FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&role)
 		owner := err == nil && role == "owner"
@@ -248,6 +245,9 @@ func (s *Store) AdmitProjectMachine(ctx context.Context, projectID, machineID, u
 			if !admin {
 				return ErrForbidden
 			}
+		}
+		if err := tx.checkMachineProject(projectID, machineID); err != nil {
+			return err
 		}
 		var host, approved bool
 		var folder string

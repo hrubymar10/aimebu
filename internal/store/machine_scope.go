@@ -57,7 +57,7 @@ func (tx *Tx) checkMachineProject(projectID, machineID string) error {
 // SetMachineScope refuses to drop a project while one of its agents is still
 // desired active or observed live. Stopping agents remain protected until both
 // states are stopped, as elsewhere in the store.
-func (s *Store) SetMachineScope(ctx context.Context, machineID, mode string, allowed []string, disabled bool) error {
+func (s *Store) SetMachineScope(ctx context.Context, machineID, mode string, allowed []string, disabled bool, actorID ...string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		if mode != "all" && mode != "listed" || mode == "all" && len(allowed) != 0 {
 			return ErrInvalidTransition
@@ -123,7 +123,11 @@ func (s *Store) SetMachineScope(ctx context.Context, machineID, mode string, all
 				return err
 			}
 		}
-		_, err = tx.AppendEvent(Event{Kind: "machine_scope_updated", PayloadJSON: payloadJSON(map[string]string{"machine_id": machineID})})
+		payload := map[string]string{"machine_id": machineID}
+		if len(actorID) > 0 {
+			payload["actor_id"] = actorID[0]
+		}
+		_, err = tx.AppendEvent(Event{Kind: "machine_scope_updated", PayloadJSON: payloadJSON(payload)})
 		return err
 	})
 }

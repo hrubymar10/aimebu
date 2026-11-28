@@ -182,6 +182,13 @@ func TestProjectMemberMachineListExcludesPendingAndRevoked(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	privateProject, err := f.db.CreateProject(t.Context(), store.Project{Name: "private scope", Folder: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.SetMachineScope(t.Context(), f.machineID, "listed", []string{f.project.ID, privateProject.ID}, false); err != nil {
+		t.Fatal(err)
+	}
 	login := f.request("POST", "/api/login", map[string]string{"login": "operator", "password": "operator password"}, false)
 	if login.StatusCode != 200 {
 		t.Fatalf("operator login: %d", login.StatusCode)
@@ -217,6 +224,9 @@ func TestProjectMemberMachineListExcludesPendingAndRevoked(t *testing.T) {
 	if status != 200 || len(machines) != 2 || !machines[0].IsHost || machines[1].Name != "approved" {
 		t.Fatalf("project machine list status=%d machines=%+v", status, machines)
 	}
+	if len(machines[0].AllowedProjects) != 0 {
+		t.Fatalf("project member received machine scope IDs: %+v", machines[0].AllowedProjects)
+	}
 	ownerPicker := f.request("GET", "/api/machines?project_id="+f.project.ID, nil, false)
 	var ownerChoices struct {
 		Machines []machineRow `json:"machines"`
@@ -227,6 +237,9 @@ func TestProjectMemberMachineListExcludesPendingAndRevoked(t *testing.T) {
 	ownerPicker.Body.Close()
 	if ownerPicker.StatusCode != 200 || len(ownerChoices.Machines) != 2 {
 		t.Fatalf("owner picker status=%d machines=%+v", ownerPicker.StatusCode, ownerChoices.Machines)
+	}
+	if len(ownerChoices.Machines[0].AllowedProjects) != 2 {
+		t.Fatalf("owner picker lost scope IDs: %+v", ownerChoices.Machines[0].AllowedProjects)
 	}
 	if err := f.db.RevokeMachine(context.Background(), approvedID); err != nil {
 		t.Fatal(err)

@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'machines', 'model.js'), 'utf8');
 const context = vm.createContext({ Date });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { cardView, warmLine };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { cardView, instanceView, warmLine };', context);
 const view = (machine, owner = true) => JSON.parse(JSON.stringify(context.api.cardView(machine, owner)));
 
 const host = { name: 'This computer', is_host: true, approved: true, connected: true, supervisor_version: '1.2' };
@@ -18,6 +18,10 @@ assert.deepEqual(view({ name: 'Old', approved: true, revoked_at: '2026-01-01T00:
 assert.equal(view(host, false).locked, true, 'an admin who is not the owner gets the pairing controls off');
 assert.deepEqual([view({ ...host, restart_pending: true }).status, view({ ...host, restart_pending: true }).restart, view({ ...host, restart_pending: true }, false).restart],
   ['Supervisor restart pending', true, false], 'only the owner can interrupt a pending local drain');
+assert.equal(view({ ...host, disabled: true, restart_pending: true }).restart, false, 'a disabled host offers no restart');
+const disconnected = { journal_id: 'journal-test', state: 'retiring', connected: false, turns: 0, commands: 0 };
+assert.equal(context.api.instanceView(disconnected, host).canWriteOff, false, 'a host instance cannot be written off');
+assert.equal(context.api.instanceView(disconnected, { is_host: false }).canWriteOff, true, 'a disconnected remote instance can be written off');
 assert.deepEqual([view({ ...host, upgrade_required: true }).status, view({ ...host, upgrade_required: true }).restart],
   ['Restart server to finish upgrade', undefined], 'a newer supervisor continues work until the server is upgraded');
 assert.match(view({ name: 'Box', approved: true, supervisor_version: '2.0', last_seen: '2026-02-03T04:05:06Z' }).detail, /^Supervisor 2\.0 · Last seen \d+d ago$/, 'last seen is relative, as elsewhere');

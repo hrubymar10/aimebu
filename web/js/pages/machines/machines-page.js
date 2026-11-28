@@ -33,7 +33,7 @@ function MachineCard({ store, machine }) {
       <button type="button" class="btn btn-primary machine-scope-save" disabled=${store.scopeBusy.value} onClick=${() => store.saveScope(machine)}>Save machine</button>
     </div>`}
     ${instances.length > 0 && html`<ul class="machine-instances" aria-label="Supervisor instances">${instances.map(instance => {
-      const row = instanceView(instance);
+      const row = instanceView(instance, machine);
       return html`<li class="machine-instance" data-journal-id=${instance.journal_id}><span class="machine-instance-title">${row.title}</span>${instance.older_build && html`<${BuildBadge} build=${instance.build} server=${instance.server_version} className="machine-instance-older-build" />`}<small data-time-tip=${absoluteTime(instance.connected || instance.state === 'gone' ? '' : instance.last_seen_at) || null}>${row.detail}</small>
         ${row.canWriteOff && html`<${IconButton} name="trash" label="Mark instance as gone" danger className="machine-instance-gone" onClick=${() => store.writeOff(machine, instance)} />`}</li>`;
     })}</ul>`}

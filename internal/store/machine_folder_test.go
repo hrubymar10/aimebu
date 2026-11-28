@@ -2,8 +2,43 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+func TestMachineScopeRefusalDoesNotDiscloseToNonMember(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := testStore(t, Options{})
+	project, _, _ := fixture(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_admin','admin','hash','{}','a'),('usr_stranger','stranger','hash','{}','z')`); err != nil {
+		t.Fatal(err)
+	}
+	var machine Machine
+	err := s.Tx(ctx, func(tx *Tx) (err error) {
+		machine, err = tx.CreateMachine(Machine{Name: "private machine", KeyHash: "private-key", Approved: true})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMachineScope(ctx, machine.ID, "listed", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() error{
+		"folder": func() error {
+			_, err := s.SetProjectMachineFolder(ctx, project.ID, machine.ID, "usr_stranger", "/private")
+			return err
+		},
+		"admit": func() error { return s.AdmitProjectMachine(ctx, project.ID, machine.ID, "usr_stranger") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("got %v, want forbidden before scope details", err)
+			}
+		})
+	}
+}
 
 func TestFirstMachineFolder(t *testing.T) {
 	t.Parallel()

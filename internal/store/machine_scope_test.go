@@ -45,6 +45,29 @@ func TestMachineScopeDefaultsAndActiveAgentGuard(t *testing.T) {
 	}
 }
 
+func TestMachineScopeEventRecordsActor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := testStore(t, Options{})
+	var machine Machine
+	if err := s.Tx(ctx, func(tx *Tx) (err error) {
+		machine, err = tx.CreateMachine(Machine{Name: "host", KeyHash: "host-key", IsHost: true, Approved: true})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMachineScope(ctx, machine.ID, "listed", nil, false, "usr_scope_actor"); err != nil {
+		t.Fatal(err)
+	}
+	if !IsSystemEventKind("machine_scope_updated") {
+		t.Fatal("machine scope changes are absent from the system feed")
+	}
+	var payload string
+	if err := s.db.QueryRow(`SELECT payload_json FROM event WHERE kind='machine_scope_updated' ORDER BY seq DESC LIMIT 1`).Scan(&payload); err != nil || !strings.Contains(payload, `"actor_id":"usr_scope_actor"`) {
+		t.Fatalf("scope event actor: payload=%q err=%v", payload, err)
+	}
+}
+
 func TestMachineScopeRefusesToExcludeDrainingSwitchTarget(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -15,6 +15,21 @@ import (
 	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
+func TestDisabledHostRejectsRestartWithoutStartingSupervisor(t *testing.T) {
+	f := newFixture(t)
+	f.srv.SetLocalSupervisorID(f.machineID)
+	var started atomic.Int32
+	f.srv.LocalSupervisorRestart = func() error { started.Add(1); return nil }
+	if err := f.db.SetMachineScope(t.Context(), f.machineID, "all", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	response := f.request("POST", "/api/machines/"+f.machineID+"/supervisor/restart", nil, true)
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || started.Load() != 0 {
+		t.Fatalf("disabled host restart: HTTP %d, starts %d", response.StatusCode, started.Load())
+	}
+}
+
 func TestOwnerRestartMarksLegacyCancelledTurnForContinuation(t *testing.T) {
 	f := newFixture(t)
 	agent, turn, _, _ := f.execution(t)

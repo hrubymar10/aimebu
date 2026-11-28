@@ -47,6 +47,8 @@ assert.equal(update({}).text, 'Update notice cleared');
 
 // The reply loop guard reads as a sentence.
 assert.equal(describe({ kind: 'loop_guard', payload_json: '{"hops":"4"}' }).text, 'Agents stopped answering each other');
+assert.equal(describe({ kind: 'machine_scope_updated', payload_json: '{"actor_id":"usr_owner"}', names: { usr_owner: 'Owner' } }).text,
+  'Machine scope changed by Owner');
 
 // A kind with no detail, and a detail with no kind, still read sensibly.
 assert.equal(describe(alert({ kind: 'login_imported' })).text, 'Credential alert: login imported');

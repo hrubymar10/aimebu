@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/store"
 )
 
 func (s *Server) SetLocalSupervisorID(id string) {
@@ -50,6 +51,10 @@ func (s *Server) restartLocalSupervisor(w http.ResponseWriter, ctx context.Conte
 		return
 	}
 	if err := s.forceLocalSupervisorRestart(ctx); err != nil {
+		if errors.Is(err, store.ErrMachineScope) {
+			apiError(w, http.StatusConflict, "machine_scope", "the local machine is disabled")
+			return
+		}
 		var stopErr *supervisorStopError
 		if errors.As(err, &stopErr) {
 			apiError(w, http.StatusServiceUnavailable, "supervisor_restart_failed", err.Error())
@@ -71,6 +76,13 @@ func (e *supervisorStopError) Unwrap() error { return e.err }
 // count as interrupted (one automatic continuation on the replacement) and not as cancelled, and the manager is told to stop the process
 // and start another. It is the owner's Restart now, and what the drain falls back to for a supervisor it cannot interrupt turn by turn.
 func (s *Server) forceLocalSupervisorRestart(ctx context.Context) error {
+	host, err := s.Store.HostMachine(ctx)
+	if err != nil {
+		return err
+	}
+	if host.Disabled {
+		return store.ErrMachineScope
+	}
 	turnIDs, err := s.Store.MachineRunningTurnIDs(ctx, s.localSupervisorID())
 	if err != nil {
 		return err

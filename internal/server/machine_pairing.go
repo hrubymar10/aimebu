@@ -218,6 +218,9 @@ func (s *Server) machineList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		row := s.machineRow(m)
+		if !owner {
+			row.AllowedProjects = []string{}
+		}
 		if projectID != "" {
 			row.ProjectAllowed = m.IsHost
 			if m.IsHost {
@@ -260,7 +263,7 @@ func (s *Server) machineScope(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if err := s.Store.SetMachineScope(r.Context(), id, req.ScopeMode, req.AllowedProjects, req.Disabled); err != nil {
+	if err := s.Store.SetMachineScope(r.Context(), id, req.ScopeMode, req.AllowedProjects, req.Disabled, userID(r)); err != nil {
 		switch {
 		case errors.Is(err, store.ErrMachineScopeActive):
 			apiError(w, 409, "machine_scope_active", err.Error())
