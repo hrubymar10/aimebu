@@ -52,8 +52,11 @@ section names, and line numbers. Every response includes `total_lines`,
 `has_more`, and `next_offset`; the response is capped at 16 KiB on a line
 boundary and supplies continuation instructions. A dispatcher sees only
 Current state and Open backlog. `handbook_update` returns only `rev`,
-per-section `line_count`, and `over_budget`. A lead turn gets one warning line
-when Current state is over 48 hours old or Open backlog exceeds 60 lines. The
+per-section `line_count`, and `over_budget`. `handbook_update` rejects content
+with a line longer than 8 KiB (400 `invalid_request`, naming the line and section);
+a stored line that still exceeds the read cap is skipped with a notice and the next offset.
+A lead turn gets one warning line when Current state is over 48 hours old or
+Open backlog exceeds 60 lines. The
 Current state age uses its parseable `Updated YYYY-MM-DD` stamp, or the
 handbook update time otherwise.
 

@@ -16,6 +16,17 @@ var ErrHandbookSection = errors.New("invalid_handbook_section")
 var ErrHandbookEdit = errors.New("invalid_handbook_edit")
 var ErrHandbookRevision = errors.New("handbook_revision_changed")
 
+const handbookLineLimit = 8 << 10
+
+type HandbookLineTooLongError struct {
+	Section string
+	Line    int
+}
+
+func (e *HandbookLineTooLongError) Error() string {
+	return fmt.Sprintf("line %d of section %s is longer than 8 KiB; split it into shorter lines", e.Line, e.Section)
+}
+
 var handbookSections = []struct{ Key, Title string }{{"current_state", "Current state"}, {"open_backlog", "Open backlog"}, {"conventions", "Conventions"}, {"gotchas", "Gotchas"}, {"timeline", "Timeline"}}
 var handbookUpdatedStamp = regexp.MustCompile(`\bUpdated\s+(\d{4}-\d{2}-\d{2})\b`)
 
@@ -259,6 +270,11 @@ func (s *Store) UpdateHandbook(ctx context.Context, projectID, agentID, section 
 		} else {
 			operation = "append"
 			sections[section] = old + *patch
+		}
+		for i, line := range strings.Split(sections[section], "\n") {
+			if len(line) > handbookLineLimit {
+				return &HandbookLineTooLongError{Section: section, Line: i + 1}
+			}
 		}
 		encoded, err := json.Marshal(sections)
 		if err != nil {

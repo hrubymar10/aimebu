@@ -153,6 +153,89 @@ func TestHandbookReadModesAndCap(t *testing.T) {
 	}
 }
 
+func TestHandbookLineLimit(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgentNamed(t, "role_leader_default", "leader")
+	for _, edit := range []struct {
+		name string
+		body map[string]any
+	}{
+		{"content", map[string]any{"section": "current_state", "content": strings.Repeat("x", 8<<10+1), "rev": 0}},
+		{"patch", map[string]any{"section": "current_state", "patch": strings.Repeat("x", 8<<10+1), "rev": 1}},
+	} {
+		if edit.name == "patch" {
+			resp := handbookToolPut(t, f, key, map[string]any{"section": "current_state", "content": "prefix", "rev": 0})
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("seed status=%d", resp.StatusCode)
+			}
+		}
+		resp := handbookToolPut(t, f, key, edit.body)
+		var got struct{ Error, Message string }
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 400 || got.Error != "invalid_request" || got.Message != "line 1 of section current_state is longer than 8 KiB; split it into shorter lines" {
+			t.Fatalf("%s: status=%d body=%+v", edit.name, resp.StatusCode, got)
+		}
+	}
+	resp := handbookToolPut(t, f, key, map[string]any{"section": "current_state", "content": strings.Repeat("x", 8<<10), "rev": 1})
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("exact-limit status=%d", resp.StatusCode)
+	}
+	legacy := strings.Repeat("y", handbookAnswerCap)
+	doc, err := f.db.GetHandbook(t.Context(), f.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Sections["timeline"] = legacy
+	encoded, err := json.Marshal(doc.Sections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE project_handbook SET sections_json=? WHERE project_id=?`, string(encoded), f.project.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp = f.toolRequest(t, "/api/agent/handbook?section=timeline", key)
+	var view handbookView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !view.HasMore || view.NextOffset == nil || *view.NextOffset != 2 || !strings.Contains(view.Continue, "exceeds the answer cap") {
+		t.Fatalf("legacy line: status=%d view=%+v", resp.StatusCode, view)
+	}
+}
+
+func TestHandbookCapContinuationKeepsFilters(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, key := f.createToolAgentNamed(t, "role_leader_default", "leader")
+	large := strings.Repeat("needle "+strings.Repeat("x", 400)+"\n", 100)
+	if _, err := f.db.UpdateHandbook(context.Background(), f.project.ID, lead.ID, "current_state", &large, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"?grep=needle&limit=100", "?limit=100"} {
+		resp := f.toolRequest(t, "/api/agent/handbook"+query, key)
+		var view handbookView
+		if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !view.HasMore || view.NextOffset == nil || !strings.Contains(view.Continue, "same filters") {
+			t.Fatalf("%s: status=%d continue=%q", query, resp.StatusCode, view.Continue)
+		}
+	}
+}
+
 func TestHandbookDispatcherReadScope(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

@@ -142,11 +142,18 @@ func handbookReadView(doc store.Handbook, limited bool, query url.Values) (handb
 			if index {
 				next = line.Line
 			}
+			continuation := "Call handbook_get with the same filters and next_offset to continue."
+			if index || (grep == "" && section != "") {
+				continuation = "Call handbook_get with section=" + line.Section + " and offset=" + strconv.Itoa(next) + " to continue."
+			}
 			if len(out.Lines) == 0 {
 				next++
-				out.Continue = "One line exceeds the answer cap; continue after it with section=" + line.Section + " and offset=" + strconv.Itoa(next) + "."
+				if index || (grep == "" && section != "") {
+					continuation = "Call handbook_get with section=" + line.Section + " and offset=" + strconv.Itoa(next) + " to continue."
+				}
+				out.Continue = "One line exceeds the answer cap; continue after it. " + continuation
 			} else {
-				out.Continue = "Call handbook_get with section=" + line.Section + " and offset=" + strconv.Itoa(next) + " to continue."
+				out.Continue = continuation
 			}
 			out.NextOffset = &next
 			return out, ""

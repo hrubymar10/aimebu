@@ -10,6 +10,7 @@ import (
 )
 
 func handbookError(w http.ResponseWriter, err error) {
+	var longLine *store.HandbookLineTooLongError
 	switch {
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "handbook access denied")
@@ -17,6 +18,8 @@ func handbookError(w http.ResponseWriter, err error) {
 		apiError(w, 404, "not_found", "handbook or project not found")
 	case errors.Is(err, store.ErrHandbookSection), errors.Is(err, store.ErrHandbookEdit):
 		apiError(w, 400, "invalid_request", "provide a valid section, one of content or patch, and a nonnegative rev")
+	case errors.As(err, &longLine):
+		apiError(w, 400, "invalid_request", longLine.Error())
 	case errors.Is(err, store.ErrProjectArchived):
 		apiError(w, 409, "project_archived", "project is archived")
 	default:
