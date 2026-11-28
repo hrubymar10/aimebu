@@ -9,10 +9,27 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite the prompt golden files")
+
+func TestPromptNamesReactionToolForVariant(t *testing.T) {
+	listed := false
+	for _, tool := range agenttools.Definitions(false) {
+		listed = listed || tool.Name == "react"
+	}
+	if !listed {
+		t.Fatal("react is absent from the MCP tool list")
+	}
+	for _, tc := range []struct{ variant, tool string }{{"native", "mcp__aimebu__react"}, {"docker", "aimebu_react"}} {
+		got := promptFor(adapter.TurnSpec{Agent: adapter.AgentSpec{Variant: tc.variant}})
+		if !strings.Contains(got, tc.tool) {
+			t.Errorf("%s prompt does not name %s", tc.variant, tc.tool)
+		}
+	}
+}
 
 func TestPromptUsesToolParameterSchema(t *testing.T) {
 	if !strings.Contains(turnPrompt, "Pass every field required by its schema") ||

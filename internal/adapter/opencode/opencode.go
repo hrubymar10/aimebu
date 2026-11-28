@@ -277,7 +277,7 @@ var turnDeltas = prompt.Deltas{
 	Role:        "Obey context.role_body.",
 	Attachments: prompt.AttachmentGetTool,
 	Output:      prompt.ReturnOneObject + " End the turn by calling the aimebu submit_answer tool with that answer object. Pass every field required by its schema; use null when a field does not apply. If the tool is unavailable, return the JSON object as text. Answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>. " + "For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object." + " " + prompt.HumanResponse("choices"),
-	Ack:         prompt.AckByReaction,
+	Ack:         prompt.AckByReaction + " Call aimebu_react with the message ID or number and one emoji.",
 	Closing:     prompt.OutsideRoomContext,
 }
 

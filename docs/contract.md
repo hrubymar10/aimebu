@@ -1283,8 +1283,9 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   is queued for it; that notice then goes to whoever addressed it last, in the
   room that note came from (a person author reads the line), with the same
   line, wake reason and debounce. A turn that carried a `broadcast` or `group`
-  note stays excluded either way, and neither does a lead give one. A turn in
-  which the agent added a reaction (to any
+  note stays excluded either way, and neither does a lead give one.
+  The `react` MCP tool is in the role-independent catalog for normal turns over both stdio and HTTP. Claude Code exposes it as `mcp__aimebu-agent__react`, and its acknowledgement instruction names that callable tool and says to load it with ToolSearch when it is listed as deferred.
+  A turn in which the agent added a reaction (to any
   message, from when the turn started running) has answered, since the prompt
   asks for a reaction instead of an acknowledgement message: it gives none. It is said once until the agent next posts a
   message (event `silent_turn` with the agent and turn; a later one is skipped

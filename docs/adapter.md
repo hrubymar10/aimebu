@@ -248,7 +248,9 @@ message a person only for a decision, an answer, an approval, or a result they a
 batch questions into one numbered message; acknowledge with a reaction (👍 seen, ✅ done)
 instead of a text ack; and when a person addresses the agent directly (a mention, a reply to
 its message, a DM), always respond, with an answer if there is anything to say and otherwise
-a reaction, never with no sign at all. Every prompt asks the agent to set `reply_to` when its message answers a
+a reaction, never with no sign at all. Each adapter's acknowledgement instruction names its
+callable `react` tool; Codex and Pi choose the name for the turn's native or Docker variant.
+Every prompt asks the agent to set `reply_to` when its message answers a
 delivered one (a reply joins that message's conversation; there is no separate thread link), and
 explains the note's `why`, `in_reply_to` and `conversation`. An agent that
 answers a human with an empty `messages` list is following a stored rule, not failing; the
@@ -368,7 +370,7 @@ it was checked in the Claude Code 2.1.329 bundle, where it feeds the check that 
 `AIMEBU_LIVE_CC_MCP=1 go test ./internal/adapter/claude` runs the real
 `claude` (on `PATH`, no login needed) through the Docker entry against a fake
 toolbox, with a user-scope v1 `aimebu` server enabled and then disabled in the
-project, and checks that the toolbox's tools are listed and the v1 tools are not.
+project, and checks that `mcp__aimebu-agent__react` is listed and the v1 tools are not.
 **CLI version table.** `internal/adapter/claude/versions.go` is one table (`cliFeatures`) of the
 version-dependent flags, environment variables, stream events and control requests the adapter
 uses, each with the first Claude Code release whose changelog says it was added:

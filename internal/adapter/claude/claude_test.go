@@ -16,9 +16,26 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
 	"github.com/hrubymar10/aimebu/v2/internal/testenv"
 )
+
+func TestPromptNamesReactionTool(t *testing.T) {
+	listed := false
+	for _, tool := range agenttools.Definitions(false) {
+		listed = listed || tool.Name == "react"
+	}
+	if !listed {
+		t.Fatal("react is absent from the MCP tool list")
+	}
+	if !strings.Contains(systemPrompt, "mcp__"+toolboxServer+"__react") {
+		t.Fatal("the acknowledgement instruction must name the tool Claude can call")
+	}
+	if !strings.Contains(systemPrompt, "load it with ToolSearch first") {
+		t.Fatal("the acknowledgement instruction must explain deferred tools")
+	}
+}
 
 func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	root := t.TempDir()

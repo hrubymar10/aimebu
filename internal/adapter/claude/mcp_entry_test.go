@@ -218,7 +218,7 @@ func TestDockerToolboxEntryResolvesInsideTheContainer(t *testing.T) {
 // fakeMCP answers the few MCP calls Claude makes at startup and lists one tool, so the live test sees which servers' tools Claude loads.
 func fakeMCP(t *testing.T, bearer string) *httptest.Server {
 	t.Helper()
-	tools := map[string]string{"/api/agent/mcp": "ping", "/v1": "bus_say"}
+	tools := map[string]string{"/api/agent/mcp": "react", "/v1": "bus_say"}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tool, ok := tools[r.URL.Path]
 		if !ok {
@@ -341,7 +341,7 @@ func TestLiveToolboxSurvivesADisabledV1Bus(t *testing.T) {
 			}
 			var toolbox bool
 			for _, tool := range report.Tools {
-				if tool == "mcp__"+toolboxServer+"__ping" {
+				if tool == "mcp__"+toolboxServer+"__react" {
 					toolbox = true
 				}
 				if strings.HasPrefix(tool, "mcp__aimebu__") {

@@ -345,7 +345,7 @@ var turnDeltas = prompt.Deltas{
 	Role:        "Obey context.role_body.",
 	Attachments: "use attachment_get when available. In Pi Docker, fetch an attachment ID from attachment_access.base_url plus the ID with an Authorization: Bearer header using attachment_access.bearer. Download only when needed to your own temporary directory; never echo the bearer.",
 	Output:      prompt.ReturnOneObject + " End the turn by calling the aimebu submit_answer tool with that answer object. Pass every field required by its schema; use null when a field does not apply. If the tool is unavailable, return the JSON object as text. Answer schema: <json-schema>" + string(answer.ResponseSchema) + "</json-schema>. " + "Visual plan blocks have type, optional title, and JSON data; appendix pages have optional title and Markdown body." + " " + prompt.HumanResponse("choices"),
-	Ack:         "Acknowledge only with a reaction when available; never send acknowledgement-only or status-only messages.",
+	Ack:         "Acknowledge only with a reaction when available; never send acknowledgement-only or status-only messages. Call mcp__aimebu__react with the message ID or number and one emoji.",
 	Closing:     prompt.OutsideRoomContext,
 }
 
@@ -353,10 +353,17 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
+	deltas := turnDeltas
+	if spec.Agent.Variant == "docker" {
+		deltas.Ack = "Acknowledge only with a reaction when available; never send acknowledgement-only or status-only messages. In Docker, call whichever reaction tool appears in your toolbox: mcp__aimebu__react or aimebu_react. Pass the message ID or number and one emoji."
+	}
 	if !adapter.OffersAnswerTool("pi", spec) {
-		legacy := turnDeltas
+		legacy := deltas
 		legacy.Output = legacyOutput
 		return prompt.ForContext(legacy, prompt.Build(legacy), spec.ContextJSON)
+	}
+	if spec.Agent.Variant == "docker" {
+		return prompt.ForContext(deltas, prompt.Build(deltas), spec.ContextJSON)
 	}
 	return prompt.ForContext(turnDeltas, turnPrompt, spec.ContextJSON)
 }

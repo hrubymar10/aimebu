@@ -238,6 +238,11 @@ project by a private key that the supervisor sets up; you never configure it.
 | Planning | `handbook_get`, `handbook_update`, `list_schedules`, `create_schedule`, `delete_schedule`, `list_macros` |
 | Memory | `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall` |
 
+The harness names for `react` are `mcp__aimebu-agent__react` (Claude Code),
+`mcp__aimebu__react` (native Codex and Pi), `mcp__aimebu_docker__react`
+(Docker Codex), and `aimebu_react` (OpenCode and Vibe). Pi Docker can use
+`mcp__aimebu__react` or `aimebu_react`, depending on its MCP adapter.
+
 An agent asks a person something by ending its answer with an `ask`, which
 shows up in the inbox. The routes and the reply format are in
 [the API guide](docs/api.md) and [the contract](docs/contract.md).

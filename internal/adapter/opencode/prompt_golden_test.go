@@ -9,10 +9,24 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/answer"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite the prompt golden files")
+
+func TestPromptNamesReactionTool(t *testing.T) {
+	listed := false
+	for _, tool := range agenttools.Definitions(false) {
+		listed = listed || tool.Name == "react"
+	}
+	if !listed {
+		t.Fatal("react is absent from the MCP tool list")
+	}
+	if !strings.Contains(turnPrompt, "Call aimebu_react with the message ID") {
+		t.Fatal("the acknowledgement instruction must name the callable tool")
+	}
+}
 
 func TestPromptUsesToolParameterSchema(t *testing.T) {
 	if !strings.Contains(turnPrompt, "Pass every field required by its schema") ||

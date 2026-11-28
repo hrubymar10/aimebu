@@ -236,7 +236,7 @@ var turnDeltas = prompt.Deltas{
 	Role:        "Obey context.role_body.",
 	Attachments: prompt.AttachmentGetTool,
 	Output:      prompt.ReturnOneObject + " " + "For visual_plan blocks, data is a JSON-encoded object string; the server accepts and renders that object." + " " + prompt.HumanResponse("choices"),
-	Ack:         prompt.AckByReaction,
+	Ack:         prompt.AckByReaction + " Call mcp__aimebu__react with the message ID or number and one emoji.",
 	Closing:     prompt.OutsideRoomContext,
 }
 
@@ -244,6 +244,11 @@ var turnDeltas = prompt.Deltas{
 var turnPrompt = prompt.Build(turnDeltas)
 
 func promptFor(spec adapter.TurnSpec) string {
+	if spec.Agent.Variant == "docker" {
+		docker := turnDeltas
+		docker.Ack = prompt.AckByReaction + " Call mcp__aimebu_docker__react with the message ID or number and one emoji."
+		return prompt.ForContext(docker, prompt.Build(docker), spec.ContextJSON)
+	}
 	return prompt.ForContext(turnDeltas, turnPrompt, spec.ContextJSON)
 }
 

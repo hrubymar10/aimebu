@@ -8,7 +8,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
+	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
 )
+
+func TestReactionInstructionHasToolForEveryBuiltInRole(t *testing.T) {
+	definitions := agenttools.Definitions(false)
+	for _, role := range builtinRoles() {
+		instructions := prompt.Build(prompt.Deltas{Opening: "turn", Attachments: "attachment_get", Output: "answer", Ack: prompt.AckByReaction, Closing: "end"}) + role.Body
+		if !strings.Contains(instructions, "reaction") && !strings.Contains(instructions, "react") {
+			continue
+		}
+		found := false
+		for _, definition := range definitions {
+			if definition.Name == "react" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("role %s asks for a reaction without a react tool", role.Key)
+		}
+	}
+}
 
 func roleBodies(t *testing.T, db *sql.DB) map[string]string {
 	t.Helper()

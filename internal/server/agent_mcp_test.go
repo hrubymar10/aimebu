@@ -79,7 +79,7 @@ func TestAgentMCPAnswerToolOnlyWhenOptedIn(t *testing.T) {
 		data, _ := io.ReadAll(resp.Body)
 		return string(data)
 	}
-	if body := list(""); strings.Contains(body, "submit_answer") || !strings.Contains(body, "list_rooms") {
+	if body := list(""); strings.Contains(body, "submit_answer") || !strings.Contains(body, `"name":"react"`) {
 		t.Fatalf("default endpoint: %s", body)
 	}
 	if body := list("?answer_tool=1"); !strings.Contains(body, "submit_answer") {

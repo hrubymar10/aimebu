@@ -79,7 +79,7 @@ var systemDeltas = prompt.Deltas{
 	Role:        "Obey the role instructions in context.role_body. " + prompt.UnchangedContext,
 	Attachments: prompt.AttachmentGetTool,
 	Output:      "Return only the JSON object described by the response schema: a messages array with room-targeted bodies, using attachments, ask, needs_attention, proposed_answers, open_questions, handoff, visual_plan, and appendix_pages only when appropriate. Set force:true on one message only when you intend to publish it despite a live mention of an agent outside that room. " + prompt.ReplyLinks + " A visual_plan block has id, type, title, data, and order; data is a JSON-encoded object string. Use appendix_pages for a collapsed Full plan. To ask a human through the inbox, include a room message with a nonempty body and \"ask\":{\"kind\":\"question\",\"text\":\"the question\",\"options\":[\"saved choice\"],\"free_text\":false}." + " " + prompt.HumanResponse("short choices"),
-	Ack:         prompt.AckByReaction,
+	Ack:         prompt.AckByReaction + " In Claude Code, call mcp__" + toolboxServer + "__react with the message ID or number and one emoji. If that tool is listed as deferred, load it with ToolSearch first.",
 	Closing:     "Do not add a message-level \"type\" field. context.rooms is a snapshot at turn start. A room returned by create_room during this turn is a valid target after creation; use its returned ID. Target only rooms where you are a member. Continue after toolbox calls until you have returned the required messages; do not finish with an empty messages array when a question or handoff remains.",
 }
 
