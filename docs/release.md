@@ -42,7 +42,7 @@ and test the service on a real Mac and Linuxbrew host before public use.
 
 Before publishing an upgrade, run the real-binary supervisor swap check with
 the previous and candidate binaries:
-`sh scripts/test-lock.sh sh scripts/upgrade-smoke.sh OLD_BINARY NEW_BINARY SCRATCH_DIR`.
+`sh scripts/test-lock.sh node scripts/upgrade-smoke.cjs OLD_BINARY NEW_BINARY SCRATCH_DIR`.
 The tracked script holds a turn and a command across replacement, then checks
 their results, the instance journals, and `doctor`.
 
@@ -58,8 +58,7 @@ messages, agents and an attachment across the upgrade, including a turn and
 command held while the supervisor drains. For a backup archive, run
 `scripts/test-lock.sh sh scripts/test-upgrade.sh --from-backup /path/to/backup.tar.gz HEAD`;
 the restore and server start use a disposable data root. The route needs Go,
-Node 24, and Python 3 for the existing `scripts/upgrade-smoke.sh` and its
-stand-in launcher.
+Node 24 (`scripts/upgrade-smoke.cjs` and its stand-in launcher are Node).
 
 The formula runs `opt_bin/"aimebu"` in the foreground under `brew services`.
 It keeps a HEAD build from source as a second route; only that route requires
@@ -304,7 +303,7 @@ then closes the database; the local supervisor's turns keep running. A Homebrew 
 
 Before a release that changes supervisor startup, run the real-binary upgrade
 smoke with the previous and candidate binaries:
-`scripts/test-lock.sh sh scripts/upgrade-smoke.sh OLD_BINARY NEW_BINARY SCRATCH_DIR`.
+`scripts/test-lock.sh node scripts/upgrade-smoke.cjs OLD_BINARY NEW_BINARY SCRATCH_DIR`.
 The script creates an isolated server and stub Claude harness below the given
 scratch directory, holds a turn and native command across the server upgrade,
 and checks the replacement supervisor, replies, command exit, journals, and

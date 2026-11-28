@@ -49,7 +49,7 @@ if [ "$mode" = upgrade ]; then
     git -C "$root" worktree add --detach "$oldtree" "$source" >/dev/null
     (cd "$oldtree" && go build -o "$tmp/aimebu-old" ./cmd/aimebu)
     echo 'PASS old tag build'
-    sh "$root/scripts/upgrade-smoke.sh" "$tmp/aimebu-old" "$tmp/aimebu-new" "$tmp/scratch"
+    node "$root/scripts/upgrade-smoke.cjs" "$tmp/aimebu-old" "$tmp/aimebu-new" "$tmp/scratch"
 else
     node "$root/scripts/test-upgrade-backup.cjs" "$tmp/aimebu-new" "$source" "$tmp"
 fi
