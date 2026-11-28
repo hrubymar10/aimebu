@@ -189,6 +189,10 @@ func (tx *Tx) beginRoomCloseWithPermission(id, actor string, rev int64, cascade,
 				if err != nil {
 					return err
 				}
+				if _, err := tx.AppendEvent(Event{Kind: "room_close_agent_paused", ProjectID: projectID, RoomID: x.id, AgentID: card.ID,
+					PayloadJSON: payloadJSON(map[string]string{"desired_rev": fmt.Sprint(updated.DesiredRev)})}); err != nil {
+					return err
+				}
 				controls = append(controls, updated)
 			}
 		}

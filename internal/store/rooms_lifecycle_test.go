@@ -68,7 +68,7 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 	var resumed AgentCard
 	if err := s.Tx(ctx, func(tx *Tx) error {
 		var err error
-		resumed, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "same task")
+		resumed, _, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "same task")
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -96,13 +96,13 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 		t.Fatalf("canceled closure advanced: %+v", room)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
-		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "again")
+		_, _, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "again")
 		return err
 	}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("active worker resumed: %v", err)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
-		_, err := tx.ResumeAgentAsTool(f.agent.ID, "agt_another_project", "")
+		_, _, err := tx.ResumeAgentAsTool(f.agent.ID, "agt_another_project", "")
 		return err
 	}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("other project resumed worker: %v", err)
@@ -111,11 +111,88 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
-		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "")
+		_, _, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "")
 		return err
 	}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("removed worker resumed: %v", err)
 	}
+}
+
+func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	f := seedExecution(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_cancel_pause','owner','hash','{}',?)`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AddProjectOwner(f.project.ID, "usr_cancel_pause") }); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "cancel pause", CreatedBy: "usr_cancel_pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.CreateAgent(ctx, Agent{Slug: "cancelpauselead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "cancelpauselead_hash", CreatedBy: "usr_cancel_pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeWorker := func(slug string) Agent {
+		t.Helper()
+		a, err := s.CreateAgent(ctx, Agent{Slug: slug, ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: slug + "_hash", CreatedBy: "usr_cancel_pause"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, task.ID, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddMember(ctx, task.ID, "agent", a.ID); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	closurePaused := makeWorker("closurepaused")
+	manuallyPaused := makeWorker("manuallypaused")
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, task.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SetAgentDesired(manuallyPaused.ID, "usr_cancel_pause", "not_accepting", 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.BeginRoomClose(ctx, task.ID, "usr_cancel_pause", 0, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{closurePaused.ID, manuallyPaused.ID} {
+		card, err := s.AgentCardByID(ctx, id)
+		if err != nil || card.Desired != "not_accepting" {
+			t.Fatalf("before cancel card %s=%+v err=%v", id, card, err)
+		}
+	}
+	var restored []AgentCard
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, restored, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "continue")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) != 1 || restored[0].ID != closurePaused.ID || restored[0].Desired != "active" {
+		t.Fatalf("restored controls=%+v", restored)
+	}
+	t.Run("closure paused coworker accepts again", func(t *testing.T) {
+		card, err := s.AgentCardByID(ctx, closurePaused.ID)
+		if err != nil || card.Desired != "active" {
+			t.Fatalf("closure paused card=%+v err=%v", card, err)
+		}
+	})
+	t.Run("separately paused coworker stays paused", func(t *testing.T) {
+		card, err := s.AgentCardByID(ctx, manuallyPaused.ID)
+		if err != nil || card.Desired != "not_accepting" {
+			t.Fatalf("manually paused card=%+v err=%v", card, err)
+		}
+	})
 }
 
 func TestResumeAgentRejectsCascadedChildClose(t *testing.T) {
@@ -148,7 +225,7 @@ func TestResumeAgentRejectsCascadedChildClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
-		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "continue child")
+		_, _, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "continue child")
 		return err
 	}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("resume under closing parent: %v", err)
@@ -206,7 +283,7 @@ func TestResumeAgentBoundaryEvents(t *testing.T) {
 	t.Run("pending approval emits no resumed event", func(t *testing.T) {
 		if err := s.Tx(ctx, func(tx *Tx) error {
 			var err error
-			pending, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "needs approval")
+			pending, _, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "needs approval")
 			return err
 		}); err != nil {
 			t.Fatal(err)
