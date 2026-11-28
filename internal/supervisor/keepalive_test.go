@@ -666,7 +666,7 @@ func TestCleanStopSendsAFinalEmptyWarmState(t *testing.T) {
 	h.spawn("agt_a")
 	h.run("agt_a", nil) // a warm process, idle after its turn
 	done := make(chan error, 1)
-	go func() { done <- h.c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(h.c.RunOnce(ctx)) }()
 	<-peer.hellos
 	if got := peer.next(t, protocol.WarmStateFrame); len(got.Warm.Agents) != 1 {
 		t.Fatalf("before the stop the idle process is in the report: %+v", got.Warm)
@@ -963,7 +963,7 @@ func TestDeliveryWaitingForAPingDoesNotBlockTheFrameLoop(t *testing.T) {
 	}
 	h.quarantined(t, 4*time.Second, 3*time.Second)
 	done := make(chan error, 1)
-	go func() { done <- c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(c.RunOnce(ctx)) }()
 	<-peer.hellos
 	peer.out <- testDelivery(agentID, "turn-wait", "claude", "native", t.TempDir())
 	for {

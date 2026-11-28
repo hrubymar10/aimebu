@@ -45,7 +45,7 @@ func TestRedeliveryOfAPrunedTurnStartsNoProcessAndOtherGenerationConflicts(t *te
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(c.RunOnce(ctx)) }()
 
 	delivery := protocol.Delivery{AgentID: agentID, TurnID: turnID, Generation: 0, DesiredRev: 0, Mode: adapter.ModeNormal,
 		Agent: adapter.AgentSpec{ID: agentID, Tool: "fake", Model: "test"},

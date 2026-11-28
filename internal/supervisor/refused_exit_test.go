@@ -69,7 +69,7 @@ func TestAPlainInvalidTransitionKeepsTheExitJournaled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { finished <- c.RunOnce(ctx) }()
+	go func() { finished <- peer.ran(c.RunOnce(ctx)) }()
 	exit := peer.next(t, string(protocol.Process))
 	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: exit.AgentID, TurnID: exit.TurnID, Code: "invalid_transition", Message: "turn.exec \"killed\" -> \"exited\""}
 	<-finished // the run context ends; the connection was not cut by a settle
@@ -97,7 +97,7 @@ func TestLiveTurnSurvivesAnAlreadyTerminalErrorFrame(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { finished <- client.RunOnce(ctx) }()
+	go func() { finished <- peer.ran(client.RunOnce(ctx)) }()
 	// The server refuses an activity frame of the running turn; the Error does not say which frame it answered.
 	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: "agent", TurnID: interruptTurnID, Code: "already_terminal", Message: "agent frame rejected"}
 	_ = turn.Cancel()

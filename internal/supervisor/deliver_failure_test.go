@@ -2,11 +2,13 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,11 +28,14 @@ type machinePeer struct {
 	in     chan protocol.Frame
 	out    chan protocol.Frame
 	drop   chan struct{}
+	// ended closes when a RunOnce this peer serves has returned, so next stops waiting for a frame nothing can send any more.
+	ended   chan struct{}
+	endOnce sync.Once
 }
 
 func newMachinePeer(t *testing.T, ack func(hello protocol.Frame) protocol.Frame) *machinePeer {
 	t.Helper()
-	p := &machinePeer{hellos: make(chan protocol.Frame, 8), in: make(chan protocol.Frame, 64), out: make(chan protocol.Frame, 16), drop: make(chan struct{}, 1)}
+	p := &machinePeer{hellos: make(chan protocol.Frame, 8), in: make(chan protocol.Frame, 64), out: make(chan protocol.Frame, 16), drop: make(chan struct{}, 1), ended: make(chan struct{})}
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -86,17 +91,44 @@ func newMachinePeer(t *testing.T, ack func(hello protocol.Frame) protocol.Frame)
 // detects a hang (CONTRIBUTING.md), so this one is far above anything the supervisor does before it sends the frame.
 const peerFrameLimit = 2 * time.Minute
 
+// ran marks the RunOnce this peer serves as returned and passes its error on; call it as done <- peer.ran(c.RunOnce(ctx)).
+func (p *machinePeer) ran(err error) error {
+	p.endOnce.Do(func() { close(p.ended) })
+	return err
+}
+
 func (p *machinePeer) next(t *testing.T, want string) protocol.Frame {
 	t.Helper()
-	timeout := time.After(peerFrameLimit)
+	frame, err := p.wait(peerFrameLimit, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frame
+}
+
+// wait is next without the testing.T, so a test can ask what next does when no frame will come.
+func (p *machinePeer) wait(limit time.Duration, want string) (protocol.Frame, error) {
+	timeout := time.After(limit)
 	for {
 		select {
 		case frame := <-p.in:
 			if frame.Type == want {
-				return frame
+				return frame, nil
+			}
+		case <-p.ended:
+			// Frames the supervisor sent before it returned are still queued; look at them before giving up.
+			for {
+				select {
+				case frame := <-p.in:
+					if frame.Type == want {
+						return frame, nil
+					}
+				default:
+					return protocol.Frame{}, fmt.Errorf("RunOnce returned before a %q frame came from supervisor", want)
+				}
 			}
 		case <-timeout:
-			t.Fatalf("no %q frame from supervisor", want)
+			return protocol.Frame{}, fmt.Errorf("no %q frame from supervisor", want)
 		}
 	}
 }
@@ -159,7 +191,7 @@ func TestStartFailureIsJournaledAndKeepsMachineConnection(t *testing.T) {
 				}
 			}
 			done := make(chan error, 1)
-			go func() { done <- c.RunOnce(ctx) }()
+			go func() { done <- peer.ran(c.RunOnce(ctx)) }()
 			peer.out <- testDelivery(agentID, "turn-start-fail", "claude", tc.variant, tc.checkout(t))
 			process := peer.next(t, protocol.Process)
 			if process.TurnID != "turn-start-fail" || process.Exit == nil || process.Exit.TerminalEvent ||

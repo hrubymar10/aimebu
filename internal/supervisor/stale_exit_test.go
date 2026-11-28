@@ -117,7 +117,7 @@ func TestOtherErrorCodesKeepTheExitJournaled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { finished <- c.RunOnce(ctx) }()
+	go func() { finished <- peer.ran(c.RunOnce(ctx)) }()
 	exit := peer.next(t, string(protocol.Process))
 	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: exit.AgentID, TurnID: exit.TurnID, Code: "conflict", Message: "conflict"}
 	<-finished // the run context ends; the connection was not cut by a settle
@@ -144,7 +144,7 @@ func TestLiveTurnSurvivesAStaleGenerationErrorFrame(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { finished <- client.RunOnce(ctx) }()
+	go func() { finished <- peer.ran(client.RunOnce(ctx)) }()
 	// The server refuses an activity frame of the running turn the way it refuses every frame of a superseded generation.
 	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: "agent", TurnID: interruptTurnID, Code: "stale_generation", Message: "agent frame rejected"}
 	_ = turn.Cancel()

@@ -1985,7 +1985,7 @@ func TestWarmTurnReportsIdleBeforeProcessExit(t *testing.T) {
 	h.c.ServerURL = peer.server.URL
 	h.spawn("agt_a")
 	done := make(chan error, 1)
-	go func() { done <- h.c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(h.c.RunOnce(ctx)) }()
 	<-peer.hellos
 	peer.next(t, protocol.WarmStateFrame) // initial snapshot
 	h.run("agt_a", nil)

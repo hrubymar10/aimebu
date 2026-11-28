@@ -47,7 +47,7 @@ func TestAgentOutputIsCapturedAndServedOverTheMachineSocket(t *testing.T) {
 		}
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(c.RunOnce(ctx)) }()
 	hello := <-peer.hellos
 	if !hello.SupportsAgentLogs {
 		t.Fatal("the supervisor does not say it keeps agent output")

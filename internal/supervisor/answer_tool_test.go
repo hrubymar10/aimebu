@@ -64,7 +64,7 @@ func TestAnswerFrameCarriesTheTurnsAnswerTool(t *testing.T) {
 				}
 			}
 			done := make(chan error, 1)
-			go func() { done <- client.RunOnce(ctx) }()
+			go func() { done <- peer.ran(client.RunOnce(ctx)) }()
 			checkout := canonicalTempDir(t)
 			delivery := testDelivery("agent", "turn-tool", tc.tool, "native", checkout)
 			if tc.launcher {

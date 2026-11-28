@@ -54,7 +54,7 @@ echo 'a warning on stderr' >&2
 		}
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.RunOnce(ctx) }()
+	go func() { done <- peer.ran(c.RunOnce(ctx)) }()
 	if hello := <-peer.hellos; !hello.SupportsAgentConversationLog {
 		t.Fatal("the supervisor does not say it keeps the conversation log")
 	}
