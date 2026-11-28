@@ -2,10 +2,121 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	f := seedExecution(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_resume','owner','hash','{}',?)`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AddProjectOwner(f.project.ID, "usr_resume") }); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "resumable", CreatedBy: "usr_resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, task.ID, "agent", f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.CreateAgent(ctx, Agent{Slug: "lead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "lead_hash", CreatedBy: "usr_resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, f.room.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, task.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := s.InsertMessage(ctx, Message{RoomID: task.ID, AuthorKind: "agent", AuthorID: f.agent.ID,
+		Body: "complete", Handoff: true, Outcome: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.SetReaction(handoff.ID, "agent", lead.ID, "✅", true) }); err != nil {
+		t.Fatal(err)
+	}
+	var afterReaction string
+	if err := s.db.QueryRow(`SELECT desired FROM agent WHERE id=?`, f.agent.ID).Scan(&afterReaction); err != nil || afterReaction != "active" {
+		t.Fatalf("reaction changed worker desired=%q err=%v", afterReaction, err)
+	}
+	if _, err := s.db.Exec(`UPDATE session SET native_session_id='native_worker',native_session_started_at=? WHERE id='ses_test'`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.SetAgentDesired(f.agent.ID, "usr_resume", "stopped", 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=?`, timestamp(), task.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	closing, _, err := s.BeginRoomClose(ctx, task.ID, "usr_resume", 0, false)
+	if err != nil || closing.Lifecycle != "closing" {
+		t.Fatalf("begin close=%+v err=%v", closing, err)
+	}
+	var resumed AgentCard
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		resumed, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "same task")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.ID != f.agent.ID || resumed.Desired != "active" || resumed.RoomID != task.ID || resumed.Generation != 1 {
+		t.Fatalf("resumed=%+v", resumed)
+	}
+	room, err := s.RoomByID(ctx, task.ID)
+	if err != nil || room.Lifecycle != "open" || room.LifecycleRev != 2 {
+		t.Fatalf("room=%+v err=%v", room, err)
+	}
+	var mode, handle string
+	if err := s.db.QueryRow(`SELECT start_mode,native_session_id FROM session WHERE agent_id=? AND generation=1`, f.agent.ID).Scan(&mode, &handle); err != nil || mode != "native_resume" || handle != "native_worker" {
+		t.Fatalf("session=%q/%q err=%v", mode, handle, err)
+	}
+	var joined int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, task.ID, f.agent.ID).Scan(&joined); err != nil || joined != 1 {
+		t.Fatalf("membership=%d err=%v", joined, err)
+	}
+	if _, failures, err := s.AdvanceRoomClosures(ctx, 0); err != nil || len(failures) != 0 {
+		t.Fatalf("advance after cancellation: %v failures=%v", err, failures)
+	}
+	room, _ = s.RoomByID(ctx, task.ID)
+	if room.Lifecycle != "open" {
+		t.Fatalf("canceled closure advanced: %+v", room)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "again")
+		return err
+	}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("active worker resumed: %v", err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ResumeAgentAsTool(f.agent.ID, "agt_another_project", "")
+		return err
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("other project resumed worker: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET revoked_at=? WHERE id=?`, timestamp(), f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "")
+		return err
+	}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("removed worker resumed: %v", err)
+	}
+}
 
 func TestRoomCloseCascadeReopenAndInbox(t *testing.T) {
 	t.Parallel()
@@ -195,6 +306,19 @@ func TestRoomCloseStopsOnlyHomeAgentsAfterGrace(t *testing.T) {
 	room, err = s.RoomByID(ctx, closing.ID)
 	if err != nil || room.Lifecycle != "closed" {
 		t.Fatalf("room after grace=%+v err=%v", room, err)
+	}
+	messages, err := s.ListMessagesAfter(ctx, closing.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStopNotice := false
+	for _, message := range messages {
+		if message.AuthorKind == "system" && strings.Contains(message.Body, "stopped because the room closed; resume with `resume_agent`") {
+			foundStopNotice = true
+		}
+	}
+	if !foundStopNotice {
+		t.Fatal("closing the room did not post the worker stop notice")
 	}
 	var state, reason string
 	if err := s.db.QueryRow(`SELECT state,held_reason FROM outbox WHERE id='out_archive'`).Scan(&state, &reason); err != nil || state != "held" || reason != "room_closed" {

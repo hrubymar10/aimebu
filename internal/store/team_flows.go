@@ -104,7 +104,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	base.TaskParentKey = "home"
 	base.GrantRoles = []string{"leader"}
 	base.RoleTextOverrides = map[string]string{
-		"leader": finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.",
+		"leader": finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.\n\n" + resumeWorkerRule,
 	}
 	routed := TeamFlowTemplate{Key: "leader-dispatcher", Label: "Leader and dispatcher", Description: "The leader writes specs; the dispatcher runs workers and reviews.", Recommendation: "Recommended for large projects; the dispatcher handles routing so the leader's context stays lean."}
 	routed.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "routing", Title: "routing", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
@@ -119,8 +119,8 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	routed.TaskParentKey = "home"
 	routed.GrantRoles = []string{"leader", "dispatcher"}
 	routed.RoleTextOverrides = map[string]string{
-		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + leadSafety + "\n\n" + roleCommunication + "\n\n" + researcherRuleLead,
-		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + roleSafety + "\n\n" + roleCommunication + "\n\n" + spawnApprovalRuleDispatcher + "\n\n" + dispatcherRuleDuties,
+		"leader":     "You are the project leader. Talk with the human and write specifications with goal, acceptance criteria, constraints, base, priority, and the team: how many workers and whether a reviewer is needed. Hand each specification to the dispatcher in routing. Do not spawn or manage workers and reviewers. Decide questions escalated by the dispatcher; report the outcome to the human in the home room. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + leadSafety + "\n\n" + roleCommunication + "\n\n" + researcherRuleLead + "\n\n" + resumeWorkerRule,
+		"dispatcher": dispatcherRoleBody + " Spawn only the workers and reviewers called for by the specification or the leader. Add a reviewer only when the specification or leader asks for one; if the specification does not say, ask the leader in routing before spawning a reviewer. General is the shared room for project announcements and coordination; specs go through routing and task work stays in task rooms.\n\n" + roleSafety + "\n\n" + roleCommunication + "\n\n" + spawnApprovalRuleDispatcher + "\n\n" + dispatcherRuleDuties + "\n\n" + resumeWorkerRule,
 	}
 	custom := TeamFlowTemplate{Key: "custom", Label: "Custom", Description: "Keep the current rooms and role permissions.", Recommendation: "For setting up rooms and roles yourself."}
 	custom.Rooms = []FlowRoom{}
@@ -144,7 +144,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	advised.TaskParentKey = "general"
 	advised.GrantRoles = []string{"leader"}
 	advised.RoleTextOverrides = map[string]string{
-		"leader":  finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.",
+		"leader":  finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.\n\n" + resumeWorkerRule,
 		"advisor": advisorRoleBody + "\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
 	return []TeamFlowTemplate{base, routed, advised, custom}

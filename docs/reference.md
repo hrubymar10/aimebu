@@ -1324,7 +1324,7 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `delete_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `agent_output`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `delete_schedule`, `usage_left`, `run_command`, `list_commands`, `command_log`, `cancel_command`, `spawn_agent`, `stop_agent`, `resume_agent`, `agent_output`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react` (`attachment_get` returns an image or small text inline and saves any
 other file up to 10 MB to `.aimebu/attachments/<id>/<name>` in the agent's checkout, for Docker agents through
@@ -1332,6 +1332,11 @@ their supervisor; see [the adapter guide](adapter.md)). Its HTTP routes use the 
 reads and mutations to that agent's project; only an active lead, or an
 active coordinator the flow lets manage agents (the dispatcher in the
 leader-dispatcher flow), can manage rooms, schedules or agents. The
+coordinator can close a completed worker's task room to stop its workers.
+`resume_agent` restarts a stopped worker in that room with its previous
+worktree and harness session while the room is open or closing. Resuming
+during the closing grace period cancels the closure; once fully closed,
+reopen the room first. A reaction does not stop an agent. The
 coordinator may `dm_agent` only agents of its own project that it manages;
 any other active agent may `dm_agent` only its own project's lead or dispatcher;
 only an active lead can start a private chat across projects, and then only with

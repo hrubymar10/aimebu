@@ -711,6 +711,7 @@ func TestCrossProjectAgentMCPTools(t *testing.T) {
 		"attachment_get":   {"attachment_id": w.p2["attachment"]},
 		"spawn_agent":      {"room_id": w.p2["room"], "role_key": "worker", "reason": "x"},
 		"stop_agent":       {"agent_id": w.p2["agent"]},
+		"resume_agent":     {"agent_id": w.p2["agent"]},
 		"agent_output":     {"agent_id": w.p2["agent"]},
 		"set_role":         {"agent_id": w.p2["agent"], "role_key": "worker"},
 		"react":            {"message_id": w.p2["message"], "emoji": "👍"},

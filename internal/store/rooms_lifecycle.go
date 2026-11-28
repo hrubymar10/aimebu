@@ -472,8 +472,8 @@ func (s *Store) AdvanceRoomClosures(ctx context.Context, grace time.Duration) ([
 	for _, id := range ids {
 		roomControls := []AgentCard{}
 		err := s.Tx(ctx, func(tx *Tx) error {
-			var projectID, lifecycle, started string
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle FROM room WHERE id=?`, id).Scan(&projectID, &lifecycle); err != nil {
+			var projectID, kind, lifecycle, started string
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,kind,lifecycle FROM room WHERE id=?`, id).Scan(&projectID, &kind, &lifecycle); err != nil {
 				return err
 			}
 			if lifecycle != "closing" {
@@ -511,6 +511,9 @@ func (s *Store) AdvanceRoomClosures(ctx context.Context, grace time.Duration) ([
 					return err
 				}
 				waiting = roomRunning > 0
+				// A task room must remain resumable throughout the grace period,
+				// including when its workers had no turn running at close time.
+				waiting = waiting || kind == "task" && len(cards) > 0
 			}
 			blocked := false
 			for _, card := range cards {
@@ -546,6 +549,12 @@ func (s *Store) AdvanceRoomClosures(ctx context.Context, grace time.Duration) ([
 					return err
 				}
 				roomControls = append(roomControls, updated)
+				if kind == "task" {
+					if _, err := tx.InsertMessage(Message{RoomID: id, AuthorKind: "system", AuthorID: "system",
+						Body: fmt.Sprintf("@%s stopped because the room closed; resume with `resume_agent`", card.ID)}); err != nil {
+						return err
+					}
+				}
 			}
 			if blocked || waiting {
 				return nil

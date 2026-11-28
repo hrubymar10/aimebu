@@ -6,11 +6,73 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/v2/internal/protocol"
 )
+
+var ErrResumeClosedRoom = errors.New("resume_room_closed")
+
+// ResumeAgentAsTool keeps the worker's checkout and native session. The room
+// transition and agent reactivation commit together, so a refused resume
+// cannot leave a closing room open.
+func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, error) {
+	var projectID, roomID, roleKey, desired, observed, lifecycle, kind string
+	var rev int64
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,COALESCE(a.home_room_id,''),r.role_key,a.desired,a.observed,a.desired_rev,
+		COALESCE(room.lifecycle,''),COALESCE(room.kind,'')
+		FROM agent a JOIN role r ON r.id=a.role_id LEFT JOIN room ON room.id=a.home_room_id
+		WHERE a.id=? AND a.revoked_at IS NULL`, agentID).
+		Scan(&projectID, &roomID, &roleKey, &desired, &observed, &rev, &lifecycle, &kind)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	var actorProject string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, actorID).Scan(&actorProject); err != nil {
+		return AgentCard{}, err
+	}
+	if actorProject != projectID {
+		return AgentCard{}, sql.ErrNoRows
+	}
+	if kind != "task" || roomID == "" || roleKey == "leader" || roleKey == "dispatcher" {
+		return AgentCard{}, ErrInvalidTransition
+	}
+	if lifecycle == "closed" {
+		return AgentCard{}, ErrResumeClosedRoom
+	}
+	if lifecycle != "open" && lifecycle != "closing" || desired != "stopped" || observed != "stopped" {
+		return AgentCard{}, ErrInvalidTransition
+	}
+	if err := tx.authorizeSpawnActor(projectID, "agent", actorID, false); err != nil {
+		return AgentCard{}, err
+	}
+	if err := tx.flowActorMayTargetAgent(projectID, actorID, agentID, roleKey); err != nil {
+		return AgentCard{}, err
+	}
+	if lifecycle == "closing" {
+		if _, err := tx.Exec(`UPDATE room SET lifecycle='open',gate=CASE WHEN control_desired='active' THEN 'open' ELSE 'paused' END,
+			lifecycle_rev=lifecycle_rev+1,closed_at=NULL WHERE id=?`, roomID); err != nil {
+			return AgentCard{}, err
+		}
+		if _, err := tx.AppendEvent(Event{Kind: "room_close_cancelled", ProjectID: projectID, RoomID: roomID,
+			PayloadJSON: payloadJSON(map[string]string{"room_id": roomID, "actor_id": actorID})}); err != nil {
+			return AgentCard{}, err
+		}
+	}
+	if err := tx.AddMember(roomID, "agent", agentID); err != nil {
+		return AgentCard{}, err
+	}
+	if _, err := tx.SetAgentDesiredByAgent(agentID, actorID, "active", rev); err != nil {
+		return AgentCard{}, err
+	}
+	if _, err := tx.AppendEvent(Event{Kind: "agent_resumed", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
+		PayloadJSON: payloadJSON(map[string]string{"agent_id": agentID, "actor_id": actorID, "reason": strings.TrimSpace(reason)})}); err != nil {
+		return AgentCard{}, err
+	}
+	return tx.agentCardByID(agentID)
+}
 
 type AgentToolIdentity struct {
 	ID        string

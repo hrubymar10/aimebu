@@ -179,8 +179,8 @@ type builtinRole struct {
 // agent receives are the resolved body (the parent's, a blank line, then the role's own).
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
-		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: shippedLeadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
-		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: finalDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
+		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: resumeLeadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
+		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: resumeDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
 		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
 		"role_reviewer_default":   {ID: "role_reviewer_default", Key: "reviewer", Label: "Reviewer", Emoji: "🔎", Body: currentReviewerRoleBody, Cardinality: "multi"},
@@ -222,6 +222,21 @@ const researcherRuleDispatcher = `Spawn workers for specifications; the leader s
 var currentLeadRoleBody = leadRoleBody + "\n\n" + spawnApprovalRuleLead
 var currentDispatcherRoleBody = dispatcherRoleBody + "\n\n" + spawnApprovalRuleDispatcher
 var finalDispatcherRoleBody = currentDispatcherRoleBody + "\n\n" + researcherRuleDispatcher + "\n\n" + dispatcherRuleDuties
+
+const resumeWorkerRule = "When a worker's done handoff is verified (gate green, work pinned or on master), close its room; the worker stops automatically. To continue the same task later, use `resume_agent` on that worker before the room is fully closed, then brief or @mention it, instead of spawning a replacement."
+
+// Migration 149 follows the exact leader body written by migration 148.
+var priorResumeLeadRoleBody = shippedLeadRoleBody
+var priorResumeDispatcherRoleBody = finalDispatcherRoleBody
+var resumeLeadRoleBody = priorResumeLeadRoleBody + "\n\n" + resumeWorkerRule
+var resumeDispatcherRoleBody = priorResumeDispatcherRoleBody + "\n\n" + resumeWorkerRule
+
+func roleResumeMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_leader_default' AND project_id IS NULL AND deleted_at IS NULL AND body=%s;\n"+
+		"UPDATE role SET body=%s WHERE id='role_dispatcher_default' AND project_id IS NULL AND deleted_at IS NULL AND body=%s;\n",
+		quote(resumeLeadRoleBody), quote(priorResumeLeadRoleBody), quote(resumeDispatcherRoleBody), quote(priorResumeDispatcherRoleBody))
+}
 
 // dispatcherRuleDuties are the A14-9 additions: no side tasks of its own, a health check of its active workers on every wake,
 // file:line evidence for causal claims, and quick reads through the worker's own shell. They follow the shipped dispatcher body and the dispatcher text of the

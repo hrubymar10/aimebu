@@ -90,6 +90,95 @@ func (f *fixture) toolPost(t *testing.T, path, key, requestKey string, body any)
 	return resp
 }
 
+func TestResumeAgentToolKeepsIdentityAndRefusesClosedRoom(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "resumelead")
+	worker, workerKey := f.createToolAgentNamed(t, "role_worker_default", "resumeworker")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET canonical_path=? WHERE id='chk_tools'`, filepath.Join(f.project.Folder, "resume"))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rooms, err := f.db.RoomsForProject(t.Context(), f.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range rooms {
+		if room.Kind == "home" {
+			if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+				if err := tx.AddMember(room.ID, "agent", lead.ID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, room.ID, lead.ID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	path := "/api/agent/agents/" + worker.ID + "/resume"
+	resp := f.toolPost(t, path, workerKey, "worker-resume", map[string]string{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("worker resume status=%d", resp.StatusCode)
+	}
+	stop := f.toolPost(t, "/api/agent/agents/"+worker.ID+"/stop", leadKey, "resume-stop-1", map[string]any{"rev": 0})
+	stop.Body.Close()
+	if stop.StatusCode != http.StatusOK {
+		t.Fatalf("stop status=%d", stop.StatusCode)
+	}
+	resp = f.toolPost(t, path, leadKey, "resume-1", map[string]string{"reason": "continue task"})
+	var card store.AgentCard
+	if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || card.ID != worker.ID || card.Desired != "active" || card.RoomID != f.room.ID {
+		t.Fatalf("resume status=%d card=%+v", resp.StatusCode, card)
+	}
+	resp = f.toolPost(t, path, leadKey, "resume-1", map[string]string{"reason": "continue task"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resume replay status=%d", resp.StatusCode)
+	}
+	resp = f.toolPost(t, path, leadKey, "resume-1", map[string]string{"reason": "different"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("resume key conflict status=%d", resp.StatusCode)
+	}
+	if lead.ID == worker.ID {
+		t.Fatal("lead and worker identities collided")
+	}
+	stop = f.toolPost(t, "/api/agent/agents/"+worker.ID+"/stop", leadKey, "resume-stop-2", map[string]any{"rev": card.DesiredRev})
+	stop.Body.Close()
+	if stop.StatusCode != http.StatusOK {
+		t.Fatalf("second stop status=%d", stop.StatusCode)
+	}
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.db.BeginRoomClose(t.Context(), f.room.ID, owner.ID, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, failures, err := f.db.AdvanceRoomClosures(t.Context(), 0); err != nil || len(failures) != 0 {
+		t.Fatalf("close failed: %v failures=%v", err, failures)
+	}
+	resp = f.toolPost(t, path, leadKey, "resume-closed", map[string]string{})
+	defer resp.Body.Close()
+	var failure map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(fmt.Sprint(failure), "reopen the room first") {
+		t.Fatalf("closed room resume status=%d body=%v", resp.StatusCode, failure)
+	}
+}
+
 func TestAgentReactUsesRoomMembershipAndReactionEvent(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

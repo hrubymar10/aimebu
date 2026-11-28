@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,8 +28,67 @@ func TestFreshProjectRolesCarryTheApprovalRule(t *testing.T) {
 	if strings.Contains(bodies["leader"], "dispatcher") {
 		t.Error("the base leader body mentions the dispatcher")
 	}
-	if bodies["leader"] != finalLeadRoleBody+"\n\n"+spawnApprovalRuleLead || bodies["dispatcher"] != finalDispatcherRoleBody {
+	if bodies["leader"] != resumeLeadRoleBody || bodies["dispatcher"] != resumeDispatcherRoleBody {
 		t.Error("fresh built-in bodies differ from the shipped definitions")
+	}
+	for _, flow := range TeamFlowTemplates() {
+		for _, role := range []string{"leader", "dispatcher"} {
+			if body := flow.RoleTextOverrides[role]; body != "" && !strings.Contains(body, resumeWorkerRule) {
+				t.Errorf("%s %s role lacks resume instructions", flow.Key, role)
+			}
+		}
+	}
+}
+
+func TestRoleResumeMigrationChainsAfterCloseout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, oldLead, oldDispatcher, afterCloseout, wantLead, wantDispatcher string
+		leadRev                                                               int
+	}{
+		{"unchanged", currentLeadRoleBody, priorResumeDispatcherRoleBody, shippedLeadRoleBody, resumeLeadRoleBody, resumeDispatcherRoleBody, 1},
+		{"edited leader", currentLeadRoleBody + " owner edit", priorResumeDispatcherRoleBody, currentLeadRoleBody + " owner edit", currentLeadRoleBody + " owner edit", resumeDispatcherRoleBody, 2},
+		{"edited dispatcher", currentLeadRoleBody, "owner dispatcher text", shippedLeadRoleBody, resumeLeadRoleBody, "owner dispatcher text", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "before-resume.sqlite")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if err := migrateUpTo(context.Background(), db, 147); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_leader_default'`, tc.oldLead, tc.leadRev); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`UPDATE role SET body=? WHERE id='role_dispatcher_default'`, tc.oldDispatcher); err != nil {
+				t.Fatal(err)
+			}
+			if err := migrateUpTo(context.Background(), db, 148); err != nil {
+				t.Fatal(err)
+			}
+			var afterCloseout string
+			if err := db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&afterCloseout); err != nil {
+				t.Fatal(err)
+			}
+			if afterCloseout != tc.afterCloseout {
+				t.Fatal("migration 148 changed an edited leader or missed the built-in leader")
+			}
+			if err := migrate(context.Background(), db); err != nil {
+				t.Fatal(err)
+			}
+			var lead, dispatcher string
+			if err := db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&lead); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.QueryRow(`SELECT body FROM role WHERE id='role_dispatcher_default'`).Scan(&dispatcher); err != nil {
+				t.Fatal(err)
+			}
+			if lead != tc.wantLead || dispatcher != tc.wantDispatcher {
+				t.Fatalf("after migration leader=%q dispatcher=%q", lead, dispatcher)
+			}
+		})
 	}
 }
 

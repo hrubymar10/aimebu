@@ -2298,7 +2298,7 @@ WHERE default_body_fingerprint IS NULL AND body<>'' AND project_id IS NULL AND d
 -- repair note follows this, because the machine's last probed harness version says nothing about a launcher's harness. NULL is every
 -- turn answered before this, and every answer an older supervisor sent: the note then falls back to the probed version.
 ALTER TABLE turn ADD COLUMN answer_tool INTEGER CHECK (answer_tool IS NULL OR answer_tool IN (0,1));
-`}, {146, ""}, {147, ""}, {148, roleCloseoutMigration()}} // Attachment paths and machine scope are migrated in Go.
+`}, {146, ""}, {147, ""}, {148, roleCloseoutMigration()}, {149, roleResumeMigration()}} // Attachment paths and machine scope are migrated in Go.
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

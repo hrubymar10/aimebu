@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -217,36 +218,44 @@ func TestLeadTurnGetsOneHandbookWarning(t *testing.T) {
 
 func TestMigrationCloseoutUpdatesUnchangedLeader(t *testing.T) {
 	t.Parallel()
-	s, _ := testStore(t, Options{})
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=148`); err != nil {
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "before-closeout.sqlite")))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=1 WHERE id='role_leader_default'`, currentLeadRoleBody); err != nil {
+	defer db.Close()
+	if err := migrateUpTo(context.Background(), db, 147); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(context.Background(), s.db); err != nil {
+	if _, err := db.Exec(`UPDATE role SET body=?,rev=1 WHERE id='role_leader_default'`, currentLeadRoleBody); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateUpTo(context.Background(), db, 148); err != nil {
 		t.Fatal(err)
 	}
 	var body string
-	if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != shippedLeadRoleBody {
+	if err := db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != shippedLeadRoleBody {
 		t.Fatalf("leader body mismatch: %v", err)
 	}
 }
 
 func TestMigrationCloseoutPreservesEditedLeader(t *testing.T) {
 	t.Parallel()
-	s, _ := testStore(t, Options{})
-	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=148`); err != nil {
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "before-closeout.sqlite")))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`UPDATE role SET body='owner edit',rev=2 WHERE id='role_leader_default'`); err != nil {
+	defer db.Close()
+	if err := migrateUpTo(context.Background(), db, 147); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(context.Background(), s.db); err != nil {
+	if _, err := db.Exec(`UPDATE role SET body='owner edit',rev=2 WHERE id='role_leader_default'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateUpTo(context.Background(), db, 148); err != nil {
 		t.Fatal(err)
 	}
 	var body string
-	if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != "owner edit" {
+	if err := db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != "owner edit" {
 		t.Fatalf("edited leader body=%q: %v", body, err)
 	}
 }
@@ -255,7 +264,7 @@ func TestFreshLeaderGetsCloseoutRule(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
 	bodies := resolvedRoleBodies(t, s)
-	if bodies["leader"] != shippedLeadRoleBody || !strings.Contains(bodies["leader"], "At close-out and after each release") {
+	if bodies["leader"] != resumeLeadRoleBody || !strings.Contains(bodies["leader"], "At close-out and after each release") {
 		t.Fatalf("fresh leader body lacks close-out rule")
 	}
 }

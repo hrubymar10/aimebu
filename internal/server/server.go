@@ -485,6 +485,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/recall", s.requireAgentTool(http.HandlerFunc(s.agentToolRecall)))
 	mux.Handle("POST /api/agent/agents", s.requireAgentTool(http.HandlerFunc(s.agentToolSpawn)))
 	mux.Handle("POST /api/agent/agents/{id}/stop", s.requireAgentTool(http.HandlerFunc(s.agentToolStop)))
+	mux.Handle("POST /api/agent/agents/{id}/resume", s.requireAgentTool(http.HandlerFunc(s.agentToolResume)))
 	mux.Handle("POST /api/agent/agents/{id}/role", s.requireAgentTool(http.HandlerFunc(s.agentToolSetRole)))
 	mux.Handle("PUT /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))
 	mux.Handle("DELETE /api/agent/messages/{message}/reactions/{emoji}", s.requireAgentTool(http.HandlerFunc(s.agentToolReact)))

@@ -53,6 +53,7 @@ var toolRoomReads = map[string]struct{ class, why string }{
 	"POST /api/agent/rooms/{room}/close":                     {noRoomContent, "close_room: the room's state"},
 	"POST /api/agent/agents":                                 {noRoomContent, "spawn_agent: the agent card"},
 	"POST /api/agent/agents/{id}/stop":                       {noRoomContent, "stop_agent: the agent card"},
+	"POST /api/agent/agents/{id}/resume":                     {noRoomContent, "resume_agent: the agent card"},
 	"POST /api/agent/agents/{id}/role":                       {noRoomContent, "set_role: the agent card"},
 	"PUT /api/agent/messages/{message}/reactions/{emoji}":    {noRoomContent, "react: 204"},
 	"DELETE /api/agent/messages/{message}/reactions/{emoji}": {noRoomContent, "react: 204"},

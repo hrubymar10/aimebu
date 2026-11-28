@@ -42,6 +42,7 @@ var toolBodyRoutes = map[string]toolBodyRoute{
 	"PUT /api/agent/memory/{id}":                 {"agentToolMemoryRecord", func() any { return new(agentMemoryRecordRequest) }},
 	"POST /api/agent/agents":                     {"agentToolSpawn", func() any { return new(agentSpawnRequest) }},
 	"POST /api/agent/agents/{id}/stop":           {"agentToolStop", func() any { return new(agentStopRequest) }},
+	"POST /api/agent/agents/{id}/resume":         {"agentToolResume", func() any { return new(agentResumeRequest) }},
 	"POST /api/agent/agents/{id}/role":           {"agentToolSetRole", func() any { return new(agentSetRoleRequest) }},
 }
 

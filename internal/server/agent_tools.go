@@ -285,6 +285,10 @@ type agentStopRequest struct {
 	Rev int64 `json:"rev"`
 }
 
+type agentResumeRequest struct {
+	Reason string `json:"reason"`
+}
+
 func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
@@ -362,6 +366,61 @@ func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		spawnError(w, err)
+		return
+	}
+	var updated store.AgentCard
+	if err := json.Unmarshal([]byte(result), &updated); err != nil {
+		fail(w, err)
+		return
+	}
+	if !reused {
+		s.sendRoomControls(r.Context(), []store.AgentCard{updated})
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) agentToolResume(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	if (!caller.IsLead && !caller.CanManage) || caller.Desired != "active" {
+		apiError(w, http.StatusForbidden, "forbidden", "active lead or flow coordinator required")
+		return
+	}
+	var req agentResumeRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Reason) > 500 {
+		apiError(w, http.StatusBadRequest, "invalid_request", "reason is too long")
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" || len(key) > 200 {
+		apiError(w, http.StatusBadRequest, "invalid_request", "Idempotency-Key required (at most 200 characters)")
+		return
+	}
+	id := r.PathValue("id")
+	requestBytes, _ := json.Marshal(struct {
+		AgentID string `json:"agent_id"`
+		Reason  string `json:"reason"`
+	}{id, req.Reason})
+	digestBytes := sha256.Sum256(requestBytes)
+	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: "agent", ActorID: caller.ID,
+		Kind: "control", Key: key, Digest: hex.EncodeToString(digestBytes[:])}, func(tx *store.Tx) (string, error) {
+		updated, err := tx.ResumeAgentAsTool(id, caller.ID, req.Reason)
+		if err != nil {
+			return "", err
+		}
+		encoded, err := json.Marshal(updated)
+		return string(encoded), err
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrResumeClosedRoom) {
+			apiError(w, http.StatusConflict, "room_closed", "reopen the room first")
+		} else if errors.Is(err, sql.ErrNoRows) {
+			apiError(w, http.StatusNotFound, "not_found", "agent not found")
+		} else {
+			spawnError(w, err)
+		}
 		return
 	}
 	var updated store.AgentCard
