@@ -1356,7 +1356,9 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   outside the project, "This room is in another project; to reach an agent
   there use the `dm_agent` tool, and to reach a person use your own project's
   rooms."; for a closed room, to use an open room of the project; otherwise,
-  to send it to a room of the project the agent is a member of. A replay of
+  to send it to a room of the project the agent is a member of. A partial or
+  whole hold in a turn that was itself woken by a held-reply note raises a
+  delivery-failure card instead of another note, so a repair cannot loop. A replay of
   the same digest returns the stored receipt, so the delivered part is never
   delivered twice; the committed reply clears earlier delivery failures as
   described above (by parent turn, by the rooms it posted to, and by a

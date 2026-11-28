@@ -87,6 +87,38 @@ func TestMixedReplyDeliversValidMessageAndHoldsOnlyOtherProjectRoom(t *testing.T
 	}
 }
 
+func TestPartialHoldAfterHeldReplyNoteRaisesCardWithoutAnotherNote(t *testing.T) {
+	s, f := answerFixture(t, false)
+	ctx := context.Background()
+	noteMessage, err := s.InsertMessage(ctx, Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: heldReplyNotePrefix + "retry", OnlyTargets: []string{f.agent.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := s.NoteForAgentMessage(ctx, f.agent.ID, noteMessage.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO turn_note(turn_id,note_id) VALUES (?,?)`, f.turn.ID, note.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := otherProjectRoom(t, s)
+	raw := fmt.Sprintf(`{"messages":[{"room":%q,"body":"delivered"},{"room":%q,"body":"refused"}]}`, f.room.ID, other.ID)
+	receipt, err := applyCandidate(t, s, f.turn, f.agent.ID, 0, raw)
+	if err != nil || receipt.Result != "committed" || len(receipt.HeldMessages) != 1 {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	var nextNotes, cards int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND body LIKE ?`, f.room.ID, partialHeldNotePrefix+"%").Scan(&nextNotes); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM inbox_item WHERE kind='delivery_failed'`).Scan(&cards); err != nil {
+		t.Fatal(err)
+	}
+	if nextNotes != 0 || cards != 1 {
+		t.Fatalf("next held notes=%d, delivery cards=%d", nextNotes, cards)
+	}
+}
+
 func TestMixedReplyHoldsClosedRoomAloneAndAllBadStaysWhole(t *testing.T) {
 	t.Parallel()
 	s, f := answerFixture(t, false)
