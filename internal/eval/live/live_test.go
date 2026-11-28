@@ -428,6 +428,25 @@ func quotaServer(t *testing.T, readings ...float64) *httptest.Server {
 	return server
 }
 
+func TestQuotaGuardStartsWhenWeeklyWindowAppearsMidRun(t *testing.T) {
+	reads := 0
+	o := newOptions(t, &stub{reply: func(adapter.TurnSpec, int) []adapter.Event {
+		return []adapter.Event{answerEvent(`{"messages":[]}`)}
+	}}, "s18-fyi-silence", "s15-waiting-on-command")
+	o.QuotaEvery = 1
+	o.Quota = &QuotaSource{ReadFn: func(context.Context) (Reading, error) {
+		reads++
+		if reads == 1 {
+			return Reading{Usage: Usage{}, Active: map[string]string{}}, nil
+		}
+		return Reading{Usage: Usage{"claude-code/main/weekly": 95}, Active: map[string]string{"claude-code": "main"}}, nil
+	}}
+	cases, err := o.Run(context.Background())
+	if !errors.Is(err, ErrStopped) || !strings.Contains(err.Error(), "95%") || len(cases) != 1 {
+		t.Fatalf("cases=%d, reads=%d, err=%v", len(cases), reads, err)
+	}
+}
+
 func TestRunTakesAFinalQuotaReadingOnEveryEarlyStop(t *testing.T) {
 	spend := func(adapter.TurnSpec, int) []adapter.Event {
 		return []adapter.Event{usageEvent(1, 1, 1.0, false, false), answerEvent(`{"messages":[]}`)}

@@ -250,8 +250,8 @@ eval runs Docker launchers only` (the route's `skipped`, `docs/contract.md`). A 
 
 It spends subscription quota, so before it starts it prints the targets, the scenarios, the repetitions, the number of cases and turns (at most two per
 case), the cost cap and the hottest weekly window, then asks `Run it? [y/N]`. `--yes` skips the question. Without a terminal and without `--yes` it
-refuses (exit 1) and runs nothing. A server with no usage snapshot, or without a usable weekly window for the chosen providers, skips the quota guard with one
-warning line, and `--max-usd` is then the only limit.
+refuses (exit 1) and runs nothing. A server with no usage snapshot, or without a usable weekly window for the chosen providers, warns once;
+`self-test` checks for a weekly window before each scenario and begins enforcing `--stop-above` if one appears during the run. `--max-usd` also limits it.
 
 | flag | meaning |
 |---|---|

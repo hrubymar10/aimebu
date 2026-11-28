@@ -194,7 +194,7 @@ func TestSelfTestWithoutAUsageSnapshotWarnsOnceAndRuns(t *testing.T) {
 	fake := &fakeRun{}
 	fake.install(t)
 	code, stdout, stderr := runSelfTest(t, "", "--yes", "--scratch", s.scratch)
-	if code != 0 || fake.calls != 1 || fake.options.Quota != nil || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stderr, "quota guard") || !strings.Contains(stdout, "Quota guard: skipped") {
+	if code != 0 || fake.calls != 1 || fake.options.Quota == nil || fake.options.QuotaEvery != 1 || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stderr, "checked before each scenario") || !strings.Contains(stdout, "Quota guard: checking before each scenario") {
 		t.Fatalf("code %d calls %d quota %v stdout %q stderr %q", code, fake.calls, fake.options.Quota, stdout, stderr)
 	}
 }
@@ -205,7 +205,7 @@ func TestSelfTestEmptyUsageWindowsAlsoWarns(t *testing.T) {
 	fake := &fakeRun{}
 	fake.install(t)
 	code, stdout, stderr := runSelfTest(t, "", "--yes", "--scratch", s.scratch)
-	if code != 0 || fake.calls != 1 || fake.options.Quota != nil || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stdout, "Quota guard: skipped") {
+	if code != 0 || fake.calls != 1 || fake.options.Quota == nil || fake.options.QuotaEvery != 1 || strings.Count(stderr, "warning:") != 1 || !strings.Contains(stdout, "Quota guard: checking before each scenario") {
 		t.Fatalf("code %d calls %d quota %v stdout %q stderr %q", code, fake.calls, fake.options.Quota, stdout, stderr)
 	}
 }
@@ -291,6 +291,10 @@ func TestSelfTestTargetsFlagFilters(t *testing.T) {
 	code, _, stderr = runSelfTest(t, "", "--yes", "--scratch", s.scratch, "--targets", "alpha,nope")
 	if code != 1 || !strings.Contains(stderr, `no target "nope"`) || !strings.Contains(stderr, "alpha, beta, gamma") || fake.calls != 0 {
 		t.Fatalf("unknown target: code %d stderr %q", code, stderr)
+	}
+	code, _, stderr = runSelfTest(t, "", "--yes", "--scratch", s.scratch, "--targets", "alpha,alpha")
+	if code != 1 || !strings.Contains(stderr, "listed more than once") || fake.calls != 0 {
+		t.Fatalf("duplicate target: code %d stderr %q calls %d", code, stderr, fake.calls)
 	}
 }
 

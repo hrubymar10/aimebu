@@ -117,7 +117,8 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 		fmt.Fprintln(stderr, "self-test:", err)
 		return 1
 	}
-	// A null snapshot or one with no usable weekly window cannot guard the run.
+	// A null snapshot or one with no usable weekly window cannot guard the
+	// first scenario, but a window may appear while the run is in progress.
 	hasUsages := selfTestHasUsages(doc.Usages)
 	var reading live.Reading
 	if hasUsages {
@@ -128,7 +129,7 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 		hasUsages = selfTestHasUsableQuota(reading, chosen)
 	}
 	if !hasUsages {
-		fmt.Fprintln(stderr, "warning: the server has no usable weekly usage window for these targets, so the quota guard (--stop-above) is skipped; only --max-usd limits the run")
+		fmt.Fprintln(stderr, "warning: the server has no usable weekly usage window for these targets yet; the quota guard (--stop-above) is checked before each scenario, and --max-usd also limits the run")
 	}
 	cases := selfTestCaseCount(selected, chosen, reps)
 	fmt.Fprint(stdout, selfTestSummary(mode, selected, chosen, reps, cases, *maxUSD, *stopAbove, hasUsages, reading, scratch))
@@ -186,17 +187,15 @@ func selfTestCommand(ctx context.Context, args []string, stdin io.Reader, stdout
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	options := &live.Options{RunID: runID, ScratchDir: scratch, Targets: chosen, Launchers: rows, Scenarios: selected, Reps: reps,
-		MaxUSD: *maxUSD, StopAbovePct: *stopAbove, VisibleHost: *visibleHost, MCP: mcp, Log: stdout,
+		MaxUSD: *maxUSD, StopAbovePct: *stopAbove, QuotaEvery: 1, VisibleHost: *visibleHost, MCP: mcp, Log: stdout,
 		NewAdapter: selfTestNewAdapter, Preflight: selfTestPreflight}
-	if hasUsages {
-		options.Quota = &live.QuotaSource{ReadFn: func(ctx context.Context) (live.Reading, error) {
-			fresh, err := fetchSelfTest(ctx, config, key)
-			if err != nil {
-				return live.Reading{}, err
-			}
-			return live.ParseUsages(strings.NewReader(string(fresh.Usages)))
-		}}
-	}
+	options.Quota = &live.QuotaSource{ReadFn: func(ctx context.Context) (live.Reading, error) {
+		fresh, err := fetchSelfTest(ctx, config, key)
+		if err != nil {
+			return live.Reading{}, err
+		}
+		return live.ParseUsages(strings.NewReader(string(fresh.Usages)))
+	}}
 	results, runErr := selfTestRun(ctx, options)
 	report := options.Report(fmt.Sprintf("Self-test %s (%s)", runID, mode), results, selected, runErr)
 	if err := live.WriteResults(dir, report, results); err != nil {
@@ -307,8 +306,13 @@ func selfTestTargets(doc protocol.DoctorSelfTest, names string) ([]live.Target, 
 		return all, nil
 	}
 	var chosen []live.Target
+	seen := map[string]bool{}
 	for _, name := range strings.Split(names, ",") {
 		name = strings.TrimSpace(name)
+		if seen[name] {
+			return nil, fmt.Errorf("target %q is listed more than once", name)
+		}
+		seen[name] = true
 		found := false
 		for _, t := range all {
 			if t.Name == name {
@@ -427,7 +431,7 @@ func selfTestSummary(mode string, scenarios []eval.Scenario, targets []live.Targ
 		b.WriteString("Cost cap: none.\n")
 	}
 	if !hasUsages {
-		b.WriteString("Quota guard: skipped, the server has no usable weekly usage window for these targets.\n")
+		b.WriteString("Quota guard: checking before each scenario; the server has no usable weekly usage window for these targets yet.\n")
 	} else {
 		fmt.Fprintf(&b, "Quota guard: the run stops when a weekly window of an active profile of these targets' providers passes %.0f%%.\n", stopAbove)
 	}
