@@ -32,6 +32,7 @@ Never commit a red tree, but test in proportion while iterating: run
 only when a change touches the chat or app-wide flows it covers. The full
 gate — `make gate`, which is `make test-full` plus `make test-ui` twice as two
 lanes side by side — runs once, on the squashed tip, before it is pushed.
+Whoever adds a package's first `_test.go` also runs `go test ./internal/testenv`.
 Commit messages must use a conventional subject, a blank line, and a wrapped
 body explaining the reason and tradeoffs. Do not add AI attribution or
 override the configured Git author.
