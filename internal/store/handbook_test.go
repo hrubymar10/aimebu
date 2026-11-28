@@ -214,3 +214,48 @@ func TestLeadTurnGetsOneHandbookWarning(t *testing.T) {
 		t.Fatalf("warning %q", warning)
 	}
 }
+
+func TestMigrationCloseoutUpdatesUnchangedLeader(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=148`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE role SET body=?,rev=1 WHERE id='role_leader_default'`, currentLeadRoleBody); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(context.Background(), s.db); err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != shippedLeadRoleBody {
+		t.Fatalf("leader body mismatch: %v", err)
+	}
+}
+
+func TestMigrationCloseoutPreservesEditedLeader(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	if _, err := s.db.Exec(`DELETE FROM schema_version WHERE version=148`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE role SET body='owner edit',rev=2 WHERE id='role_leader_default'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(context.Background(), s.db); err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_leader_default'`).Scan(&body); err != nil || body != "owner edit" {
+		t.Fatalf("edited leader body=%q: %v", body, err)
+	}
+}
+
+func TestFreshLeaderGetsCloseoutRule(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	bodies := resolvedRoleBodies(t, s)
+	if bodies["leader"] != shippedLeadRoleBody || !strings.Contains(bodies["leader"], "At close-out and after each release") {
+		t.Fatalf("fresh leader body lacks close-out rule")
+	}
+}

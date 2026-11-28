@@ -68,6 +68,15 @@ var leadRoleBody = priorHandbookLeadRoleBody + "\n\nMaintain the project handboo
 var finalLeadRoleBody = strings.Replace(leadRoleBody,
 	"At close-out, update Current state and Open backlog and append a concise Timeline entry. Verify handbook state inherited from a previous leader. Compress oldest Timeline entries when the handbook exceeds about 1000 lines. Keep canonical details in repository docs.",
 	"At close-out and after each release, delete finished items from Open backlog, refresh Current state, and put the Timeline entry at the top. Write the most important item first, one item per line; keep Timeline newest first and canonical details in repository docs. Verify handbook state inherited from a previous leader. Compress the oldest Timeline entries when the handbook exceeds about 1000 lines.", 1)
+var shippedLeadRoleBody = finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead
+
+// roleCloseoutMigration refreshes only the exact unedited pre-close-out body.
+// The blank built-in body already resolves from code and owner edits stay saved.
+func roleCloseoutMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_leader_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=1 AND body=%s;\n",
+		quote(shippedLeadRoleBody), quote(currentLeadRoleBody))
+}
 
 func roleHandbookMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
@@ -170,7 +179,7 @@ type builtinRole struct {
 // agent receives are the resolved body (the parent's, a blank line, then the role's own).
 func builtinRoles() map[string]builtinRole {
 	roles := map[string]builtinRole{
-		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead, Cardinality: "singleton", Lead: true, CanSpawn: true},
+		"role_leader_default":     {ID: "role_leader_default", Key: "leader", Label: "Leader", Emoji: "👑", Body: shippedLeadRoleBody, Cardinality: "singleton", Lead: true, CanSpawn: true},
 		"role_dispatcher_default": {ID: "role_dispatcher_default", Key: "dispatcher", Label: "Dispatcher", Emoji: "📨", Body: finalDispatcherRoleBody, Cardinality: "singleton", CanSpawn: true},
 		"role_advisor_default":    {ID: "role_advisor_default", Key: "advisor", Label: "Advisor", Emoji: "💡", Body: advisorRoleBody, Cardinality: "singleton"},
 		"role_worker_default":     {ID: "role_worker_default", Key: "worker", Label: "Worker", Emoji: "🛠️", Body: currentWorkerRoleBody, Cardinality: "multi", Writer: true},
