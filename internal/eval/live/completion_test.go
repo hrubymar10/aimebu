@@ -4,12 +4,23 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/hrubymar10/aimebu/v2/internal/adapter"
 	"github.com/hrubymar10/aimebu/v2/internal/eval"
 )
+
+func TestStandinServerURLAcceptsIPv6VisibleHost(t *testing.T) {
+	for _, host := range []string{"::1", "[::1]"} {
+		got := standinServerURL(host, 9897)
+		parsed, err := url.Parse(got)
+		if err != nil || parsed.Hostname() != "::1" || parsed.Port() != "9897" {
+			t.Fatalf("visible host %q: URL %q parsed as %+v, %v", host, got, parsed, err)
+		}
+	}
+}
 
 // callTool makes one tools/call to the stand-in toolbox with the key of the turn, the way a harness does.
 func callTool(t *testing.T, spec adapter.TurnSpec, name, arguments string) {
@@ -130,11 +141,12 @@ func TestCommandDoneNeedsRunCommand(t *testing.T) {
 	}
 }
 
-// The second turn is for a command that is still running when the turn ends, and an answer that is not one (empty, or for a scenario that expects a
-// handoff, a message that only says it will report). A wrong answer is not given a second chance because it happened to start a command.
+// A still-running command earns a completion turn after an empty answer, or
+// any non-handoff answer in a scenario that checks a handoff outcome.
 func TestSecondTurnOnlyForAStillRunningCommandAndNoRealAnswer(t *testing.T) {
 	wrong := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"Nope.","reply_to":"9999"}]}`
 	willReport := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"I started the build and will report when it ends.","reply_to":"msg_01EVALMSG7203","handoff":false}]}`
+	substantive := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"The build succeeded.","reply_to":"msg_01EVALMSG7203","handoff":false}]}`
 	handoffFailed := `{"messages":[{"room":"` + eval.TaskRoom + `","body":"@` + eval.DispatcherID + ` it failed.","reply_to":"msg_01EVALMSG7203","handoff":true,"outcome":"failed"}]}`
 	run := func(t *testing.T, scenario string, first string, observeFinish bool) (turns int, specs int) {
 		t.Helper()
@@ -163,6 +175,7 @@ func TestSecondTurnOnlyForAStillRunningCommandAndNoRealAnswer(t *testing.T) {
 	}{
 		{"an empty answer, command running", "s01-plain-reply", `{"messages":[]}`, false, true},
 		{"a will-report message in a handoff scenario, command running", "s03-handoff-done", willReport, false, true},
+		{"a substantive non-handoff message in a handoff scenario, command running", "s03-handoff-done", substantive, false, true},
 		{"a wrong answer after the command finished", "s01-plain-reply", wrong, true, false},
 		{"an empty answer after the command finished", "s01-plain-reply", `{"messages":[]}`, true, false},
 		{"a wrong reply in a scenario with no handoff, command running", "s01-plain-reply", wrong, false, false},

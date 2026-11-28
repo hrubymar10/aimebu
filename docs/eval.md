@@ -114,11 +114,8 @@ adapter's `error_summary`, its `error_event` (OpenCode and Claude report a failu
 stderr tail; a failure that said nothing anywhere says "no output on stdout or stderr".
 
 **An OpenCode target on its own provider.** For a model on one of OpenCode's built-in providers (`ollama-cloud/...`, not one of the target's custom
-`providers`), the key comes from the environment of the process that starts the launcher, as for a native turn (`adapter.KnownProviderKeys`): a real agent's
-supervisor has the owner's keys, the eval's process may not. OpenCode then fails in about two seconds with `UnknownError: Unexpected server error`, the same text it
-prints for an unknown model (run 3: every OpenCode case). The target needs `OLLAMA_API_KEY` (or the key of its provider) in the environment of the process that runs the eval (`aimebu self-test` or `make eval`). The runner therefore refuses such a target before any turn when none of those variables is set
-(`builtinProviderKey`), naming them; export the provider's key (`OLLAMA_API_KEY` for `ollama-cloud`), give the model a custom provider, or leave the target out.
-A failure that still reads `UnknownError` carries a hint with the two meanings.
+`providers`), OpenCode can use either a provider key in the launcher's environment or credentials in its mounted `auth.json`. The runner does not reject
+a target merely because its own environment has no key. A failure reading `UnknownError` carries a hint that the provider key or model may be unavailable.
 
 **Switches.** It refuses to run unless `AIMEBU_EVAL=1` is exported. Without `--full` it is a **smoke**: scenarios `s01` and `s15`, the first target,
 one repetition. Run the smoke first. Run `--full` only with the quota switcher on and outside peak hours.
@@ -151,9 +148,7 @@ the isolated user config and checks that it does not reach the harness (and that
 that offers `run_command` says how its commands end in `expect.command_done` (`exit_code`, `tail`). The runner sends the note (`Your command `...` finished with
 exit code N; output tail: '...'`, why `your command finished`) as a second turn of the same session, and grades **that** answer, only when the turn was waiting for
 the command: it called `run_command`, the command was still running when the turn ended (the turn did not look at it with `command_log` or `list_commands`, which in
-the stand-in report the end the scenario defines), its answer has no handoff, and it is no answer to the addressed party: empty, or, in a scenario whose point is a
-handoff (it checks `handoff_outcome`), only a message that says it will report. A wrong answer that happens to follow a command is graded as it is, so the
-second turn cannot inflate a rate. The attempt holds the second turn's answer and checks, and the time, tokens and cost of both turns; `turns` is 2 in
+the stand-in report the end the scenario defines), and its answer has no handoff. An empty answer waits; a scenario checking `handoff_outcome` also sends the completion note after any non-handoff message. The runner does not inspect that message's text. The attempt holds the second turn's answer and checks, and the time, tokens and cost of both turns; `turns` is 2 in
 `results.json`. The report counts, per model, the cases correct on the first turn, those correct only after the command finished, and those that needed the second
 turn. A scenario with no `command_done` (s14, s15: their point is not to run the command) never gets one.
 

@@ -240,7 +240,7 @@ func Render(title string, cases []Case, scenarios []Scenario) string {
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "| %s | %d | %d |\n", s.Model, s.ViaTool, s.ViaText)
 	}
-	b.WriteString("\n## Cases that needed the second turn\n\nA turn that started a command with `run_command` and ended with no answer to the addressed party (empty, or only a message that says it will report, and no handoff) while the command was still running is the turn that waits for it, as the prompt asks. The run then delivers the command's completion note as a second turn of the same session and grades that turn; its time, tokens and cost are added to the case's first attempt. A case correct on the first turn is counted apart from one correct only after the command finished.\n\n| model | correct on the first turn | correct after the command finished | needed the second turn | cases |\n|---|---|---|---|---|\n")
+	b.WriteString("\n## Cases that needed the second turn\n\nA turn that started a command with `run_command` and ended without a handoff while the command was still running receives the completion note when its answer was empty or the scenario checks `handoff_outcome`; the runner does not inspect message text. The second turn's answer is graded, and its time, tokens and cost are added to the case's first attempt. A case correct on the first turn is counted apart from one correct only after the command finished.\n\n| model | correct on the first turn | correct after the command finished | needed the second turn | cases |\n|---|---|---|---|---|\n")
 	for _, s := range summaries {
 		total := 0
 		for _, c := range cases {

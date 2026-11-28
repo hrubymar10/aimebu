@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,8 +79,8 @@ func (o *Options) runCase(ctx context.Context, impl adapter.Adapter, target Targ
 
 // waitingForCommand says a turn that started a command ended waiting for it, as the prompt asks, so the completion note is its next turn: the
 // command was still running at the end of the turn (the turn did not look at it with command_log or list_commands and was not told it had ended),
-// the answer has no handoff, and it is no answer to the addressed party: empty, or, for a scenario whose point is a handoff, only a message that
-// says it will report. A wrong answer that happens to follow a command is graded as it is, so the second turn cannot inflate a rate.
+// the answer has no handoff, and it is empty or the scenario checks a handoff outcome. Message text is not inspected here: a wrong first
+// answer can receive the completion note, but the graded outcome still depends on the second answer.
 func waitingForCommand(scenario eval.Scenario, usage turnUsage) bool {
 	switch {
 	case usage.finished || usage.handoff:
@@ -186,7 +188,7 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 	// The row's agent server address is the real server's. The turn's toolbox is the stand-in, which a container reaches by the host gateway.
 	spec.AgentServerURL = ""
 	if o.VisibleHost != "" {
-		spec.AgentServerURL = fmt.Sprintf("http://%s:%d", o.VisibleHost, o.MCP.Port())
+		spec.AgentServerURL = standinServerURL(o.VisibleHost, o.MCP.Port())
 	}
 	// Every normal turn has agent tools access (the Docker adapters refuse one without it), so a scenario with no tools gets a toolbox that offers
 	// none. The key is random: the stand-in listens on every interface, and a key derived from the turn id could be guessed by a neighbour.
@@ -264,6 +266,10 @@ func (o *Options) runTurn(ctx context.Context, impl adapter.Adapter, target Targ
 		a.Err = strings.Join(r.Failed, "; ")
 	}
 	return a, newSession, used
+}
+
+func standinServerURL(host string, port int) string {
+	return "http://" + net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port))
 }
 
 // harnessFailure says why a turn ended with no answer. A harness may report its failure on stdout (OpenCode's "error" event, Claude's error
