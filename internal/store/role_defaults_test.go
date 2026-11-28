@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 	"github.com/hrubymar10/aimebu/v2/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/v2/internal/agenttools"
 )
 
 func TestReactionInstructionHasToolForEveryBuiltInRole(t *testing.T) {
