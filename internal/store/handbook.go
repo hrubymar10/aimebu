@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 )
@@ -15,6 +17,30 @@ var ErrHandbookEdit = errors.New("invalid_handbook_edit")
 var ErrHandbookRevision = errors.New("handbook_revision_changed")
 
 var handbookSections = []struct{ Key, Title string }{{"current_state", "Current state"}, {"open_backlog", "Open backlog"}, {"conventions", "Conventions"}, {"gotchas", "Gotchas"}, {"timeline", "Timeline"}}
+var handbookUpdatedStamp = regexp.MustCompile(`\bUpdated\s+(\d{4}-\d{2}-\d{2})\b`)
+
+func handbookWarning(doc Handbook, now time.Time) string {
+	var warnings []string
+	var updated time.Time
+	if match := handbookUpdatedStamp.FindStringSubmatch(doc.Sections["current_state"]); match != nil {
+		updated, _ = time.Parse("2006-01-02", match[1])
+	}
+	if updated.IsZero() {
+		updated, _ = time.Parse(time.RFC3339Nano, doc.UpdatedAt)
+	}
+	if !updated.IsZero() && now.Sub(updated) > 48*time.Hour {
+		warnings = append(warnings, fmt.Sprintf("Current state was last updated %d h ago (over 48 h)", int(now.Sub(updated).Hours())))
+	}
+	backlog := doc.Sections["open_backlog"]
+	lines := 0
+	if backlog != "" {
+		lines = strings.Count(strings.TrimSuffix(backlog, "\n"), "\n") + 1
+	}
+	if lines > 60 {
+		warnings = append(warnings, fmt.Sprintf("Open backlog has %d lines (over 60): delete finished items", lines))
+	}
+	return strings.Join(warnings, "; ")
+}
 
 // Handbook is the current project document or an immutable past snapshot.
 type Handbook struct {

@@ -273,6 +273,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				if err != nil {
 					return err
 				}
+				if warning := handbookWarning(handbook, time.Now().UTC()); warning != "" {
+					contextData["project_handbook_warning"] = warning
+				}
 				var nativeStarted sql.NullString
 				var sessionTurns int
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_started_at FROM session WHERE id=?`, special.SessionID).Scan(&nativeStarted); err != nil {
@@ -597,6 +600,9 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			handbook, err := tx.handbookForDelivery(projectID)
 			if err != nil {
 				return err
+			}
+			if warning := handbookWarning(handbook, time.Now().UTC()); warning != "" {
+				contextData["project_handbook_warning"] = warning
 			}
 			if !nativeStarted.Valid || sessionTurns == 1 {
 				contextData["project_handbook"] = handbook

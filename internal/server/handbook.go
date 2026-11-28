@@ -110,11 +110,12 @@ func (s *Server) agentHandbook(w http.ResponseWriter, r *http.Request) {
 			handbookError(w, err)
 			return
 		}
-		if access == "limited" {
-			doc.Sections = map[string]string{"current_state": doc.Sections["current_state"], "open_backlog": doc.Sections["open_backlog"]}
-			doc.Markdown = "## Current state\n" + doc.Sections["current_state"] + "\n\n## Open backlog\n" + doc.Sections["open_backlog"]
+		view, invalid := handbookReadView(doc, access == "limited", r.URL.Query())
+		if invalid != "" {
+			apiError(w, 400, "invalid_request", invalid)
+			return
 		}
-		writeJSON(w, 200, doc)
+		writeJSON(w, 200, view)
 		return
 	}
 	if access != "full" {
@@ -143,5 +144,9 @@ func (s *Server) agentHandbook(w http.ResponseWriter, r *http.Request) {
 		handbookError(w, err)
 		return
 	}
-	writeJSON(w, 200, doc)
+	counts := make(map[string]int, 5)
+	for _, section := range handbookOrder {
+		counts[section] = len(handbookContentLines(doc.Sections[section]))
+	}
+	writeJSON(w, 200, map[string]any{"rev": doc.Rev, "line_count": counts, "over_budget": doc.OverBudget})
 }

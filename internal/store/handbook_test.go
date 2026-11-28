@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 )
@@ -140,5 +141,76 @@ func TestHandbookSoftLineBudget(t *testing.T) {
 	doc, err := s.UpdateHandbook(context.Background(), project.ID, lead.ID, "timeline", &timeline, nil, 0)
 	if err != nil || !doc.OverBudget || doc.LineCount <= 1000 || !strings.Contains(doc.Nudge, "compress") {
 		t.Fatalf("soft budget: %+v %v", doc, err)
+	}
+}
+
+func TestHandbookWarningThresholds(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	makeDoc := func(stamp string, age time.Duration, lines int) Handbook {
+		backlog := ""
+		if lines > 0 {
+			backlog = strings.Repeat("item\n", lines)
+		}
+		return Handbook{Sections: map[string]string{"current_state": stamp, "open_backlog": backlog}, UpdatedAt: now.Add(-age).Format(time.RFC3339Nano)}
+	}
+	for _, tc := range []struct {
+		name                   string
+		doc                    Handbook
+		wantState, wantBacklog bool
+	}{
+		{"below both", makeDoc("Updated 2026-11-27", 47*time.Hour, 60), false, false},
+		{"at age threshold", makeDoc("no stamp", 48*time.Hour, 60), false, false},
+		{"stale stamp", makeDoc("Updated 2026-11-25", time.Hour, 60), true, false},
+		{"invalid stamp uses timestamp", makeDoc("Updated 2026-13-40", 49*time.Hour, 60), true, false},
+		{"fallback timestamp", makeDoc("no stamp", 49*time.Hour, 60), true, false},
+		{"over backlog", makeDoc("Updated 2026-11-27", time.Hour, 61), false, true},
+		{"both", makeDoc("Updated 2026-11-25", time.Hour, 61), true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			warning := handbookWarning(tc.doc, now)
+			if strings.Contains(warning, "Current state was last updated") != tc.wantState || strings.Contains(warning, "Open backlog has") != tc.wantBacklog {
+				t.Fatalf("warning %q", warning)
+			}
+		})
+	}
+}
+
+func TestLeadTurnGetsOneHandbookWarning(t *testing.T) {
+	t.Parallel()
+	s, project, room, _, lead := wakeFixture(t)
+	ctx := context.Background()
+	state := "Updated 2020-01-01\nNeeds review"
+	if _, err := s.UpdateHandbook(ctx, project.ID, lead.ID, "current_state", &state, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	backlog := strings.Repeat("open\n", 61)
+	if _, err := s.UpdateHandbook(ctx, project.ID, lead.ID, "open_backlog", &backlog, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET observed='idle' WHERE id=?`, lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	note, err := s.InsertMessage(ctx, Message{RoomID: room.ID, AuthorKind: "user", AuthorID: "owner", Body: "continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.NoteForAgentMessage(ctx, lead.ID, note.ID); err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, lead.ID, "")
+	if err != nil || !ready {
+		t.Fatalf("delivery %v %v", ready, err)
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(delivery.Context, &data); err != nil {
+		t.Fatal(err)
+	}
+	var warning string
+	if err := json.Unmarshal(data["project_handbook_warning"], &warning); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(warning, "Current state was last updated") != 1 || strings.Count(warning, "Open backlog has 61 lines") != 1 {
+		t.Fatalf("warning %q", warning)
 	}
 }

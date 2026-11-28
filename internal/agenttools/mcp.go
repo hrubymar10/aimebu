@@ -117,8 +117,12 @@ var catalog = []tool{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
 	}, "required": []string{"room_id", "lifecycle_rev", "request_key"}}},
-	{"handbook_get", "Read the project handbook. The lead sees all sections; a leader-dispatcher flow dispatcher sees Current state and Open backlog only.", empty},
-	{"handbook_update", "Active lead only. Replace one handbook section with content or append patch, using the current revision.", map[string]any{"type": "object", "properties": map[string]any{
+	{"handbook_get", "Read bounded handbook lines. Omit arguments for a section index and previews; use section, offset (1-based), limit, or grep to narrow the answer. The lead sees all sections; a leader-dispatcher flow dispatcher sees Current state and Open backlog only.", map[string]any{"type": "object", "properties": map[string]any{
+		"section": map[string]any{"type": "string", "enum": []string{"current_state", "open_backlog", "conventions", "gotchas", "timeline"}},
+		"offset":  map[string]string{"type": "integer"}, "limit": map[string]string{"type": "integer"},
+		"grep": map[string]string{"type": "string"},
+	}}},
+	{"handbook_update", "Active lead only. Replace one handbook section with content or append patch, using the current revision. Returns revision, section line counts, and budget status; read the section again to see its content.", map[string]any{"type": "object", "properties": map[string]any{
 		"section": map[string]any{"type": "string", "enum": []string{"current_state", "open_backlog", "conventions", "gotchas", "timeline"}},
 		"content": map[string]string{"type": "string"}, "patch": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
 	}, "required": []string{"section", "rev"}}},
@@ -443,6 +447,29 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		body = map[string]any{"lifecycle_rev": rev, "cascade": cascade}
 	case "handbook_get":
 		path = "/api/agent/handbook"
+		values := url.Values{}
+		if section := getString("section"); section != "" {
+			if section != "current_state" && section != "open_backlog" && section != "conventions" && section != "gotchas" && section != "timeline" {
+				return toolResult("invalid handbook section", true)
+			}
+			values.Set("section", section)
+		}
+		if grep := getString("grep"); grep != "" {
+			values.Set("grep", grep)
+		}
+		for _, field := range []string{"offset", "limit"} {
+			if len(args[field]) == 0 {
+				continue
+			}
+			var n int
+			if json.Unmarshal(args[field], &n) != nil || n < 1 {
+				return toolResult(field+" must be a positive integer", true)
+			}
+			values.Set(field, strconv.Itoa(n))
+		}
+		if len(values) > 0 {
+			path += "?" + values.Encode()
+		}
 	case "handbook_update":
 		section := getString("section")
 		if section != "current_state" && section != "open_backlog" && section != "conventions" && section != "gotchas" && section != "timeline" {

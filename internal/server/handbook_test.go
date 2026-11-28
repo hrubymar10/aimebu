@@ -2,7 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -32,7 +35,7 @@ func TestHandbookAgentAndHumanAPI(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "leader")
+	_, leadKey := f.createToolAgentNamed(t, "role_leader_default", "leader")
 	_, workerKey := f.createToolAgentNamed(t, "role_worker_default", "worker")
 	path := "/api/projects/" + f.project.ID + "/handbook"
 	resp := f.request("GET", path, nil, false)
@@ -55,12 +58,12 @@ func TestHandbookAgentAndHumanAPI(t *testing.T) {
 		t.Fatalf("worker put %d", resp.StatusCode)
 	}
 	resp = handbookToolPut(t, f, leadKey, map[string]any{"section": "current_state", "content": "state", "rev": 0})
-	var updated store.Handbook
+	var updated map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || updated.Rev != 1 || updated.UpdatedBy != lead.ID {
+	if resp.StatusCode != 200 || updated["rev"] != float64(1) || updated["line_count"] == nil || updated["sections"] != nil {
 		t.Fatalf("lead update %d %+v", resp.StatusCode, updated)
 	}
 	resp = handbookToolPut(t, f, leadKey, map[string]any{"section": "timeline", "patch": "entry", "rev": 0})
@@ -89,5 +92,112 @@ func TestHandbookAgentAndHumanAPI(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 405 {
 		t.Fatalf("human write %d", resp.StatusCode)
+	}
+}
+
+func TestHandbookReadModesAndCap(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, key := f.createToolAgentNamed(t, "role_leader_default", "leader")
+	state := "Updated 2026-11-20\nneedle\nfollowing\n" + strings.Repeat("line\n", 60)
+	resp := handbookToolPut(t, f, key, map[string]any{"section": "current_state", "content": state, "rev": 0})
+	var update map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&update); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || update["rev"] != float64(1) || update["sections"] != nil || update["markdown"] != nil || update["line_count"] == nil {
+		t.Fatalf("update leaked content: %#v", update)
+	}
+	get := func(query string) handbookView {
+		t.Helper()
+		response := f.toolRequest(t, "/api/agent/handbook"+query, key)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != 200 || len(body) > handbookAnswerCap {
+			t.Fatalf("response %d bytes %d: %s", response.StatusCode, len(body), body)
+		}
+		var view handbookView
+		if err := json.Unmarshal(body, &view); err != nil {
+			t.Fatal(err)
+		}
+		return view
+	}
+	index := get("")
+	if len(index.Sections) != 5 || len(index.Lines) != 50 || !index.HasMore || index.NextOffset == nil || *index.NextOffset != 51 {
+		t.Fatalf("index: %+v", index)
+	}
+	section := get("?section=current_state")
+	if len(section.Lines) != 50 || !section.HasMore || section.TotalLines != 63 {
+		t.Fatalf("section: %+v", section)
+	}
+	page := get("?section=current_state&offset=51&limit=2")
+	if len(page.Lines) != 2 || page.Lines[0].Line != 51 || page.NextOffset == nil || *page.NextOffset != 53 {
+		t.Fatalf("page: %+v", page)
+	}
+	match := get("?grep=NEEDLE")
+	if len(match.Lines) != 3 || match.Lines[1].Text != "needle" || match.Lines[0].Section != "current_state" {
+		t.Fatalf("grep: %+v", match)
+	}
+	large := strings.Repeat("line of substantial handbook content\n", 61000)
+	if _, err := f.db.UpdateHandbook(context.Background(), f.project.ID, lead.ID, "timeline", &large, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	capped := get("?section=timeline&limit=61000")
+	if !capped.HasMore || capped.NextOffset == nil || len(capped.Lines) == 0 {
+		t.Fatalf("cap: %+v", capped)
+	}
+}
+
+func TestHandbookDispatcherReadScope(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, leadKey := f.createToolAgentNamed(t, "role_leader_default", "leader")
+	_, dispatcherKey := f.createToolAgentNamed(t, "role_dispatcher_default", "dispatcher")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id=?`, f.project.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, edit := range []struct {
+		section, value string
+		rev            int
+	}{
+		{"current_state", "state", 0}, {"open_backlog", "backlog", 1}, {"timeline", "secret timeline", 2},
+	} {
+		response := handbookToolPut(t, f, leadKey, map[string]any{"section": edit.section, "content": edit.value, "rev": edit.rev})
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("edit %s: %d", edit.section, response.StatusCode)
+		}
+	}
+	response := f.toolRequest(t, "/api/agent/handbook", dispatcherKey)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view handbookView
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != 200 || len(view.Sections) != 2 || len(view.Lines) != 2 || strings.Contains(string(body), "secret timeline") {
+		t.Fatalf("dispatcher read: %d %s", response.StatusCode, body)
+	}
+	response = f.toolRequest(t, "/api/agent/handbook?section=timeline", dispatcherKey)
+	response.Body.Close()
+	if response.StatusCode != 400 {
+		t.Fatalf("restricted section: %d", response.StatusCode)
+	}
+	response = handbookToolPut(t, f, dispatcherKey, map[string]any{"section": "current_state", "content": "bad", "rev": 3})
+	response.Body.Close()
+	if response.StatusCode != 403 {
+		t.Fatalf("dispatcher write: %d", response.StatusCode)
 	}
 }

@@ -26,7 +26,7 @@ func TestFreshProjectRolesCarryTheApprovalRule(t *testing.T) {
 	if strings.Contains(bodies["leader"], "dispatcher") {
 		t.Error("the base leader body mentions the dispatcher")
 	}
-	if bodies["leader"] != currentLeadRoleBody || bodies["dispatcher"] != finalDispatcherRoleBody {
+	if bodies["leader"] != finalLeadRoleBody+"\n\n"+spawnApprovalRuleLead || bodies["dispatcher"] != finalDispatcherRoleBody {
 		t.Error("fresh built-in bodies differ from the shipped definitions")
 	}
 }

@@ -324,7 +324,7 @@ func (tx *Tx) deliveredRoleBody(roleID, projectID string) (string, bool, error) 
 	if lead {
 		roleBody += "\n\nWhen spawning a role, strongly prefer its configured default agent. Call spawn_agent with role_key and omit tool, variant, and model to select the next available default. If you need a different harness or model, provide a concrete reason. If no default is available, choose a listed harness and model yourself and tell the room why."
 		if !strings.Contains(roleBody, "Maintain the project handbook") {
-			roleBody += "\n\nMaintain the project handbook with handbook_get and handbook_update at decisions and handoffs. At close-out, update Current state and Open backlog and append a concise Timeline entry. Keep canonical details in repository docs. If the handbook exceeds about 1000 lines, compress its oldest Timeline entries."
+			roleBody += "\n\nMaintain the project handbook with handbook_get and handbook_update at decisions and handoffs. At close-out and after each release, delete finished items from Open backlog, refresh Current state, and put the Timeline entry at the top. Write the most important item first, one item per line; keep Timeline newest first and canonical details in repository docs. Compress the oldest Timeline entries when the handbook exceeds about 1000 lines."
 		}
 	}
 	return roleBody, lead, nil

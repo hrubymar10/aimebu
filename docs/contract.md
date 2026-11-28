@@ -43,6 +43,20 @@ lead session includes the full handbook and marks it as previous-leader state
 to verify; later deliveries carry an over-budget nudge when needed. Plain
 prune preserves the handbook, while full prune and project deletion remove it.
 
+Agent `handbook_get` accepts optional `section`, 1-based `offset`, positive
+`limit`, and case-insensitive substring `grep`. With no arguments it returns
+every visible section's name, line count, and `Updated YYYY-MM-DD` stamp when
+present, plus the first 50 lines per section. A section read defaults to 50
+lines. A grep read returns matching lines with one adjacent line on each side,
+section names, and line numbers. Every response includes `total_lines`,
+`has_more`, and `next_offset`; the response is capped at 16 KiB on a line
+boundary and supplies continuation instructions. A dispatcher sees only
+Current state and Open backlog. `handbook_update` returns only `rev`,
+per-section `line_count`, and `over_budget`. A lead turn gets one warning line
+when Current state is over 48 hours old or Open backlog exceeds 60 lines. The
+Current state age uses its parseable `Updated YYYY-MM-DD` stamp, or the
+handbook update time otherwise.
+
 ## 1. Identifiers and ordering
 
 - Server ids: opaque sortable `<prefix>_<ulid>` (`prj_ room_ msg_ agt_ ses_

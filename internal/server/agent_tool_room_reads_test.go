@@ -36,7 +36,7 @@ var toolRoomReads = map[string]struct{ class, why string }{
 	"GET /api/agent/macros":                                  {noRoomContent, "list_macros: project macros"},
 	"GET /api/agent/usage-left":                              {noRoomContent, "usage_left: quotas"},
 	"GET /api/agent/handbook":                                {noRoomContent, "handbook_get: the project handbook, not a room's"},
-	"PUT /api/agent/handbook":                                {noRoomContent, "handbook_update: returns the handbook"},
+	"PUT /api/agent/handbook":                                {noRoomContent, "handbook_update: returns only project handbook metadata"},
 	"GET /api/agent/commands":                                {noRoomContent, "list_commands: the agent's own shell jobs"},
 	"GET /api/agent/commands/{id}/log":                       {noRoomContent, "command_log: output of the agent's own shell job"},
 	"POST /api/agent/commands":                               {noRoomContent, "run_command: the job"},

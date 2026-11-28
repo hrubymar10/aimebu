@@ -104,7 +104,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	base.TaskParentKey = "home"
 	base.GrantRoles = []string{"leader"}
 	base.RoleTextOverrides = map[string]string{
-		"leader": leadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.",
+		"leader": finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nGeneral is the shared room for project announcements and coordination. Keep task work in task rooms.",
 	}
 	routed := TeamFlowTemplate{Key: "leader-dispatcher", Label: "Leader and dispatcher", Description: "The leader writes specs; the dispatcher runs workers and reviews.", Recommendation: "Recommended for large projects; the dispatcher handles routing so the leader's context stays lean."}
 	routed.Rooms = []FlowRoom{{Key: "home", Title: "Home", Kind: "home"}, {Key: "routing", Title: "routing", Kind: "task", Restricted: true}, {Key: "general", Title: "general", Kind: "task"}}
@@ -144,7 +144,7 @@ func TeamFlowTemplates() []TeamFlowTemplate {
 	advised.TaskParentKey = "general"
 	advised.GrantRoles = []string{"leader"}
 	advised.RoleTextOverrides = map[string]string{
-		"leader":  leadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.",
+		"leader":  finalLeadRoleBody + "\n\n" + spawnApprovalRuleLead + "\n\nConsult the advisor in advice before writing a plan for a non-trivial task, making a consequential decision about behavior, data, spend, or irreversible operations, after two failed attempts at the same problem, and before handing a large change to the human. Each consult must state the goal, current state, options considered, a concrete question, and relevant message IDs. Decide cosmetic and routine matters yourself. Report the advisor's input to the human only when it changed the plan. Ask for a review of the final handoff only when needed. General is the shared project room; keep task work in task rooms.",
 		"advisor": advisorRoleBody + "\n\n" + roleSafety + "\n\n" + roleCommunication,
 	}
 	return []TeamFlowTemplate{base, routed, advised, custom}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"syscall"
 	"testing"
@@ -451,5 +452,27 @@ func TestRecoveryToolDescriptionsNameEveryoneWhoMayDecide(t *testing.T) {
 	}
 	if seen != 2 {
 		t.Fatalf("recovery tools in the catalog: %d", seen)
+	}
+}
+
+func TestHandbookGetForwardsReadFilters(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agent/handbook" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		query = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"total_lines":0,"has_more":false,"next_offset":null}`))
+	}))
+	defer server.Close()
+	(Server{URL: server.URL, Key: "aak_test"}).call(t.Context(), "handbook_get", json.RawMessage(`{"section":"open_backlog","offset":4,"limit":2,"grep":"Done"}`))
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"section": "open_backlog", "offset": "4", "limit": "2", "grep": "Done"} {
+		if values.Get(key) != want {
+			t.Fatalf("%s=%q want %q", key, values.Get(key), want)
+		}
 	}
 }
