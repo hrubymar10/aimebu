@@ -886,6 +886,10 @@ func TestLostReceiptReplayedAndDigestConflict(t *testing.T) {
 	go func() { done <- client.RunOnce(runCtx) }()
 	select {
 	case <-ready:
+	case err := <-done:
+		// RunOnce returned before OnReady: the connection ended or a replay step failed. Waiting out replayWait here would report that as
+		// a hello timeout and drop the error, which is the only evidence of what went wrong.
+		t.Fatalf("receipt replay client stopped before it was ready: %v", err)
 	case <-time.After(replayWait):
 		t.Fatal("receipt replay hello timed out")
 	}
