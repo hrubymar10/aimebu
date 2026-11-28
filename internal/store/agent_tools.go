@@ -19,13 +19,14 @@ var ErrResumeClosedRoom = errors.New("resume_room_closed")
 // transition and agent reactivation commit together, so a refused resume
 // cannot leave a closing room open.
 func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, error) {
-	var projectID, roomID, roleKey, desired, observed, lifecycle, kind string
+	var projectID, roomID, roleKey, desired, observed, lifecycle, kind, parentLifecycle string
 	var rev int64
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,COALESCE(a.home_room_id,''),r.role_key,a.desired,a.observed,a.desired_rev,
-		COALESCE(room.lifecycle,''),COALESCE(room.kind,'')
+		COALESCE(room.lifecycle,''),COALESCE(room.kind,''),COALESCE(parent.lifecycle,'open')
 		FROM agent a JOIN role r ON r.id=a.role_id LEFT JOIN room ON room.id=a.home_room_id
+		LEFT JOIN room parent ON parent.id=room.parent_id
 		WHERE a.id=? AND a.revoked_at IS NULL`, agentID).
-		Scan(&projectID, &roomID, &roleKey, &desired, &observed, &rev, &lifecycle, &kind)
+		Scan(&projectID, &roomID, &roleKey, &desired, &observed, &rev, &lifecycle, &kind, &parentLifecycle)
 	if err != nil {
 		return AgentCard{}, err
 	}
@@ -43,6 +44,9 @@ func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, err
 		return AgentCard{}, ErrResumeClosedRoom
 	}
 	if lifecycle != "open" && lifecycle != "closing" || desired != "stopped" || observed != "stopped" {
+		return AgentCard{}, ErrInvalidTransition
+	}
+	if parentLifecycle != "open" {
 		return AgentCard{}, ErrInvalidTransition
 	}
 	if err := tx.authorizeSpawnActor(projectID, "agent", actorID, false); err != nil {
@@ -67,11 +71,18 @@ func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, err
 	if _, err := tx.SetAgentDesiredByAgent(agentID, actorID, "active", rev); err != nil {
 		return AgentCard{}, err
 	}
+	card, err := tx.agentCardByID(agentID)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	if card.BoundaryPending != "" {
+		return card, nil
+	}
 	if _, err := tx.AppendEvent(Event{Kind: "agent_resumed", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
 		PayloadJSON: payloadJSON(map[string]string{"agent_id": agentID, "actor_id": actorID, "reason": strings.TrimSpace(reason)})}); err != nil {
 		return AgentCard{}, err
 	}
-	return tx.agentCardByID(agentID)
+	return card, nil
 }
 
 type AgentToolIdentity struct {

@@ -233,8 +233,8 @@ var resumeDispatcherRoleBody = priorResumeDispatcherRoleBody + "\n\n" + resumeWo
 
 func roleResumeMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_leader_default' AND project_id IS NULL AND deleted_at IS NULL AND body=%s;\n"+
-		"UPDATE role SET body=%s WHERE id='role_dispatcher_default' AND project_id IS NULL AND deleted_at IS NULL AND body=%s;\n",
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_leader_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=1 AND body=%s;\n"+
+		"UPDATE role SET body=%s WHERE id='role_dispatcher_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=1 AND body=%s;\n",
 		quote(resumeLeadRoleBody), quote(priorResumeLeadRoleBody), quote(resumeDispatcherRoleBody), quote(priorResumeDispatcherRoleBody))
 }
 

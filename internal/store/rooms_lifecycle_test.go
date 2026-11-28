@@ -118,6 +118,117 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 	}
 }
 
+func TestResumeAgentRejectsCascadedChildClose(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	f := seedExecution(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_cascade','owner','hash','{}',?)`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AddProjectOwner(f.project.ID, "usr_cascade") }); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "parent", CreatedBy: "usr_cascade"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, ParentID: parent.ID, Kind: "task", Title: "child", CreatedBy: "usr_cascade"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.CreateAgent(ctx, Agent{Slug: "cascadelead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "cascade_hash", CreatedBy: "usr_cascade"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, child.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.BeginRoomClose(ctx, parent.ID, "usr_cascade", 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "continue child")
+		return err
+	}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("resume under closing parent: %v", err)
+	}
+	for _, id := range []string{parent.ID, child.ID} {
+		room, err := s.RoomByID(ctx, id)
+		if err != nil || room.Lifecycle != "closing" {
+			t.Fatalf("room %s after refused resume: %+v err=%v", id, room, err)
+		}
+	}
+	if _, failures, err := s.AdvanceRoomClosures(ctx, 0); err != nil || len(failures) != 0 {
+		t.Fatalf("cascade advance: %v failures=%v", err, failures)
+	}
+	for _, id := range []string{parent.ID, child.ID} {
+		room, err := s.RoomByID(ctx, id)
+		if err != nil || room.Lifecycle != "closed" {
+			t.Fatalf("room %s after advance: %+v err=%v", id, room, err)
+		}
+	}
+}
+
+func TestResumeAgentBoundaryEvents(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	f := seedExecution(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_resume_boundary','owner','hash','{}',?)`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AddProjectOwner(f.project.ID, "usr_resume_boundary") }); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "boundary task", CreatedBy: "usr_resume_boundary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.CreateAgent(ctx, Agent{Slug: "boundarylead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "boundary_hash", CreatedBy: "usr_resume_boundary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, task.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE checkout SET canonical_path='/outside/resume' WHERE id='chk_test'`); err != nil {
+		t.Fatal(err)
+	}
+	countResumed := func() int {
+		var count int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='agent_resumed' AND agent_id=?`, f.agent.ID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	var pending AgentCard
+	t.Run("pending approval emits no resumed event", func(t *testing.T) {
+		if err := s.Tx(ctx, func(tx *Tx) error {
+			var err error
+			pending, err = tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "needs approval")
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if pending.Desired != "stopped" || pending.BoundaryPending == "" || countResumed() != 0 {
+			t.Fatalf("pending card=%+v resumed events=%d", pending, countResumed())
+		}
+	})
+	t.Run("approval emits one resumed event", func(t *testing.T) {
+		if pending.BoundaryPending == "" {
+			t.Fatal("resume did not create an approval")
+		}
+		if _, _, err := s.DecideBoundary(ctx, pending.BoundaryPending, "usr_resume_boundary", "approve-resume-boundary", "approve", 0); err != nil {
+			t.Fatal(err)
+		}
+		card, err := s.AgentCardByID(ctx, f.agent.ID)
+		if err != nil || card.Desired != "active" || countResumed() != 1 {
+			t.Fatalf("approved card=%+v err=%v resumed events=%d", card, err, countResumed())
+		}
+	})
+}
+
 func TestRoomCloseCascadeReopenAndInbox(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})

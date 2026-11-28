@@ -22,7 +22,7 @@ var systemEventKinds = []string{
 	"agent_context_cleared", "agent_context_compacted",
 	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed",
 	"agent_turn_budget_exceeded", "loop_guard",
-	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_blocked",
+	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_cancelled", "room_close_blocked",
 	"room_member_joined", "room_member_left",
 	"room_worktree_requested", "room_worktree_updated", "room_worktree_cancelled",
 	"project_created", "project_updated", "project_archived", "project_reopened", "project_removed", "project_member_joined", "project_member_changed", "project_settings_updated",

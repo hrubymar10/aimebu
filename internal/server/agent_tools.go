@@ -22,6 +22,12 @@ func agentToolCaller(r *http.Request) store.AgentToolIdentity {
 	return caller
 }
 
+type resumeAgentToolResponse struct {
+	store.AgentCard
+	Status     string `json:"status,omitempty"`
+	ApprovalID string `json:"approval_id,omitempty"`
+}
+
 func (s *Server) requireAgentTool(next http.Handler) http.Handler {
 	return s.requireAgentToolScope(next, true)
 }
@@ -410,7 +416,12 @@ func (s *Server) agentToolResume(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return "", err
 		}
-		encoded, err := json.Marshal(updated)
+		response := resumeAgentToolResponse{AgentCard: updated}
+		if updated.BoundaryPending != "" {
+			response.Status = "pending_approval"
+			response.ApprovalID = updated.BoundaryPending
+		}
+		encoded, err := json.Marshal(response)
 		return string(encoded), err
 	})
 	if err != nil {
@@ -423,15 +434,15 @@ func (s *Server) agentToolResume(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var updated store.AgentCard
-	if err := json.Unmarshal([]byte(result), &updated); err != nil {
+	var response resumeAgentToolResponse
+	if err := json.Unmarshal([]byte(result), &response); err != nil {
 		fail(w, err)
 		return
 	}
-	if !reused {
-		s.sendRoomControls(r.Context(), []store.AgentCard{updated})
+	if !reused && response.Status != "pending_approval" {
+		s.sendRoomControls(r.Context(), []store.AgentCard{response.AgentCard})
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) agentToolReact(w http.ResponseWriter, r *http.Request) {

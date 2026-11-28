@@ -33,6 +33,12 @@ func TestFreshProjectRolesCarryTheApprovalRule(t *testing.T) {
 	}
 	for _, flow := range TeamFlowTemplates() {
 		for _, role := range []string{"leader", "dispatcher"} {
+			if flow.Key == "leader-dispatcher" && role == "leader" {
+				if strings.Contains(flow.RoleTextOverrides[role], "resume_agent") {
+					t.Error("routed leader must not be instructed to resume workers")
+				}
+				continue
+			}
 			if body := flow.RoleTextOverrides[role]; body != "" && !strings.Contains(body, resumeWorkerRule) {
 				t.Errorf("%s %s role lacks resume instructions", flow.Key, role)
 			}
@@ -89,6 +95,39 @@ func TestRoleResumeMigrationChainsAfterCloseout(t *testing.T) {
 				t.Fatalf("after migration leader=%q dispatcher=%q", lead, dispatcher)
 			}
 		})
+	}
+}
+
+func TestRoleResumeMigrationPreservesRestoredEditedBodies(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "restored-role.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := migrateUpTo(ctx, db, 148); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []struct{ id, body string }{
+		{"role_leader_default", priorResumeLeadRoleBody},
+		{"role_dispatcher_default", priorResumeDispatcherRoleBody},
+	} {
+		if _, err := db.Exec(`UPDATE role SET body=?,rev=2 WHERE id=?`, role.body, role.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateUpTo(ctx, db, 149); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []struct{ id, body string }{
+		{"role_leader_default", priorResumeLeadRoleBody},
+		{"role_dispatcher_default", priorResumeDispatcherRoleBody},
+	} {
+		var got string
+		if err := db.QueryRow(`SELECT body FROM role WHERE id=?`, role.id).Scan(&got); err != nil || got != role.body {
+			t.Fatalf("%s changed after owner restored its body: err=%v", role.id, err)
+		}
 	}
 }
 

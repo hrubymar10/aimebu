@@ -638,7 +638,7 @@ async function signedIn(session) {
       else if (event.kind === 'room_preference_changed' && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
       else if (event.kind === 'project_removed') await projectRemoved(payload.project_id);
-      else if (event.kind === 'room_created' || ['room_renamed', 'room_closing', 'room_closed', 'room_reopened', 'room_close_blocked'].includes(event.kind)) {
+      else if (event.kind === 'room_created' || ['room_renamed', 'room_closing', 'room_closed', 'room_reopened', 'room_close_cancelled', 'room_close_blocked'].includes(event.kind)) {
         await sidebar.refreshProject(event.project_id);
         if (!active()) return;
         if (event.kind === 'room_close_blocked') chat.showCloseBlocked(event.room_id, payload.reason);

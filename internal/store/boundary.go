@@ -322,8 +322,15 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 				if _, err := tx.Exec(`UPDATE boundary_pending SET state='resolved' WHERE inbox_id=?`, itemID); err != nil {
 					return "", err
 				}
-				if _, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev, true, startFresh); err != nil {
+				card, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev, true, startFresh)
+				if err != nil {
 					return "", err
+				}
+				if card.Desired == "active" {
+					if _, err := tx.AppendEvent(Event{Kind: "agent_resumed", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
+						PayloadJSON: payloadJSON(map[string]string{"agent_id": agentID, "actor_id": userID})}); err != nil {
+						return "", err
+					}
 				}
 			}
 		} else {

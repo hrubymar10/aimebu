@@ -158,6 +158,25 @@ func TestResumeAgentToolKeepsIdentityAndRefusesClosedRoom(t *testing.T) {
 	if stop.StatusCode != http.StatusOK {
 		t.Fatalf("second stop status=%d", stop.StatusCode)
 	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET canonical_path='/outside/resume' WHERE id='chk_tools'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp = f.toolPost(t, path, leadKey, "resume-pending", map[string]string{})
+	var pending struct {
+		Status     string `json:"status"`
+		ApprovalID string `json:"approval_id"`
+		Desired    string `json:"desired"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pending); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || pending.Status != "pending_approval" || pending.ApprovalID == "" || pending.Desired != "stopped" {
+		t.Fatalf("pending resume status=%d body=%+v", resp.StatusCode, pending)
+	}
 	owner, err := f.db.UserByLogin(t.Context(), "owner")
 	if err != nil {
 		t.Fatal(err)
