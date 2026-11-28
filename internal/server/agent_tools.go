@@ -428,6 +428,8 @@ func (s *Server) agentToolResume(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, store.ErrResumeClosedRoom) {
 			apiError(w, http.StatusConflict, "room_closed", "reopen the room first")
+		} else if errors.Is(err, store.ErrRoomClosingByPerson) {
+			apiError(w, http.StatusConflict, "room_closing_by_person", "a person is closing this room; ask them to cancel the closure")
 		} else if errors.Is(err, sql.ErrNoRows) {
 			apiError(w, http.StatusNotFound, "not_found", "agent not found")
 		} else {

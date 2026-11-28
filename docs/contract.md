@@ -1306,6 +1306,7 @@ d) A **correction** turn has its own revision-1 receipt and settles its parent
   unchanged.
   Closing a task room stops every active worker whose task room it is and posts a system note in it: 'stopped because the room closed; resume with `resume_agent`'. A deliberate stop raises no recovery. Reactions never stop an agent. `resume_agent(agent_id, reason?)` lets the active lead or flow dispatcher reactivate a stopped worker in its task room while that room is open or still in its closing grace period (resuming cancels the closure), restoring room membership and retaining its worktree and harness session; it rejects cross-project, removed-agent, and fully closed-room targets.
   When the agent's folder needs a boundary approval, `resume_agent` returns `status: "pending_approval"` with the approval id; `agent_resumed` is emitted only once the agent is activated.
+  `resume_agent` does not cancel a closure that a person started; it returns 409 `room_closing_by_person`.
   **Worker output on a notice:** a delivered `silent_turn`, `worker_recovery` or
   `worker_stopped` note carries `worker_output` `{untrusted, agent_id, turn_id, text?,
   truncated?, withheld?}`: the end of that turn's conversation records (at most

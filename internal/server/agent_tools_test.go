@@ -198,6 +198,58 @@ func TestResumeAgentToolKeepsIdentityAndRefusesClosedRoom(t *testing.T) {
 	}
 }
 
+func TestResumeAgentToolRefusesPersonStartedClosure(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_leader_default", "personcloselead")
+	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "personcloseworker")
+	rooms, err := f.db.RoomsForProject(t.Context(), f.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range rooms {
+		if room.Kind == "home" {
+			if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+				if err := tx.AddMember(room.ID, "agent", lead.ID); err != nil {
+					return err
+				}
+				_, err := tx.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, room.ID, lead.ID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, f.room.ID, worker.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.db.BeginRoomClose(t.Context(), f.room.ID, owner.ID, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/agents/"+worker.ID+"/resume", leadKey, "person-close-resume", map[string]string{})
+	defer resp.Body.Close()
+	var failure map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(fmt.Sprint(failure), "room_closing_by_person") || !strings.Contains(fmt.Sprint(failure), "ask them to cancel the closure") {
+		t.Fatalf("resume status=%d failure=%v", resp.StatusCode, failure)
+	}
+	room, err := f.db.RoomByID(t.Context(), f.room.ID)
+	if err != nil || room.Lifecycle != "closing" {
+		t.Fatalf("person closure changed: %+v err=%v", room, err)
+	}
+}
+
 func TestAgentReactUsesRoomMembershipAndReactionEvent(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

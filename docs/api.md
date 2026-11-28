@@ -973,11 +973,13 @@ created, so a leader keeps control of its own pre-switch rooms and workers
 after a switch to the dispatcher flow; otherwise 409 `team_flow_rule`.
 Closing a task room stops its active workers and posts a room system note.
 `resume_agent` reactivates a stopped worker in its task room, preserving the
-worktree and harness session. It cancels a closing room's closure and restores
-only coworkers paused by that closure to accepting work; a fully
+worktree and harness session. It cancels an agent-started closing room's closure
+and restores coworkers paused by that closure whom it can manage; a fully
 closed room must be reopened first. When the agent's folder needs a boundary
 approval, it returns `status: "pending_approval"` and `approval_id`; the
-`agent_resumed` event is emitted after approval activates the agent. Reactions
+`agent_resumed` event is emitted after approval activates the agent. It returns
+409 `room_closing_by_person` if a person started the closure. Coworkers the
+resuming agent cannot manage stay paused, and a system note names them. Reactions
 do not stop agents.
 `GET|POST /api/agent/rooms/{room}/schedules` (`list_schedules`,
 `create_schedule`) and `DELETE /api/agent/rooms/{room}/schedules/{id}`

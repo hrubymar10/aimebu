@@ -14,6 +14,7 @@ import (
 )
 
 var ErrResumeClosedRoom = errors.New("resume_room_closed")
+var ErrRoomClosingByPerson = errors.New("room_closing_by_person")
 
 // ResumeAgentAsTool keeps the worker's checkout and native session. The room
 // transition and agent reactivation commit together, so a refused resume
@@ -57,6 +58,14 @@ func (tx *Tx) ResumeAgentAsTool(agentID, actorID, reason string) (AgentCard, []A
 	}
 	var restored []AgentCard
 	if lifecycle == "closing" {
+		var closingActorKind string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.actor_kind') FROM event
+			WHERE room_id=? AND kind='room_closing' ORDER BY seq DESC LIMIT 1`, roomID).Scan(&closingActorKind); err != nil {
+			return AgentCard{}, nil, err
+		}
+		if closingActorKind == "user" {
+			return AgentCard{}, nil, ErrRoomClosingByPerson
+		}
 		if _, err := tx.Exec(`UPDATE room SET lifecycle='open',gate=CASE WHEN control_desired='active' THEN 'open' ELSE 'paused' END,
 			lifecycle_rev=lifecycle_rev+1,closed_at=NULL WHERE id=?`, roomID); err != nil {
 			return AgentCard{}, nil, err
@@ -119,11 +128,13 @@ func (tx *Tx) restoreRoomClosePausedAgents(projectID, roomID, actorID string) ([
 		return nil, err
 	}
 	var restored []AgentCard
+	var unauthorized []string
 	for _, p := range pauses {
-		var desired, homeRoomID string
+		var desired, homeRoomID, slug, roleKey string
 		var rev int64
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT desired,desired_rev,COALESCE(home_room_id,'') FROM agent
-			WHERE id=? AND project_id=? AND revoked_at IS NULL`, p.agentID, projectID).Scan(&desired, &rev, &homeRoomID)
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.desired,a.desired_rev,COALESCE(a.home_room_id,''),a.slug,r.role_key
+			FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.project_id=? AND a.revoked_at IS NULL`, p.agentID, projectID).
+			Scan(&desired, &rev, &homeRoomID, &slug, &roleKey)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -133,11 +144,24 @@ func (tx *Tx) restoreRoomClosePausedAgents(projectID, roomID, actorID string) ([
 		if desired != "not_accepting" || rev != p.rev || homeRoomID != roomID {
 			continue
 		}
+		if err := tx.flowActorMayTargetAgent(projectID, actorID, p.agentID, roleKey); err != nil {
+			if !errors.Is(err, ErrTeamFlowRule) {
+				return nil, err
+			}
+			unauthorized = append(unauthorized, slug)
+			continue
+		}
 		card, err := tx.setAgentDesired(p.agentID, "agent", actorID, "active", rev, false, false)
 		if err != nil {
 			return nil, err
 		}
 		restored = append(restored, card)
+	}
+	if len(unauthorized) > 0 {
+		body := "Agents " + strings.Join(unauthorized, ", ") + " remain paused after the room closure was cancelled because the resuming agent cannot manage them under this team flow. An authorized coordinator can reactivate them."
+		if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system", Body: body}); err != nil {
+			return nil, err
+		}
 	}
 	return restored, nil
 }

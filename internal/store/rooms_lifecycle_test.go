@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE room_member SET left_at=? WHERE room_id=? AND member_kind='agent' AND member_id=?`, timestamp(), task.ID, f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	closing, _, err := s.BeginRoomClose(ctx, task.ID, "usr_resume", 0, false)
+	closing, _, err := s.BeginRoomClose(ctx, task.ID, lead.ID, 0, false)
 	if err != nil || closing.Lifecycle != "closing" {
 		t.Fatalf("begin close=%+v err=%v", closing, err)
 	}
@@ -118,6 +119,52 @@ func TestResumeAgentDuringRoomCloseKeepsSessionAndMembership(t *testing.T) {
 	}
 }
 
+func TestResumeAgentRefusesPersonStartedClosure(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	f := seedExecution(t, s)
+	if _, err := s.db.Exec(`INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_person_close','owner','hash','{}',?)`, timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error { return tx.AddProjectOwner(f.project.ID, "usr_person_close") }); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateRoom(ctx, Room{ProjectID: f.project.ID, Kind: "task", Title: "person close", CreatedBy: "usr_person_close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := s.CreateAgent(ctx, Agent{Slug: "personcloselead", ProjectID: f.project.ID, RoleID: "role_leader_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "personcloselead_hash", CreatedBy: "usr_person_close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, task.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(ctx, f.room.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=? WHERE id=?`, f.room.ID, lead.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, task.ID, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.BeginRoomClose(ctx, task.ID, "usr_person_close", 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		_, _, err := tx.ResumeAgentAsTool(f.agent.ID, lead.ID, "continue")
+		return err
+	}); !errors.Is(err, ErrRoomClosingByPerson) {
+		t.Fatalf("resume during person close: %v", err)
+	}
+	room, err := s.RoomByID(ctx, task.ID)
+	if err != nil || room.Lifecycle != "closing" || room.LifecycleRev != 1 {
+		t.Fatalf("person closure changed: %+v err=%v", room, err)
+	}
+}
+
 func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
@@ -137,9 +184,24 @@ func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeWorker := func(slug string) Agent {
+	dispatcher, err := s.CreateAgent(ctx, Agent{Slug: "cancelpausedispatcher", ProjectID: f.project.ID, RoleID: "role_dispatcher_default", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: "cancelpausedispatcher_hash", CreatedBy: "usr_cancel_pause"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{lead.ID, dispatcher.ID} {
+		if err := s.AddMember(ctx, task.ID, "agent", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=NULL WHERE id IN (?,?)`, lead.ID, dispatcher.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE project SET team_flow_key='leader-dispatcher' WHERE id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	makeWorker := func(slug, roleID, creator string) Agent {
 		t.Helper()
-		a, err := s.CreateAgent(ctx, Agent{Slug: slug, ProjectID: f.project.ID, RoleID: "role_test", Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: slug + "_hash", CreatedBy: "usr_cancel_pause"})
+		a, err := s.CreateAgent(ctx, Agent{Slug: slug, ProjectID: f.project.ID, RoleID: roleID, Tool: "codex", Variant: "native", Model: "test", Provider: "test", MachineID: "mch_test", CheckoutID: "chk_test", KeyHash: slug + "_hash", CreatedBy: creator})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,9 +213,10 @@ func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
 		}
 		return a
 	}
-	closurePaused := makeWorker("closurepaused")
-	manuallyPaused := makeWorker("manuallypaused")
-	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,desired='stopped',observed='stopped' WHERE id=?`, task.ID, f.agent.ID); err != nil {
+	closurePaused := makeWorker("closurepaused", "role_researcher_default", lead.ID)
+	manuallyPaused := makeWorker("manuallypaused", "role_test", dispatcher.ID)
+	unauthorizedPaused := makeWorker("unauthorizedpaused", "role_test", dispatcher.ID)
+	if _, err := s.db.Exec(`UPDATE agent SET home_room_id=?,role_id='role_researcher_default',created_by=?,desired='stopped',observed='stopped' WHERE id=?`, task.ID, lead.ID, f.agent.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
@@ -162,10 +225,23 @@ func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.BeginRoomClose(ctx, task.ID, "usr_cancel_pause", 0, false); err != nil {
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		for _, item := range []struct{ id, role string }{{closurePaused.ID, "researcher"}, {unauthorizedPaused.ID, "worker"}} {
+			if err := tx.flowActorMayTargetAgent(f.project.ID, dispatcher.ID, item.id, item.role); err != nil {
+				return fmt.Errorf("dispatcher target %s: %w", item.role, err)
+			}
+		}
+		if err := tx.flowActorMayTargetAgent(f.project.ID, lead.ID, unauthorizedPaused.ID, "worker"); !errors.Is(err, ErrTeamFlowRule) {
+			return fmt.Errorf("leader target worker: got %v, want team flow rule", err)
+		}
+		return tx.roomClosePermission(f.project.ID, task.ID, "task", dispatcher.ID)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{closurePaused.ID, manuallyPaused.ID} {
+	if _, _, err := s.BeginRoomClose(ctx, task.ID, dispatcher.ID, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{closurePaused.ID, manuallyPaused.ID, unauthorizedPaused.ID} {
 		card, err := s.AgentCardByID(ctx, id)
 		if err != nil || card.Desired != "not_accepting" {
 			t.Fatalf("before cancel card %s=%+v err=%v", id, card, err)
@@ -191,6 +267,16 @@ func TestResumeAgentCancelsOnlyClosurePauses(t *testing.T) {
 		card, err := s.AgentCardByID(ctx, manuallyPaused.ID)
 		if err != nil || card.Desired != "not_accepting" {
 			t.Fatalf("manually paused card=%+v err=%v", card, err)
+		}
+	})
+	t.Run("coworker outside actor authority stays paused with a system note", func(t *testing.T) {
+		card, err := s.AgentCardByID(ctx, unauthorizedPaused.ID)
+		if err != nil || card.Desired != "not_accepting" {
+			t.Fatalf("unauthorized coworker=%+v err=%v", card, err)
+		}
+		var count int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE room_id=? AND author_kind='system' AND body LIKE '%unauthorizedpaused%' AND body LIKE '%cannot manage%'`, task.ID).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("system note count=%d err=%v", count, err)
 		}
 	})
 }
